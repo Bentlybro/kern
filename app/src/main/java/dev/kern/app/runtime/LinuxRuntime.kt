@@ -267,18 +267,60 @@ object LinuxRuntime {
         return from + cut + 1
     }
 
+    /**
+     * Spawn an arbitrary command on its own pty.
+     *
+     * Backs the agent cockpit. A login shell so the guest's profile is loaded — agents
+     * are usually installed by a package manager that puts them somewhere only a login
+     * shell knows about — and `exec` so the command replaces bash rather than leaving a
+     * shell waiting behind it, which would keep the pty open after the agent exits.
+     */
+    fun spawnCommand(
+        context: Context,
+        command: String,
+        columns: Int,
+        rows: Int,
+        workingDir: String = ProjectRepository.currentFolder(context),
+    ): PtyProcess? = PtyProcess.spawn(
+        command = prootBinary(context).absolutePath,
+        argv = prootArgs(
+            context,
+            listOf("/bin/bash", "-lc", "exec $command"),
+            workingDir,
+        ),
+        env = prootEnv(context),
+        cwd = context.filesDir.absolutePath,
+        columns = columns,
+        rows = rows,
+    )
+
     /** Spawn an interactive login shell on its own pty — this backs the terminal. */
     fun spawnShell(
         context: Context,
         columns: Int,
         rows: Int,
-        workingDir: String = "/root",
+        /**
+         * Distinct per terminal. `tmux new-session -A` attaches to an existing session of
+         * the same name, so a shared name meant every new tab attached to the first one
+         * and showed identical output — several terminals that were all the same terminal.
+         */
+        sessionName: String = "kern",
+        /**
+         * The open project, not the home directory. A terminal that opens somewhere other
+         * than the thing you are working on just means typing `cd` before every session.
+         */
+        workingDir: String = ProjectRepository.currentFolder(context),
     ): PtyProcess? = PtyProcess.spawn(
         command = prootBinary(context).absolutePath,
         argv = prootArgs(
             context,
-            // tmux keeps the session alive across terminal detach/reattach.
-            listOf("/bin/bash", "-lc", "tmux new-session -A -s kern || exec bash -l"),
+            // tmux keeps the session alive across terminal detach/reattach. `-c` so the
+            // session it creates starts in the project too, not just the bash that ran it.
+            listOf(
+                "/bin/bash",
+                "-lc",
+                "tmux new-session -A -s '$sessionName' -c '$workingDir' || exec bash -l",
+            ),
             workingDir,
         ),
         env = prootEnv(context),

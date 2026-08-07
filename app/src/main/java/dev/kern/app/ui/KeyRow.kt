@@ -57,8 +57,8 @@ fun KeyRow() {
 
     /** Route to whichever surface has focus — terminal or workbench. */
     fun key(code: Int) {
-        if (TerminalHost.hasFocus()) {
-            TerminalHost.sendKey(code, meta())
+        if (TerminalSessions.hasFocus()) {
+            TerminalSessions.sendKey(code, meta())
         } else {
             WorkbenchWebView.sendKey(code, meta())
         }
@@ -66,8 +66,8 @@ fun KeyRow() {
     }
 
     fun char(c: Char) {
-        if (TerminalHost.hasFocus()) {
-            TerminalHost.write(c.toString())
+        if (TerminalSessions.hasFocus()) {
+            TerminalSessions.write(c.toString())
         } else {
             val wv = WorkbenchWebView.current() ?: return
             KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD)
@@ -86,7 +86,7 @@ fun KeyRow() {
         ) {
             // Explicit IME control: the guaranteed way in, when Monaco will not ask.
             Key("⌨") {
-                if (TerminalHost.hasFocus()) TerminalHost.toggleKeyboard()
+                if (TerminalSessions.hasFocus()) TerminalSessions.toggleKeyboard()
                 else WorkbenchWebView.toggleKeyboard()
             }
             Key("esc") { key(KeyEvent.KEYCODE_ESCAPE) }

@@ -133,7 +133,7 @@ fun Shell(state: SessionState) {
     DisposableEffect(Unit) {
         onDispose {
             WorkbenchWebView.detach()
-            TerminalHost.detach()
+            TerminalSessions.detachAll()
         }
     }
 
@@ -158,6 +158,7 @@ fun Shell(state: SessionState) {
             onOpenCockpit = { showCockpit = true },
             onOpenStatus = { showStatus = true },
             onOpenSettings = { showSettings = true },
+            onNewShell = { showTerminal = true },
         )
 
         SetupStrip()
@@ -286,6 +287,7 @@ private fun TopBar(
     onOpenCockpit: () -> Unit,
     onOpenStatus: () -> Unit,
     onOpenSettings: () -> Unit,
+    onNewShell: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -364,6 +366,10 @@ private fun TopBar(
                 }
                 MenuAction("chat", { menuOpen = false }) {
                     WorkbenchWebView.Commands.toggleChatPanel()
+                }
+                MenuAction("new terminal", { menuOpen = false }) {
+                    TerminalSessions.openShell(context)
+                    onNewShell()
                 }
                 MenuAction("status", { menuOpen = false }, onOpenStatus)
                 MenuAction("settings", { menuOpen = false }, onOpenSettings)

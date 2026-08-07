@@ -30,7 +30,7 @@ import dev.kern.app.session.SessionState
 import dev.kern.app.ui.KernTheme
 import dev.kern.app.ui.SetupScreen
 import dev.kern.app.ui.Shell
-import dev.kern.app.ui.TerminalHost
+import dev.kern.app.ui.TerminalSessions
 import dev.kern.app.ui.WorkbenchWebView
 
 class MainActivity : ComponentActivity() {
@@ -59,7 +59,7 @@ class MainActivity : ComponentActivity() {
      */
     override fun dispatchKeyShortcutEvent(event: KeyEvent): Boolean {
         val target: View? = when {
-            TerminalHost.hasFocus() -> TerminalHost.current()
+            TerminalSessions.hasFocus() -> TerminalSessions.current()
             else -> WorkbenchWebView.current()
         }
         if (target != null && target.dispatchKeyEvent(event)) return true

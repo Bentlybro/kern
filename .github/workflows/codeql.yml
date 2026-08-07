@@ -35,22 +35,22 @@ jobs:
       security-events: write   # to upload the results
 
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up JDK 17
-        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
 
       # Kotlin only. The C in app/src/main/cpp is a 200-line PTY wrapper, and analysing it
       # would mean driving the NDK build under CodeQL — slow, fragile, and less useful
       # than reading it. Revisit if that file grows.
       - name: Initialise CodeQL
-        uses: github/codeql-action/init@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3
+        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           languages: java-kotlin
           build-mode: manual
@@ -68,6 +68,6 @@ jobs:
         run: ./gradlew assembleDebug --no-daemon
 
       - name: Analyse
-        uses: github/codeql-action/analyze@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3
+        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           category: /language:java-kotlin

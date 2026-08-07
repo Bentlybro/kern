@@ -45,10 +45,59 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.kern.app.runtime.AgentRepository
 import dev.kern.app.runtime.ProjectRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+/**
+ * Start and stop the agent, or say plainly that there isn't one.
+ *
+ * Having no agent is a supported choice rather than a broken state, so this says so and
+ * points at where to pick one — while the diff and commit tabs behind it carry on being
+ * useful to someone who never wants an AI anywhere near their code.
+ */
+@Composable
+private fun AgentBar(project: String) {
+    val context = LocalContext.current
+    val running by AgentRepository.running.collectAsStateWithLifecycle()
+    val command = remember(running) { AgentRepository.command(context) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        when {
+            command.isBlank() -> Text(
+                "No agent set — settings > agent. The diff and commit tabs work without one.",
+                fontSize = 11.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            running -> {
+                TextButton(onClick = { AgentRepository.stop() }) {
+                    Text("stop", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                }
+                Text(
+                    command,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    softWrap = false,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            else -> Button(onClick = { AgentRepository.start(context, project) }) {
+                Text("Start $command", fontSize = 13.sp)
+            }
+        }
+    }
+}
 
 /**
  * The agent cockpit (M5): monitor, steer and approve work one-handed.
@@ -73,8 +122,9 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
 
     val project = remember(refresh) { ProjectRepository.currentFolder(context) }
 
-    // Only one poller runs at a time. Every read is a Termux RUN_COMMAND round-trip, and
-    // overlapping them starves whichever request the user is actually waiting on.
+    // Only one poller runs at a time. The git reads enter the guest, and overlapping them
+    // starves whichever request the user is actually waiting on. Agent output is read
+    // from a buffer this process already holds, so that part is free.
     LaunchedEffect(showDiff, refresh) {
         while (true) {
             if (showDiff) {
@@ -137,6 +187,8 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 }
             }
         }
+
+        AgentBar(project)
 
         Row(
             modifier = Modifier
@@ -239,8 +291,8 @@ private fun OutputView(tail: List<String>) {
         if (tail.isEmpty()) {
             item {
                 Text(
-                    "No session output yet. Start something in the terminal —\n" +
-                        "it keeps running while the app is closed.",
+                    "Nothing running yet. Start the agent above, or use the diff and " +
+                        "commit tabs on their own.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 16.dp),

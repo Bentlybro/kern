@@ -114,6 +114,9 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
             SectionTitle("GitHub")
             GitHubSection()
 
+            SectionTitle("Agent")
+            AgentSection()
+
             SectionTitle("Linux")
             when (val name = guestOs) {
                 null -> Text(

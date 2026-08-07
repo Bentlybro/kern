@@ -79,14 +79,40 @@ class WorkbenchBridge(
           // request to start typing.
           var SLOP = 10;          // CSS px, a little over Android's touch slop
           var TAP_MS = 700;       // beyond this it is a long press, not a tap
-          var down = null, moved = false, multi = false;
+          var down = null, moved = false, multi = false, lastUp = 0, armed = false;
 
           function reset() { down = null; moved = false; multi = false; }
+
+          // Monaco focuses its hidden textarea the instant a finger lands, and Chromium
+          // raises the keyboard on that focus - before any movement exists to tell a
+          // scroll from a tap. Waiting for the movement is therefore too late; the only
+          // way to win is to make the field unable to summon a keyboard in the first
+          // place. Chromium does not open the IME for a readonly field, so the textarea
+          // starts every gesture readonly and is released only once the gesture has been
+          // judged. It must always be released, or the key row and hardware keyboards
+          // would stop working too.
+          function inputArea() { return document.querySelector('textarea.inputarea'); }
+
+          function setReadOnly(value) {
+            var ta = inputArea();
+            if (ta) { try { ta.readOnly = value; } catch (err) {} }
+          }
+
+          // Already editing? Then the keyboard is up because the user put it there, and
+          // this guard must keep its hands off entirely. Toggling readonly on a *focused*
+          // field makes Chromium close the keyboard and reopen it, so guarding mid-edit
+          // scrolls produced a flicker on every swipe - worse than the bug it fixes.
+          function editing() {
+            var ta = inputArea();
+            return !!ta && document.activeElement === ta;
+          }
 
           document.addEventListener('pointerdown', function (e) {
             if (down) { multi = true; return; }
             down = { x: e.clientX, y: e.clientY, t: Date.now(), id: e.pointerId };
             moved = false;
+            armed = !editing();
+            if (armed) setReadOnly(true);
           }, true);
 
           document.addEventListener('pointermove', function (e) {
@@ -99,15 +125,50 @@ class WorkbenchBridge(
           // without a matching pointermove, and either still means "not a tap".
           document.addEventListener('touchmove', function () { moved = true; }, true);
           document.addEventListener('scroll', function () { if (down) moved = true; }, true);
-          document.addEventListener('pointercancel', reset, true);
+          document.addEventListener('pointercancel', function () {
+            var wasArmed = armed;
+            reset();
+            armed = false;
+            lastUp = Date.now();
+            if (wasArmed) setTimeout(function () { setReadOnly(false); }, 500);
+          }, true);
 
           document.addEventListener('pointerup', function (e) {
             var tapped = !!down && !moved && !multi && (Date.now() - down.t) < TAP_MS;
+            var wasArmed = armed;
             var target = e.target;
             reset();
-            if (!tapped) return;
-            try { $NAME.tap(inEditor(target)); } catch (err) {}
+            armed = false;
+            lastUp = Date.now();
+
+            // Mid-edit: never touch readonly, or the keyboard flickers on every scroll.
+            // Scrolling while editing simply leaves the keyboard where it is, which is
+            // what every other editor does.
+            if (!wasArmed) {
+              if (tapped) { try { $NAME.tap(inEditor(target)); } catch (err) {} }
+              return;
+            }
+
+            if (tapped) {
+              // A real tap: let the field type again, and ask the host to raise the
+              // keyboard deliberately rather than as a side effect of touching.
+              setReadOnly(false);
+              try { $NAME.tap(inEditor(target)); } catch (err) {}
+              return;
+            }
+
+            // A scroll, fling, pinch or long press. Stay readonly past Monaco's own
+            // handling of the release, which focuses the textarea and would otherwise
+            // open the keyboard for a gesture that was never about typing.
+            setTimeout(function () { setReadOnly(false); }, 500);
           }, true);
+
+          // Safety net. Everything above restores the field on a timer, but if any of
+          // it ever throws, a permanently readonly editor is far worse than the bug it
+          // fixes - so also restore whenever no finger has been down for a while.
+          setInterval(function () {
+            if (!down && Date.now() - lastUp > 1500) setReadOnly(false);
+          }, 3000);
 
           function reportSelection() {
             try {

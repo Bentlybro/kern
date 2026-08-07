@@ -159,6 +159,13 @@ fun Shell(state: SessionState) {
             onOpenStatus = { showStatus = true },
             onOpenSettings = { showSettings = true },
             onNewShell = { showTerminal = true },
+            onQuit = {
+                // Stops the supervisor, which takes code-server and the guest with it,
+                // then closes the app. Without this the only way to shut the session
+                // down was the notification action, which is not where anyone looks.
+                SessionService.stop(context)
+                (context as? android.app.Activity)?.finish()
+            },
         )
 
         SetupStrip()
@@ -288,6 +295,7 @@ private fun TopBar(
     onOpenStatus: () -> Unit,
     onOpenSettings: () -> Unit,
     onNewShell: () -> Unit,
+    onQuit: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
@@ -374,6 +382,7 @@ private fun TopBar(
                 }
                 MenuAction("status", { menuOpen = false }, onOpenStatus)
                 MenuAction("settings", { menuOpen = false }, onOpenSettings)
+                MenuAction("quit", { menuOpen = false }, onQuit)
             }
         }
     }

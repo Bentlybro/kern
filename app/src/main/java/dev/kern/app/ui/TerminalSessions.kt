@@ -48,6 +48,37 @@ object TerminalSessions {
     private val entries = mutableListOf<Entry>()
     private var nextId = 1
 
+    /** Kept so a session that ends can be replaced without a Context from the caller. */
+    private val appContexts = mutableMapOf<Int, Context>()
+
+    /**
+     * A session's shell exited, usually because someone typed `exit`.
+     *
+     * The tab goes with it, and if that was the last shell a fresh one opens. Leaving a
+     * dead terminal on screen with no way to start another is a corner you cannot get out
+     * of without restarting the app, which is what used to happen.
+     *
+     * An agent that exits is simply gone: the cockpit then offers to start it again,
+     * which is the right thing for something you chose to run rather than a shell you
+     * always want available.
+     */
+    fun handleFinished(id: Int) {
+        val entry = entries.firstOrNull { it.id == id } ?: return
+        val context = appContexts[id]
+        val wasShell = entry.kind == Kind.Shell
+        val wasActive = _activeId.value == id
+
+        destroy(entry)
+        appContexts.remove(id)
+
+        if (wasShell && shells().isEmpty() && context != null) {
+            openShell(context)
+        } else if (wasActive) {
+            _activeId.value = shells().firstOrNull()?.id
+        }
+        publish()
+    }
+
     private val _sessions = MutableStateFlow<List<Entry>>(emptyList())
     val sessions: StateFlow<List<Entry>> = _sessions.asStateFlow()
 
@@ -156,6 +187,7 @@ object TerminalSessions {
         view.setTerminalViewClient(KernTerminalViewClient(view))
 
         val id = nextId++
+        appContexts[id] = appContext
         val session = TerminalSession(
             { columns, rows ->
                 if (command == null) {
@@ -166,7 +198,7 @@ object TerminalSessions {
                 }
             },
             2000,
-            KernTerminalSessionClient(appContext, view),
+            KernTerminalSessionClient(appContext, view, id),
         )
         view.attachSession(session)
 
@@ -310,6 +342,7 @@ private class KernTerminalViewClient(
 private class KernTerminalSessionClient(
     private val appContext: Context,
     private val view: TerminalView,
+    private val id: Int,
 ) : TerminalSessionClient {
 
     override fun onTextChanged(changedSession: TerminalSession) {
@@ -320,6 +353,9 @@ private class KernTerminalSessionClient(
 
     override fun onSessionFinished(finishedSession: TerminalSession) {
         Log.i(TAG, "terminal session finished")
+        // Post rather than call straight through: this arrives on the session's own
+        // thread, and replacing views has to happen on the main one.
+        view.post { TerminalSessions.handleFinished(id) }
     }
 
     override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {

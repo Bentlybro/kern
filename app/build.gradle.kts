@@ -1,7 +1,22 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+}
+
+/**
+ * compilerOptions rather than the older `kotlinOptions { jvmTarget = "17" }`.
+ *
+ * That form was deprecated for a long time and became a hard error in Kotlin 2.4, which
+ * is what broke the grouped dependency update rather than anything in the update itself.
+ * This DSL works on both, so it is a fix rather than a version bump in disguise.
+ */
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
 }
 
 /**
@@ -60,9 +75,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-    kotlinOptions {
-        jvmTarget = "17"
     }
     buildFeatures {
         compose = true

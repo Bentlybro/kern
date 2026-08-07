@@ -1,4 +1,4 @@
-package dev.kern.app.ui
+﻿package dev.kern.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -33,6 +33,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
+import dev.kern.app.runtime.AgentRepository
 import dev.kern.app.runtime.RootfsInstaller
 import dev.kern.app.runtime.UsageTracker
 import androidx.compose.runtime.getValue
@@ -55,8 +56,8 @@ import dev.kern.app.session.SessionState
 /**
  * The native fold shell (M2, decision D12).
  *
- * The workbench WebView is handed *only* an editor pane; all chrome — status, actions,
- * key row, and the posture-specific layout around it — is native Compose. IME insets are
+ * The workbench WebView is handed *only* an editor pane; all chrome â€” status, actions,
+ * key row, and the posture-specific layout around it â€” is native Compose. IME insets are
  * owned here, so opening the keyboard resizes panes instead of glitching the web layout.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -166,7 +167,7 @@ fun Shell(state: SessionState) {
                 // Tabletop always splits at the crease: content up, terminal down.
                 fold.mode == DisplayMode.Tabletop -> TabletopLayout(fold)
 
-                // Compact: one surface at a time — a split would leave neither usable.
+                // Compact: one surface at a time â€” a split would leave neither usable.
                 fold.mode == DisplayMode.Cover ->
                     if (showTerminal) TerminalPane(Modifier.fillMaxSize())
                     else EditorPane(Modifier.fillMaxSize())
@@ -203,7 +204,7 @@ fun Shell(state: SessionState) {
  * Setup's second half, reported from inside the editor.
  *
  * The toolchain finishes installing after the IDE has opened, so this is the only place
- * the user would otherwise learn that git is still on its way — and, just as usefully,
+ * the user would otherwise learn that git is still on its way â€” and, just as usefully,
  * that it has arrived. Two lines of chrome, and it removes itself when there is nothing
  * left to say.
  */
@@ -218,7 +219,7 @@ private fun SetupStrip() {
 
     Column(Modifier.fillMaxWidth()) {
         Text(
-            "$label — you can keep working",
+            "$label â€” you can keep working",
             fontFamily = FontFamily.Monospace,
             fontSize = 10.sp,
             color = MaterialTheme.colorScheme.primary,
@@ -287,6 +288,11 @@ private fun TopBar(
     onOpenSettings: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    // Re-read when the menu opens, so choosing an agent in settings is reflected without
+    // needing a restart.
+    val agentConfigured = remember(menuOpen) { AgentRepository.isConfigured(context) }
+
 
     Row(
         modifier = Modifier
@@ -309,7 +315,7 @@ private fun TopBar(
         Spacer(Modifier.width(8.dp))
 
         // Only the four surfaces worth a permanent thumb target. Everything else lives
-        // behind "more" — reachable, but not competing for the bar. Still scrollable so
+        // behind "more" â€” reachable, but not competing for the bar. Still scrollable so
         // the cover display cannot wrap the posture label.
         Row(
             modifier = Modifier
@@ -326,7 +332,10 @@ private fun TopBar(
                     onClick = onToggleTerminal,
                 )
             }
-            ActionChip("agent", onClick = onOpenCockpit)
+            // Only when there is an agent to open. Someone who never wanted one should
+            // not be carrying a permanent chip for it, and the cockpit's diff and commit
+            // half is still reachable through "more".
+            if (agentConfigured) ActionChip("agent", onClick = onOpenCockpit)
         }
 
         Spacer(Modifier.width(6.dp))
@@ -414,7 +423,7 @@ private fun ReconnectOverlay() {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
             Text(
-                "Server died — restarting…",
+                "Server died â€” restartingâ€¦",
                 modifier = Modifier.padding(top = 12.dp),
                 color = MaterialTheme.colorScheme.onBackground,
             )

@@ -129,7 +129,17 @@ private class KernTerminalViewClient(
         imm.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
     }
 
-    override fun shouldBackButtonBeMappedToEscape(): Boolean = true
+    /**
+     * Back closes the keyboard. It does not send ESC.
+     *
+     * Termux maps it to escape because on a phone there is often no other way to send
+     * one. We have an `esc` key sitting in the key row, so mapping it here bought nothing
+     * and cost a great deal: back was swallowed by the terminal instead of dismissing the
+     * keyboard, and the ESC it sent instead landed in whatever was running. Anything
+     * interactive takes that as "quit", so putting the keyboard away killed the thing you
+     * were watching.
+     */
+    override fun shouldBackButtonBeMappedToEscape(): Boolean = false
 
     override fun shouldEnforceCharBasedInput(): Boolean = true
 

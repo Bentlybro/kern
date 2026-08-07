@@ -152,11 +152,11 @@ object AgentRepository {
             pending.append(text)
             // Carriage returns count as breaks: agents redraw progress that way, and each
             // redraw is worth showing as its own line rather than being lost.
-            var index = pending.indexOfFirst { it == '\n' || it == '\r' }
+            var index = firstBreak(pending)
             while (index >= 0) {
                 addLine(pending.substring(0, index))
                 pending.delete(0, index + 1)
-                index = pending.indexOfFirst { it == '\n' || it == '\r' }
+                index = firstBreak(pending)
             }
             // Guard against an agent that never emits a newline.
             if (pending.length > 4096) {
@@ -164,6 +164,11 @@ object AgentRepository {
                 pending.setLength(0)
             }
         }
+    }
+
+    private fun firstBreak(text: CharSequence): Int {
+        for (i in text.indices) if (text[i] == '\n' || text[i] == '\r') return i
+        return -1
     }
 
     private fun addLine(raw: String) {
@@ -177,13 +182,30 @@ object AgentRepository {
         synchronized(lock) { addLine(line) }
     }
 
-    /** Colour and cursor control read as noise once the pane is native. */
-    private val ANSI = Regex("\\[[0-9;?]*[a-zA-Z]|\\][^]*|[()][B0]")
-
-    private fun CharSequence.indexOfFirst(predicate: (Char) -> Boolean): Int {
-        for (i in indices) if (predicate(this[i])) return i
-        return -1
-    }
+    /**
+     * Colour and cursor control, which read as noise once the pane is native.
+     *
+     * Every branch is anchored on ESC, and ESC is written as `` rather than typed
+     * literally so the source stays greppable and free of invisible bytes.
+     *
+     * An earlier version matched `[…m` *without* requiring the escape in front of it.
+     * That stripped the visible half of each sequence and left every bare ESC in place,
+     * which is why Python's `>>>` prompt arrived as `=>>>`: the stray was the ESC of a
+     * two-character `ESC =` keypad-mode sequence, which has no `[` to match on at all.
+     */
+    private val ANSI = Regex(
+        // CSI: ESC [ … final byte. ESC[0m, ESC[?2004h, ESC[2K and friends.
+        "\\[[0-9;?:<>=!]*[@-~]" +
+            // OSC: ESC ] … BEL, used for window titles.
+            "|\\][^]*" +
+            // Character set selection, e.g. ESC ( B.
+            "|[()][AB0-2]" +
+            // Two-character sequences: ESC =, ESC >, ESC M, ESC 7 …
+            "|[=><78MNOcDEHZ]" +
+            // Anything left over, including a lone ESC. Tab, newline and carriage return
+            // are deliberately excluded — they carry meaning.
+            "|[ --]",
+    )
 
     // ---- what the cockpit reads ---------------------------------------------
 

@@ -1,7 +1,9 @@
 # 11 — Embedded Linux: dropping the Termux dependency
 
-**Status: proven on device 2026-08-07.** A full Ubuntu 24.04.4 LTS runs inside the app's
-own sandbox, with `apt` working, and no second app involved.
+**Status: proven on device 2026-08-07.** A full Ubuntu LTS runs inside the app's own
+sandbox, with `apt` working, and no second app involved. Proven first on 24.04 and now
+shipping 26.04; the verification table below is from the original 24.04 run, and 26.04 was
+re-verified the same way.
 
 This supersedes the staged plan in decision **D4** (which assumed we would eventually
 build a Termux-prefix bootstrap). The PRoot route is better: it is self-contained, gives
@@ -116,13 +118,43 @@ without measuring — it forces the slow path.
 - **code-server still needs its token** — it remains a localhost HTTP server, so risk R16
   stays closed by the existing `--auth password` mechanism.
 
-## Open questions before committing
+## Performance — measured, 2026-08-07
 
-1. **Performance.** PRoot's ptrace tax on syscall-heavy work (npm install, compilers,
-   language servers). Must be measured against the current Termux-native setup rather
-   than argued about.
-2. **Process survival.** Guest processes are children of *our* app, so Android killing us
-   kills the session — Termux at least had its own foreground service. tmux inside the
-   guest plus our existing foreground service is the likely answer.
-3. **First-run cost.** ~28 MB download, plus apt on top; several minutes and 1–2 GB of
-   storage before the IDE is usable.
+The ptrace tax was the largest open risk in this design, so it was measured rather than
+argued about. The honest comparison is the **same file tree walked twice**: once by
+Android's own `find` with no PRoot, once inside the guest. Same storage, same 14,761
+files, so the difference is the tax and nothing else.
+
+| Measurement | Result |
+|---|---|
+| Syscall storm, native | 1235 ms |
+| Syscall storm, under PRoot | 1466 ms — **1.19×** |
+| PRoot process launch | ~285 ms |
+| python, 5M-iteration loop (pure CPU) | 471 ms |
+| python interpreter start (mmap/openat heavy) | 158 ms |
+| `git status` / `git log` on a small repo | 74 ms / 46 ms |
+| ripgrep over `/usr/include` | 80 ms |
+
+**About 19% on syscall-heavy work, and nothing on CPU** — far better than the 2–5× that
+ptrace usually implies, because `seccomp_filter = yes` keeps most syscalls off the traced
+path. This is the concrete reason not to set `PROOT_NO_SECCOMP=1`.
+
+The cost that does matter is the ~285 ms to start a PRoot. That lands on *our* short-lived
+`LinuxRuntime.run` calls, not on the user's builds, and it is why anything long-running —
+code-server, the agent — is held open rather than re-entered per command.
+
+## Process survival — partly answered
+
+Backgrounded with the screen off for four minutes: guest processes went 71 → 80 and
+code-server kept its listening sockets. Nothing was killed.
+
+**This is a best case, not a verdict.** The test device has "disable child process
+restrictions" turned on in developer options, so it says nothing about a stock phone,
+where the 32-process phantom killer applies — and 71 processes is already well past that
+threshold. Re-testing on an untouched device is still outstanding, and the status screen
+continues to warn about it.
+
+## First-run cost — answered
+
+~400 MB of download and ~1.2 GB installed, with a usable editor at **133 s** and the full
+toolchain at 184 s. See [12 — Setup](12-setup.md).

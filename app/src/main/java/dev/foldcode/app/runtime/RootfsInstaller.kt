@@ -25,8 +25,22 @@ object RootfsInstaller {
 
     private const val TAG = "FoldCode"
 
+    /**
+     * Ubuntu 26.04 LTS, verified on-device against this PRoot build: fake root, apt,
+     * dpkg's hard-link handling, and code-server all behave. Worth knowing that 26.04
+     * ships uutils (Rust) coreutils rather than GNU — it caused no trouble in testing,
+     * but it is the newest moving part if something odd ever turns up in a package's
+     * install scripts.
+     *
+     * The codename lives next to the version because [configure] writes it into
+     * sources.list, and the two drifting apart produces a rootfs that cannot install
+     * anything.
+     */
+    private const val UBUNTU_RELEASE = "26.04"
+    private const val UBUNTU_CODENAME = "resolute"
     private const val ROOTFS_URL =
-        "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/ubuntu-base-24.04.4-base-arm64.tar.gz"
+        "https://cdimage.ubuntu.com/ubuntu-base/releases/$UBUNTU_RELEASE/release/" +
+            "ubuntu-base-$UBUNTU_RELEASE-base-arm64.tar.gz"
     private const val CODE_SERVER_VERSION = "4.131.0"
     private const val CODE_SERVER_URL =
         "https://github.com/coder/code-server/releases/download/v$CODE_SERVER_VERSION/code-server_${CODE_SERVER_VERSION}_arm64.deb"
@@ -44,9 +58,13 @@ object RootfsInstaller {
     private val _stage = MutableStateFlow<Stage>(Stage.Idle)
     val stage: StateFlow<Stage> = _stage.asStateFlow()
 
-    /** Roughly how much this will cost the user, shown before they commit. */
-    const val ESTIMATED_DOWNLOAD_MB = 120
-    const val ESTIMATED_DISK_MB = 900
+    /**
+     * Roughly how much this will cost the user, shown before they commit. Measured on
+     * device rather than guessed: the rootfs is ~34 MB, the code-server .deb alone is
+     * 218 MB, and the rest is packages. The finished guest measures ~1.2 GB.
+     */
+    const val ESTIMATED_DOWNLOAD_MB = 400
+    const val ESTIMATED_DISK_MB = 1400
 
     suspend fun install(context: Context): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -200,7 +218,11 @@ object RootfsInstaller {
         // arm64 lives on ports.ubuntu.com, not archive.ubuntu.com.
         write(
             File(root, "etc/apt/sources.list"),
-            listOf("noble", "noble-updates", "noble-security").joinToString("\n") {
+            listOf(
+                UBUNTU_CODENAME,
+                "$UBUNTU_CODENAME-updates",
+                "$UBUNTU_CODENAME-security",
+            ).joinToString("\n") {
                 "deb http://ports.ubuntu.com/ubuntu-ports $it main universe restricted multiverse"
             } + "\n",
         )

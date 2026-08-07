@@ -185,17 +185,20 @@ switch ($Command) {
         if (-not $Args) { throw "Usage: device.ps1 guest '<command>'" }
         $lib   = Get-NativeLibDir
         $data  = "/data/data/$Pkg/files"
+        # Optional override so a candidate rootfs can be exercised side by side with the
+        # installed one, e.g. $env:FOLDCODE_ROOTFS = 'linux26' before a distro upgrade.
+        $guestDir = if ($env:FOLDCODE_ROOTFS) { $env:FOLDCODE_ROOTFS } else { 'linux' }
         $b64   = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($Args -join ' ')))
         $vars  = "LD_LIBRARY_PATH=$lib PROOT_LOADER=$lib/libproot_loader.so " +
                  "PROOT_LOADER32=$lib/libproot_loader32.so " +
-                 "PROOT_TMP_DIR=$data/tmp PROOT_L2S_DIR=$data/linux/.l2s " +
+                 "PROOT_TMP_DIR=$data/tmp PROOT_L2S_DIR=$data/$guestDir/.l2s " +
                  "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin " +
                  "HOME=/root USER=root TERM=xterm-256color LANG=C.UTF-8 TMPDIR=/tmp"
         # Only base64 and fixed paths end up in this string, so it never contains a
         # quote of its own and can be single-quoted for the device shell safely.
-        $remote = "mkdir -p $data/tmp $data/l2s $data/linux/tmp; " +
-                  "echo $b64 | base64 -d > $data/linux/tmp/fc-guest.sh; " +
-                  "$vars exec $lib/libproot.so -0 -l -r $data/linux " +
+        $remote = "mkdir -p $data/tmp $data/$guestDir/.l2s $data/$guestDir/tmp; " +
+                  "echo $b64 | base64 -d > $data/$guestDir/tmp/fc-guest.sh; " +
+                  "$vars exec $lib/libproot.so -0 -l -r $data/$guestDir " +
                   "-b /proc -b /sys -b /dev -b /dev/pts -w /root " +
                   "/bin/bash /tmp/fc-guest.sh"
         Invoke-Adb shell "run-as $Pkg sh -c '$remote'"

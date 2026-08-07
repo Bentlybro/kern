@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -144,6 +146,7 @@ fun Shell(state: SessionState) {
             onOpenProjects = { showProjects = true },
             onOpenCockpit = { showCockpit = true },
             onOpenStatus = { showStatus = true },
+            onOpenSettings = { showSettings = true },
         )
 
         Box(modifier = Modifier.weight(1f)) {
@@ -233,7 +236,10 @@ private fun TopBar(
     onOpenProjects: () -> Unit,
     onOpenCockpit: () -> Unit,
     onOpenStatus: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -254,18 +260,17 @@ private fun TopBar(
         )
         Spacer(Modifier.width(8.dp))
 
-        // Chips scroll rather than squeeze the posture label into wrapping.
+        // Only the four surfaces worth a permanent thumb target. Everything else lives
+        // behind "more" — reachable, but not competing for the bar. Still scrollable so
+        // the cover display cannot wrap the posture label.
         Row(
             modifier = Modifier
                 .weight(1f)
                 .horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ActionChip("agent", onClick = onOpenCockpit)
-            ActionChip("proj", onClick = onOpenProjects)
             ActionChip("files") { WorkbenchWebView.Commands.toggleSidebar() }
-            ActionChip("open") { WorkbenchWebView.Commands.quickOpen() }
-            ActionChip("cmd") { WorkbenchWebView.Commands.commandPalette() }
+            ActionChip("project", onClick = onOpenProjects)
             if (mode != DisplayMode.Tabletop) {
                 ActionChip(
                     label = if (terminalShown) "editor" else "term",
@@ -273,8 +278,7 @@ private fun TopBar(
                     onClick = onToggleTerminal,
                 )
             }
-            ActionChip("chat") { WorkbenchWebView.Commands.toggleChatPanel() }
-            ActionChip("status", onClick = onOpenStatus)
+            ActionChip("agent", onClick = onOpenCockpit)
         }
 
         Spacer(Modifier.width(6.dp))
@@ -286,7 +290,47 @@ private fun TopBar(
             softWrap = false,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+
+        Box {
+            ActionChip("more") { menuOpen = true }
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+            ) {
+                // The command palette earns its place here rather than being dropped:
+                // it is the way into every VS Code command that has no chip.
+                MenuAction("go to file", { menuOpen = false }) {
+                    WorkbenchWebView.Commands.quickOpen()
+                }
+                MenuAction("command palette", { menuOpen = false }) {
+                    WorkbenchWebView.Commands.commandPalette()
+                }
+                MenuAction("chat", { menuOpen = false }) {
+                    WorkbenchWebView.Commands.toggleChatPanel()
+                }
+                MenuAction("status", { menuOpen = false }, onOpenStatus)
+                MenuAction("settings", { menuOpen = false }, onOpenSettings)
+            }
+        }
     }
+}
+
+@Composable
+private fun MenuAction(label: String, dismiss: () -> Unit, onClick: () -> Unit) {
+    DropdownMenuItem(
+        text = {
+            Text(
+                label,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        },
+        onClick = {
+            dismiss()
+            onClick()
+        },
+    )
 }
 
 @Composable

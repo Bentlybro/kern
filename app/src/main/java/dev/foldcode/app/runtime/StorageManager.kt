@@ -3,6 +3,7 @@ package dev.foldcode.app.runtime
 import android.content.Context
 import android.os.StatFs
 import java.io.File
+import java.nio.file.Files
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -62,12 +63,26 @@ object StorageManager {
         )
     }
 
+    /**
+     * Size of a tree, counting each byte once.
+     *
+     * Symlinks are skipped rather than measured. PRoot rewrites every hard link in the
+     * guest into a symlink pointing into `.l2s`, and `File.length()` on a symlink reports
+     * the *target's* size — so counting them bills the same bytes once per link. Ubuntu is
+     * full of hard links, and the result was a rootfs reported at 3.2 GB that `du` put at
+     * 1.2 GB. Symlinked directories are not descended into either, for the same reason.
+     */
     private fun sizeMb(dir: File): Long {
         if (!dir.exists()) return 0
         var total = 0L
         dir.walkTopDown()
+            .onEnter { !Files.isSymbolicLink(it.toPath()) }
             .onFail { _, _ -> /* unreadable entries are not worth failing the whole scan */ }
-            .forEach { if (it.isFile) total += it.length() }
+            .forEach { entry ->
+                if (entry.isFile && !Files.isSymbolicLink(entry.toPath())) {
+                    total += entry.length()
+                }
+            }
         return total / (1024 * 1024)
     }
 

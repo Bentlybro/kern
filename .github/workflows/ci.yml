@@ -1,0 +1,68 @@
+name: CI
+
+# Runs on dev and on pull requests, and never sees a secret.
+#
+# `pull_request` is deliberate. It builds the *merge result* of a fork's branch with the
+# fork's own permissions and no access to repository secrets, so untrusted code cannot
+# read the signing key. `pull_request_target` would run with our permissions and secrets
+# available, which is how public Android repositories leak their keys — do not swap it in
+# to "fix" a fork build failing.
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev, main]
+
+# Least privilege: this workflow only ever reads the repository.
+permissions:
+  contents: read
+
+# A newer push supersedes an older run on the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble debug
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Lint
+        run: ./gradlew lintDebug --no-daemon
+        continue-on-error: true
+
+      - name: Unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon
+
+      # Debug builds are signed with Android's throwaway debug key, so this artifact is
+      # safe to publish and cannot be installed over a release build.
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kern-debug-${{ github.sha }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report-${{ github.sha }}
+          path: app/build/reports/lint-results-debug.html
+          retention-days: 14

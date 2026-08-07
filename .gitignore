@@ -11,3 +11,10 @@ captures/
 
 # Device screenshots - debugging output, not source
 tools/shots/
+
+*.jks
+*.keystore
+*.p12
+keystore.properties
+key.properties
+release-key*

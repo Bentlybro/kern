@@ -4,6 +4,19 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+/**
+ * The single source of truth for the version. The release workflow reads this to name the
+ * tag, and the in-app updater compares it against the latest GitHub release, so it must
+ * not be duplicated anywhere else.
+ */
+val appVersionName = "0.2.0"
+
+/**
+ * Overridable so CI can guarantee a monotonically increasing code without anyone having
+ * to remember to bump it: `-PversionCode=<run number>`.
+ */
+val appVersionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 2
+
 android {
     namespace = "dev.kern.app"
     compileSdk = 36
@@ -12,14 +25,36 @@ android {
         applicationId = "dev.kern.app"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0-m1"
+        versionCode = appVersionCode
+        versionName = appVersionName
+    }
+
+    signingConfigs {
+        create("release") {
+            // Supplied by CI from encrypted secrets and never present in the repository.
+            // Android refuses an update signed by a different key than the installed app,
+            // so this key *is* the security boundary for over-the-air updates: losing it
+            // means nobody can upgrade, and leaking it means someone else can.
+            val keystore = System.getenv("KEYSTORE_FILE")
+            if (keystore != null) {
+                storeFile = file(keystore)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Unsigned rather than broken when built locally without the key.
+            signingConfig = if (System.getenv("KEYSTORE_FILE") != null) {
+                signingConfigs.getByName("release")
+            } else {
+                null
+            }
         }
     }
     compileOptions {
@@ -31,6 +66,8 @@ android {
     }
     buildFeatures {
         compose = true
+        // The updater compares BuildConfig.VERSION_NAME against the latest release.
+        buildConfig = true
     }
 
     externalNativeBuild {

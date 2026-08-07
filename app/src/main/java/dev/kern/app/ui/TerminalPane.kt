@@ -68,19 +68,27 @@ fun TerminalPane(modifier: Modifier = Modifier) {
         }
 
         Box(Modifier.fillMaxSize()) {
-            // key() on the session id, so switching tabs replaces the whole AndroidView
-            // rather than trying to rebind a live pty to a different emulator. Without
-            // it Compose reuses the node and every tab shows the first shell.
-            key(active.id) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = {
-                        TerminalSessions.detachAll()
-                        active.view
-                    },
-                )
-            }
+            TerminalSurface(active, Modifier.fillMaxSize())
         }
+    }
+}
+
+/**
+ * Host a session's live emulator. Detaches every terminal before reparenting, and keys on
+ * the session id — without the key Compose reuses the node and rebinds a live pty to the
+ * wrong emulator, so every tab shows the first shell. The same key is what gets a restarted
+ * agent a fresh view rather than the old one rebound to a dead pty.
+ */
+@Composable
+internal fun TerminalSurface(entry: TerminalSessions.Entry, modifier: Modifier = Modifier) {
+    key(entry.id) {
+        AndroidView(
+            modifier = modifier,
+            factory = {
+                TerminalSessions.detachAll()
+                entry.view
+            },
+        )
     }
 }
 

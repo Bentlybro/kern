@@ -63,6 +63,42 @@ class PtyProcess private constructor(
         runCatching { parcel.close() }
     }
 
+    /**
+     * Drain the pty until the child goes away, keeping whatever it printed.
+     *
+     * Reading a pty master after its child exits raises EIO rather than returning EOF, so
+     * a plain `readBytes()` both throws *and* discards everything already read. Accumulate
+     * chunk by chunk and treat the error as end-of-stream. [drain] and [drainInBackground]
+     * are the same loop for callers that only need the buffer emptied.
+     */
+    fun readUntilClosed(): String {
+        val out = StringBuilder()
+        val buffer = ByteArray(4096)
+        try {
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                out.append(String(buffer, 0, read, Charsets.UTF_8))
+            }
+        } catch (e: Exception) {
+            // EIO here means the child exited; whatever we collected is the output.
+        }
+        return out.toString().trim()
+    }
+
+    /** [readUntilClosed] for a caller that needs the pty emptied rather than read. */
+    fun drain() {
+        runCatching {
+            val buffer = ByteArray(4096)
+            while (input.read(buffer) >= 0) { /* discard */ }
+        }
+    }
+
+    /** [drain] on a daemon thread called [name], for a child that outlives this call. */
+    fun drainInBackground(name: String) {
+        Thread({ drain() }, name).apply { isDaemon = true }.start()
+    }
+
     companion object {
         /**
          * Spawn [command] on a fresh pty.

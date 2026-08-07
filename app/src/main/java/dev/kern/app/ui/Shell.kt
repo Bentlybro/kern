@@ -41,6 +41,42 @@ import dev.kern.app.session.SessionService
 import dev.kern.app.session.SessionState
 
 /**
+ * Where the shell is. One slot rather than a flag per screen: precedence used to be
+ * written down once per notation — five back handlers, five `if` blocks and one usage
+ * effect — and the copies had already drifted apart.
+ *
+ * The terminal is deliberately not a destination. It is a pane inside [Editor], shown
+ * beside the workbench on the wide postures, so it stays a boolean.
+ */
+sealed interface ShellDestination {
+
+    /** Which bucket time spent here belongs to (M5a). */
+    val surface: UsageTracker.Surface
+
+    data object Editor : ShellDestination {
+        override val surface = UsageTracker.Surface.Editor
+    }
+
+    data object Projects : ShellDestination {
+        override val surface = UsageTracker.Surface.Projects
+    }
+
+    data object Cockpit : ShellDestination {
+        override val surface = UsageTracker.Surface.Cockpit
+    }
+
+    // Status and Settings are chrome, not work. Counting them as editor time is what made
+    // the editorShare number too flattering to settle D12 with.
+    data object Status : ShellDestination {
+        override val surface = UsageTracker.Surface.Chrome
+    }
+
+    data object Settings : ShellDestination {
+        override val surface = UsageTracker.Surface.Chrome
+    }
+}
+
+/**
  * The native fold shell (M2, decision D12).
  *
  * The workbench WebView is handed *only* an editor pane; all chrome â€” status, actions,
@@ -52,75 +88,74 @@ import dev.kern.app.session.SessionState
 fun Shell(state: SessionState) {
     val fold = rememberFoldState()
     var showTerminal by remember { mutableStateOf(false) }
-    var showProjects by remember { mutableStateOf(false) }
     // Always open on the IDE. The cockpit is a place you choose to go (the "agent" chip),
     // not something that greets you.
-    var showCockpit by remember { mutableStateOf(false) }
-    var showStatus by remember { mutableStateOf(false) }
-    var showSettings by remember { mutableStateOf(false) }
+    var destination by remember { mutableStateOf<ShellDestination>(ShellDestination.Editor) }
 
-    BackHandler(enabled = showSettings) { showSettings = false }
-    BackHandler(enabled = showStatus && !showSettings) { showStatus = false }
-    BackHandler(enabled = showProjects) { showProjects = false }
-    BackHandler(enabled = showCockpit && !showProjects) { showCockpit = false }
-    // Must exclude every overlay above it. Compose gives priority to the most recently
-    // registered enabled handler, so without these terms this one outranks the settings
-    // and status handlers declared above and they never fire — back sent ESC into a
+    // The two conditions are each other's negation, so precedence cannot be got wrong.
+    // Compose gives priority to the most recently registered enabled handler, and while
+    // precedence was spelled out by hand the escape handler outranked the settings and
+    // status handlers declared above it and they never fired — back sent ESC into a
     // detached WebView and those screens simply ignored the gesture.
-    BackHandler(
-        enabled = !showProjects && !showCockpit && !showSettings && !showStatus,
-    ) { WorkbenchWebView.Commands.escape() }
+    BackHandler(enabled = destination != ShellDestination.Editor) {
+        destination = ShellDestination.Editor
+    }
+    BackHandler(enabled = destination == ShellDestination.Editor) {
+        WorkbenchWebView.Commands.escape()
+    }
 
     // M5a: record where session time actually goes, so decision D12 can be settled with
     // a number instead of a hunch.
     val context = LocalContext.current
-    LaunchedEffect(showCockpit, showProjects, showTerminal) {
+    LaunchedEffect(destination, showTerminal) {
+        val onTerminal = destination == ShellDestination.Editor && showTerminal
         UsageTracker.enter(
             context,
-            when {
-                showProjects -> UsageTracker.Surface.Projects
-                showCockpit -> UsageTracker.Surface.Cockpit
-                showTerminal -> UsageTracker.Surface.Terminal
-                else -> UsageTracker.Surface.Editor
-            },
+            if (onTerminal) UsageTracker.Surface.Terminal else destination.surface,
         )
     }
     DisposableEffect(Unit) { onDispose { UsageTracker.flush(context) } }
 
-    if (showSettings) {
-        SettingsScreen(
-            onDismiss = { showSettings = false },
-            // Deleting the guest invalidates the whole session; drop back to setup.
-            onGuestDeleted = {
-                showSettings = false
-                SessionService.stop(context)
-            },
-        )
-        return
-    }
+    when (destination) {
+        ShellDestination.Settings -> {
+            SettingsScreen(
+                onDismiss = { destination = ShellDestination.Editor },
+                // Deleting the guest invalidates the whole session; drop back to setup.
+                onGuestDeleted = {
+                    destination = ShellDestination.Editor
+                    SessionService.stop(context)
+                },
+            )
+            return
+        }
 
-    if (showStatus) {
-        StatusScreen(
-            onDismiss = { showStatus = false },
-            onOpenSettings = { showStatus = false; showSettings = true },
-        )
-        return
-    }
+        ShellDestination.Status -> {
+            StatusScreen(
+                onDismiss = { destination = ShellDestination.Editor },
+                onOpenSettings = { destination = ShellDestination.Settings },
+            )
+            return
+        }
 
-    if (showCockpit && !showProjects) {
-        CockpitScreen(onDismiss = { showCockpit = false })
-        return
-    }
+        ShellDestination.Cockpit -> {
+            CockpitScreen(onDismiss = { destination = ShellDestination.Editor })
+            return
+        }
 
-    if (showProjects) {
-        ProjectsScreen(
-            onOpenFolder = { path ->
-                WorkbenchWebView.openFolder(path)
-                showProjects = false
-            },
-            onDismiss = { showProjects = false },
-        )
-        return
+        ShellDestination.Projects -> {
+            ProjectsScreen(
+                onOpenFolder = { path ->
+                    WorkbenchWebView.openFolder(path)
+                    destination = ShellDestination.Editor
+                },
+                onDismiss = { destination = ShellDestination.Editor },
+            )
+            return
+        }
+
+        // Falls through to the layout below; every other destination has taken over the
+        // whole window and returned.
+        ShellDestination.Editor -> Unit
     }
 
     DisposableEffect(Unit) {
@@ -147,10 +182,7 @@ fun Shell(state: SessionState) {
             mode = fold.mode,
             terminalShown = showTerminal,
             onToggleTerminal = { showTerminal = !showTerminal },
-            onOpenProjects = { showProjects = true },
-            onOpenCockpit = { showCockpit = true },
-            onOpenStatus = { showStatus = true },
-            onOpenSettings = { showSettings = true },
+            onNavigate = { destination = it },
             onNewShell = { showTerminal = true },
             onQuit = {
                 // Stops the supervisor, which takes code-server and the guest with it,

@@ -39,10 +39,7 @@ internal fun TopBar(
     mode: DisplayMode,
     terminalShown: Boolean,
     onToggleTerminal: () -> Unit,
-    onOpenProjects: () -> Unit,
-    onOpenCockpit: () -> Unit,
-    onOpenStatus: () -> Unit,
-    onOpenSettings: () -> Unit,
+    onNavigate: (ShellDestination) -> Unit,
     onNewShell: () -> Unit,
     onQuit: () -> Unit,
 ) {
@@ -84,7 +81,7 @@ internal fun TopBar(
         ) {
             ActionChip("files") { WorkbenchWebView.Commands.toggleSidebar() }
             ActionChip("git") { WorkbenchWebView.Commands.toggleSourceControl() }
-            ActionChip("project", onClick = onOpenProjects)
+            ActionChip("project") { onNavigate(ShellDestination.Projects) }
             if (mode != DisplayMode.Tabletop) {
                 ActionChip(
                     label = if (terminalShown) "editor" else "term",
@@ -95,7 +92,7 @@ internal fun TopBar(
             // Only when there is an agent to open. Someone who never wanted one should
             // not be carrying a permanent chip for it, and the cockpit's diff and commit
             // half is still reachable through "more".
-            if (agentConfigured) ActionChip("agent", onClick = onOpenCockpit)
+            if (agentConfigured) ActionChip("agent") { onNavigate(ShellDestination.Cockpit) }
         }
 
         Spacer(Modifier.width(6.dp))
@@ -129,8 +126,12 @@ internal fun TopBar(
                     TerminalSessions.openShell(context)
                     onNewShell()
                 }
-                MenuAction("status", { menuOpen = false }, onOpenStatus)
-                MenuAction("settings", { menuOpen = false }, onOpenSettings)
+                MenuAction("status", { menuOpen = false }) {
+                    onNavigate(ShellDestination.Status)
+                }
+                MenuAction("settings", { menuOpen = false }) {
+                    onNavigate(ShellDestination.Settings)
+                }
                 MenuAction("quit", { menuOpen = false }, onQuit)
             }
         }

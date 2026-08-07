@@ -8,16 +8,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -32,7 +28,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,7 +41,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.kern.app.runtime.AgentRepository
 import dev.kern.app.runtime.GitCommands
@@ -96,18 +90,14 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .windowInsetsPadding(WindowInsets.systemBars)
-            .imePadding(),
-    ) {
+    ScreenSurface {
+        // Not the shared ScreenHeader: this bar carries a live dot and the branch where the
+        // other screens carry a title. The padding matches it, so the headers still line up.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val running = agent != null
@@ -137,11 +127,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                     )
                 }
             }
-            onDismiss?.let {
-                TextButton(onClick = it) {
-                    Text("close", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                }
-            }
+            onDismiss?.let { HeaderAction("close", it) }
         }
 
         // Start and stop, or say plainly that no agent is set.
@@ -160,9 +146,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 )
 
                 agent != null -> {
-                    TextButton(onClick = { TerminalSessions.stopAgent() }) {
-                        Text("stop", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                    }
+                    HeaderAction("stop") { TerminalSessions.stopAgent() }
                     Text(
                         command,
                         fontFamily = FontFamily.Monospace,
@@ -196,17 +180,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
             if (showDiff) {
                 DiffView(diff)
             } else if (agent != null) {
-                // The real emulator, keyed so a restarted agent gets a fresh view rather
-                // than the old one rebound to a dead pty.
-                key(agent.id) {
-                    AndroidView(
-                        modifier = Modifier.fillMaxSize(),
-                        factory = {
-                            TerminalSessions.detachAll()
-                            agent.view
-                        },
-                    )
-                }
+                TerminalSurface(agent, Modifier.fillMaxSize())
             } else {
                 Text(
                     if (command.isBlank()) {

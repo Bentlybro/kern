@@ -2,7 +2,6 @@ package dev.kern.app
 
 import android.os.Bundle
 import android.view.KeyEvent
-import android.view.View
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -30,8 +29,7 @@ import dev.kern.app.session.SessionState
 import dev.kern.app.ui.KernTheme
 import dev.kern.app.ui.SetupScreen
 import dev.kern.app.ui.Shell
-import dev.kern.app.ui.TerminalSessions
-import dev.kern.app.ui.WorkbenchWebView
+import dev.kern.app.ui.focusedInputView
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,7 +39,7 @@ class MainActivity : ComponentActivity() {
         // Eager start: once Linux is set up there is nothing to decide, so begin booting
         // code-server the moment the app opens rather than waiting for a button. Starting
         // it is what costs seconds, and doing it now overlaps with the UI drawing.
-        if (LinuxRuntime.isInstalled(this) && LinuxRuntime.isCodeServerInstalled(this)) {
+        if (LinuxRuntime.isReady(this)) {
             SessionService.start(this)
         }
 
@@ -58,10 +56,7 @@ class MainActivity : ComponentActivity() {
      * focus so a Bluetooth keyboard behaves like it does on the desktop.
      */
     override fun dispatchKeyShortcutEvent(event: KeyEvent): Boolean {
-        val target: View? = when {
-            TerminalSessions.hasFocus() -> TerminalSessions.current()
-            else -> WorkbenchWebView.current()
-        }
+        val target = focusedInputView()
         if (target != null && target.dispatchKeyEvent(event)) return true
         return super.dispatchKeyShortcutEvent(event)
     }
@@ -81,9 +76,7 @@ private fun AppRoot() {
     // launch and never revisited, so deleting the environment stranded the app on
     // "starting linux" instead of returning it to setup.
     val installChanges by LinuxRuntime.installChanges.collectAsStateWithLifecycle()
-    val ready = remember(installChanges) {
-        LinuxRuntime.isInstalled(context) && LinuxRuntime.isCodeServerInstalled(context)
-    }
+    val ready = remember(installChanges) { LinuxRuntime.isReady(context) }
 
     // An environment with no session running should start one. This is what carries the
     // app from setup finishing straight into the IDE, without the user pressing a second

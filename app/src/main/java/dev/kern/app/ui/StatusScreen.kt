@@ -7,15 +7,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -66,35 +63,11 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
     val totals = remember(refresh) { UsageTracker.totals(context) }
     val totalMs = totals.values.sum()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .windowInsetsPadding(WindowInsets.systemBars),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "status",
-                fontFamily = FontFamily.Monospace,
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = onOpenSettings) {
-                Text("settings", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-            }
-            TextButton(onClick = { refresh++ }) {
-                Text("recheck", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-            }
-            TextButton(onClick = onDismiss) {
-                Text("close", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-            }
+    ScreenSurface {
+        ScreenHeader("status") {
+            HeaderAction("settings", onOpenSettings)
+            HeaderAction("recheck") { refresh++ }
+            HeaderAction("close", onDismiss)
         }
 
         if (loading) {

@@ -95,6 +95,14 @@ object LinuxRuntime {
     fun isCodeServerInstalled(context: Context): Boolean =
         File(rootfsDir(context), "usr/bin/code-server").exists()
 
+    /**
+     * Everything the IDE needs to open. The app's whole top-level route turns on this, so
+     * it lives here rather than being spelled out at each of the three places that ask —
+     * a third condition added to two of three hands the user the IDE while the setup
+     * screen still thinks there is work to do.
+     */
+    fun isReady(context: Context): Boolean = isInstalled(context) && isCodeServerInstalled(context)
+
     /** How the guest describes itself, e.g. "Ubuntu 26.04 LTS". */
     suspend fun osPrettyName(context: Context): String? =
         run(
@@ -395,12 +403,7 @@ object LinuxRuntime {
         serverProcess = process
         // Drain the pty in the background: the server writes to a log file, but anything
         // that does reach the pty would eventually fill the buffer and stall it.
-        Thread({
-            runCatching {
-                val buffer = ByteArray(4096)
-                while (process.input.read(buffer) >= 0) { /* discard */ }
-            }
-        }, "KernServerDrain").apply { isDaemon = true }.start()
+        process.drainInBackground("KernServerDrain")
 
         return true
     }
@@ -464,32 +467,10 @@ object LinuxRuntime {
                 cwd = context.filesDir.absolutePath,
             ) ?: return@withTimeoutOrNull "spawn failed"
             try {
-                readUntilClosed(process)
+                process.readUntilClosed()
             } finally {
                 process.close()
             }
         } ?: "timed out"
-    }
-
-    /**
-     * Drain a pty until the child goes away, keeping whatever it printed.
-     *
-     * Reading a pty master after its child exits raises EIO rather than returning EOF, so
-     * a plain `readBytes()` both throws *and* discards everything already read. Accumulate
-     * chunk by chunk and treat the error as end-of-stream.
-     */
-    private fun readUntilClosed(process: PtyProcess): String {
-        val out = StringBuilder()
-        val buffer = ByteArray(4096)
-        try {
-            while (true) {
-                val read = process.input.read(buffer)
-                if (read < 0) break
-                out.append(String(buffer, 0, read, Charsets.UTF_8))
-            }
-        } catch (e: Exception) {
-            // EIO here means the child exited; whatever we collected is the output.
-        }
-        return out.toString().trim()
     }
 }

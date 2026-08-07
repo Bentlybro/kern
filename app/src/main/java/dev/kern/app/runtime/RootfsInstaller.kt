@@ -114,8 +114,9 @@ object RootfsInstaller {
      * speaking TLS from Go (gh) or curl fails with "certificate signed by unknown
      * authority". The rest just make the IDE useful straight away.
      */
-    private const val TOOLS =
-        "ca-certificates git gh tmux curl ripgrep python3 python3-pip"
+    private val TOOLS = listOf(
+        "ca-certificates", "git", "gh", "tmux", "curl", "ripgrep", "python3", "python3-pip",
+    )
 
     /**
      * Setup, in two halves.
@@ -215,12 +216,7 @@ object RootfsInstaller {
             logLine("Editor ready — installing the toolchain in the background")
 
             _stage.value = Stage.Working("Installing tools")
-            LinuxRuntime.run(
-                context,
-                "apt-get install -y $TOOLS 2>&1; update-ca-certificates 2>&1",
-                timeoutMs = 1_200_000,
-                onLine = ::logLine,
-            )
+            Apt.install(context, TOOLS, ::logLine)
 
             _stage.value = Stage.Working("Finishing up")
             GuestConfig.polish(context)
@@ -300,7 +296,7 @@ object RootfsInstaller {
         ) ?: return false
 
         // tar is chatty on the pty; drain it so a full buffer cannot stall extraction.
-        runCatching { process.input.readBytes() }
+        process.drain()
         process.waitFor()
         process.close()
 

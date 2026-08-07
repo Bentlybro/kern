@@ -79,9 +79,7 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
     // turns true partway through setup. Gating on `installing` too is what stops the
     // screen offering to open the IDE while apt is still working — starting the session
     // then races dpkg for its lock, and the session fails and bounces back here.
-    val ready = !installing && remember(stage, installChanges) {
-        LinuxRuntime.isInstalled(context) && LinuxRuntime.isCodeServerInstalled(context)
-    }
+    val ready = !installing && remember(stage, installChanges) { LinuxRuntime.isReady(context) }
 
     Column(
         modifier = Modifier

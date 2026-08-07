@@ -125,12 +125,7 @@ object GitHubAuth {
      */
     suspend fun installTools(context: Context): Boolean {
         _step.value = Step.Working("Installing git and the GitHub CLI")
-        LinuxRuntime.run(context, "apt-get update -qq", timeoutMs = 300_000)
-        LinuxRuntime.run(
-            context,
-            "apt-get install -y git gh tmux ca-certificates && update-ca-certificates",
-            timeoutMs = 900_000,
-        )
+        Apt.install(context, listOf("git", "gh", "tmux", "ca-certificates"))
 
         val account = account(context)
         val ok = account !is Account.ToolsMissing
@@ -179,12 +174,7 @@ object GitHubAuth {
         loginProcess = process
 
         // The script says little, but an unread pty eventually fills and would stall it.
-        Thread {
-            runCatching {
-                val sink = ByteArray(4096)
-                while (process.input.read(sink) >= 0) Unit
-            }
-        }.apply { isDaemon = true }.start()
+        process.drainInBackground("KernGhAuth")
 
         var pane = ""
         var cancelled = false

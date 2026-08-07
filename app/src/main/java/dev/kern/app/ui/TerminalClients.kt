@@ -20,6 +20,9 @@ internal class KernTerminalViewClient(
     override fun onScale(scale: Float): Float = 1.0f
 
     override fun onSingleTapUp(e: MotionEvent?) {
+        // The InputMethodManager on purpose, not the insets controller the rest of the
+        // app drives the IME with (`Ime.kt`): there is no evidence the controller raises
+        // the keyboard from a tap here.
         view.requestFocus()
         val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE)
             as android.view.inputmethod.InputMethodManager
@@ -51,11 +54,11 @@ internal class KernTerminalViewClient(
 
     override fun onLongPress(event: MotionEvent?): Boolean = false
 
-    override fun readControlKey(): Boolean = KeyRowState.ctrl
+    override fun readControlKey(): Boolean = ModifierKeys.ctrl
 
-    override fun readAltKey(): Boolean = KeyRowState.alt
+    override fun readAltKey(): Boolean = ModifierKeys.alt
 
-    override fun readShiftKey(): Boolean = KeyRowState.shift
+    override fun readShiftKey(): Boolean = ModifierKeys.shift
 
     override fun readFnKey(): Boolean = false
 

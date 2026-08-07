@@ -3,8 +3,6 @@ package dev.kern.app.ui
 import android.content.Context
 import android.view.KeyEvent
 import android.view.ViewGroup
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import com.termux.terminal.TerminalSession
 import com.termux.view.TerminalView
 import dev.kern.app.runtime.LinuxRuntime
@@ -229,36 +227,12 @@ object TerminalSessions {
 
     fun isAttached(): Boolean = entries.isNotEmpty()
 
-    fun isKeyboardVisible(): Boolean {
-        val view = current() ?: return false
-        return ViewCompat.getRootWindowInsets(view)
-            ?.isVisible(WindowInsetsCompat.Type.ime()) == true
-    }
+    fun isKeyboardVisible(): Boolean = current()?.imeVisible() == true
 
     fun toggleKeyboard() {
-        val view = current() ?: return
-        view.requestFocus()
-        val controller = ViewCompat.getWindowInsetsController(view) ?: return
-        if (isKeyboardVisible()) {
-            controller.hide(WindowInsetsCompat.Type.ime())
-        } else {
-            controller.show(WindowInsetsCompat.Type.ime())
-        }
+        current()?.toggleIme()
     }
 
     private fun spToPx(context: Context, sp: Float): Int =
         (sp * context.resources.displayMetrics.scaledDensity).toInt()
-}
-
-/** Shared modifier state so the key row can drive either the workbench or a terminal. */
-object KeyRowState {
-    var ctrl: Boolean = false
-    var alt: Boolean = false
-    var shift: Boolean = false
-
-    fun clear() {
-        ctrl = false
-        alt = false
-        shift = false
-    }
 }

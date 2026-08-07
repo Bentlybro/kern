@@ -18,8 +18,6 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import dev.kern.app.runtime.LinuxRuntime
 import dev.kern.app.runtime.ProjectRepository
 import dev.kern.app.runtime.Secrets
@@ -252,25 +250,18 @@ object WorkbenchWebView {
     // (monaco-editor#4946). Since the host app owns the window, we drive the IME
     // directly - which is the whole argument for a native shell.
 
-    fun isKeyboardVisible(): Boolean {
-        val wv = instance ?: return false
-        return ViewCompat.getRootWindowInsets(wv)
-            ?.isVisible(WindowInsetsCompat.Type.ime()) == true
-    }
+    fun isKeyboardVisible(): Boolean = instance?.imeVisible() == true
 
     fun showKeyboard() {
-        val wv = instance ?: return
-        wv.requestFocus()
-        ViewCompat.getWindowInsetsController(wv)?.show(WindowInsetsCompat.Type.ime())
+        instance?.showIme()
     }
 
     fun hideKeyboard() {
-        val wv = instance ?: return
-        ViewCompat.getWindowInsetsController(wv)?.hide(WindowInsetsCompat.Type.ime())
+        instance?.hideIme()
     }
 
     fun toggleKeyboard() {
-        if (isKeyboardVisible()) hideKeyboard() else showKeyboard()
+        instance?.toggleIme()
     }
 
     // ---- selection ----------------------------------------------------------

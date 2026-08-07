@@ -33,11 +33,12 @@ estimated.
 |  |  |
 |---|---|
 | **Editor** | The real VS Code workbench (code-server) with its own chrome hidden. The web layer renders only the editor; every surface around it is native Compose. |
-| **Terminal** | A genuine PTY into the guest, drawn by a native terminal emulator — no xterm.js, no WebView in the input path. `tmux` keeps sessions alive across detach. |
+| **Terminal** | Genuine PTYs into the guest, drawn by a native terminal emulator — no xterm.js, no WebView in the input path. Multiple shells with tabs, each opening in the current project. |
 | **Linux** | Ubuntu 26.04 LTS with working `apt`, fake root, and the whole Ubuntu archive available. |
 | **Projects** | Create a project, `git clone` one, or open any folder — read natively from the guest filesystem. |
 | **GitHub** | One-tap sign-in via device flow. Registers gh as git's credential helper, so `git push` then works everywhere: the editor's Git panel, the terminal, any agent. |
 | **Adaptive** | Lays out for the screen it is on — phone, tablet, unfolded, tabletop (editor above the crease, terminal below) and desktop mode. |
+| **Optional agent** | A cockpit that runs whatever CLI coding agent you name, in a real terminal, alongside a diff and one-thumb commit. Wanting no agent is a supported choice, and the diff half still earns its place. |
 | **Input** | A coding key row with sticky modifiers, explicit keyboard control, and hardware-keyboard chords. |
 | **Health** | A status screen that says what is wrong with the environment, with a button that fixes it rather than a command to copy. |
 

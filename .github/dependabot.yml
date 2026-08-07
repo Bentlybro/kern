@@ -1,0 +1,28 @@
+version: 2
+
+updates:
+  # The important one. Every action in this repository is pinned to a commit SHA rather
+  # than a tag, which stops a hijacked tag running new code with the signing key in scope
+  # — but a pin also never picks up a security fix on its own. Dependabot understands SHA
+  # pins and raises a PR with the pin and its trailing comment both updated, which is the
+  # only thing that keeps pinning from quietly rotting.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+
+  # Monthly rather than weekly: this project has a handful of dependencies, and a stream
+  # of patch bumps on an Android project is mostly noise that trains you to ignore it.
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: deps
+    labels:
+      - dependencies
+    open-pull-requests-limit: 5

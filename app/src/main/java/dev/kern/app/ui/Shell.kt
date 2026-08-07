@@ -116,125 +116,138 @@ fun Shell(state: SessionState) {
     }
     DisposableEffect(Unit) { onDispose { UsageTracker.flush(context) } }
 
-    when (destination) {
-        ShellDestination.Settings -> {
-            SettingsScreen(
-                onDismiss = { destination = ShellDestination.Editor },
-                // Deleting the guest invalidates the whole session; drop back to setup.
-                onGuestDeleted = {
-                    destination = ShellDestination.Editor
-                    SessionService.stop(context)
-                },
-            )
-            return
-        }
-
-        ShellDestination.Status -> {
-            StatusScreen(
-                onDismiss = { destination = ShellDestination.Editor },
-                onOpenSettings = { destination = ShellDestination.Settings },
-            )
-            return
-        }
-
-        ShellDestination.Cockpit -> {
-            CockpitScreen(onDismiss = { destination = ShellDestination.Editor })
-            return
-        }
-
-        ShellDestination.Projects -> {
-            ProjectsScreen(
-                onOpenFolder = { path ->
-                    WorkbenchWebView.openFolder(path)
-                    destination = ShellDestination.Editor
-                },
-                onDismiss = { destination = ShellDestination.Editor },
-            )
-            return
-        }
-
-        // Falls through to the layout below; every other destination has taken over the
-        // whole window and returned.
-        ShellDestination.Editor -> Unit
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            WorkbenchWebView.detach()
-            TerminalSessions.detachAll()
-        }
-    }
-
+    // The strip sits above the destination, not inside the editor layout: Projects is the
+    // screen that fails *because* the toolchain has not landed yet, and while the strip
+    // lived under the editor's top bar that was the one screen unable to say so. Owning the
+    // system-bar inset here costs the screens below nothing - their ScreenSurface finds it
+    // already consumed and adds none of its own.
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .windowInsetsPadding(WindowInsets.systemBars)
-            // imeAnimationTarget rather than imePadding: the animated version resizes on
-            // every frame of the keyboard animation, and each resize makes the WebView
-            // re-lay out the entire workbench, which is what made opening and closing the
-            // keyboard feel like it was struggling. This takes the final size at once and
-            // lets the keyboard animate over a layout that has already settled.
-            .windowInsetsPadding(WindowInsets.imeAnimationTarget),
+            .windowInsetsPadding(WindowInsets.systemBars),
     ) {
-        TopBar(
-            state = state,
-            mode = fold.mode,
-            terminalShown = showTerminal,
-            onToggleTerminal = { showTerminal = !showTerminal },
-            onNavigate = { destination = it },
-            onNewShell = { showTerminal = true },
-            onQuit = {
-                // Stops the supervisor, which takes code-server and the guest with it,
-                // then closes the app. Without this the only way to shut the session
-                // down was the notification action, which is not where anyone looks.
-                SessionService.stop(context)
-                (context as? android.app.Activity)?.finish()
-            },
-        )
-
         SetupStrip()
 
-        Box(modifier = Modifier.weight(1f)) {
-            when {
-                // Tabletop always splits at the crease: content up, terminal down.
-                fold.mode == DisplayMode.Tabletop -> TabletopLayout(fold)
-
-                // Compact: one surface at a time — a split would leave neither usable.
-                fold.mode == DisplayMode.Cover ->
-                    if (showTerminal) TerminalPane(Modifier.fillMaxSize())
-                    else EditorPane(Modifier.fillMaxSize())
-
-                showTerminal -> Column(Modifier.fillMaxSize()) {
-                    EditorPane(
-                        Modifier
-                            .fillMaxWidth()
-                            .weight(0.6f),
-                    )
-                    Spacer(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                    )
-                    TerminalPane(
-                        Modifier
-                            .fillMaxWidth()
-                            .weight(0.4f),
-                    )
-                }
-
-                else -> EditorPane(Modifier.fillMaxSize())
+        when (destination) {
+            ShellDestination.Settings -> {
+                SettingsScreen(
+                    onDismiss = { destination = ShellDestination.Editor },
+                    // Deleting the guest invalidates the whole session; drop back to setup.
+                    onGuestDeleted = {
+                        destination = ShellDestination.Editor
+                        SessionService.stop(context)
+                    },
+                )
+                return@Column
             }
-            if (state is SessionState.Reconnecting) ReconnectOverlay()
+
+            ShellDestination.Status -> {
+                StatusScreen(
+                    onDismiss = { destination = ShellDestination.Editor },
+                    onOpenSettings = { destination = ShellDestination.Settings },
+                )
+                return@Column
+            }
+
+            ShellDestination.Cockpit -> {
+                CockpitScreen(onDismiss = { destination = ShellDestination.Editor })
+                return@Column
+            }
+
+            ShellDestination.Projects -> {
+                ProjectsScreen(
+                    onOpenFolder = { path ->
+                        WorkbenchWebView.openFolder(path)
+                        destination = ShellDestination.Editor
+                    },
+                    onDismiss = { destination = ShellDestination.Editor },
+                )
+                return@Column
+            }
+
+            // Falls through to the layout below; every other destination has taken over the
+            // rest of the window and returned.
+            ShellDestination.Editor -> Unit
         }
 
-        KeyRow()
+        DisposableEffect(Unit) {
+            onDispose {
+                WorkbenchWebView.detach()
+                // Only what this layout was showing. Compose applies every change before it
+                // dispatches remember observers, so the cockpit has already attached the
+                // agent by the time this runs and a global detach undid it.
+                TerminalSessions.detachShells()
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                // imeAnimationTarget rather than imePadding: the animated version resizes on
+                // every frame of the keyboard animation, and each resize makes the WebView
+                // re-lay out the entire workbench, which is what made opening and closing the
+                // keyboard feel like it was struggling. This takes the final size at once and
+                // lets the keyboard animate over a layout that has already settled.
+                .windowInsetsPadding(WindowInsets.imeAnimationTarget),
+        ) {
+            TopBar(
+                state = state,
+                mode = fold.mode,
+                terminalShown = showTerminal,
+                onToggleTerminal = { showTerminal = !showTerminal },
+                onNavigate = { destination = it },
+                onNewShell = { showTerminal = true },
+                onQuit = {
+                    // Stops the supervisor, which takes code-server and the guest with it,
+                    // then closes the app. Without this the only way to shut the session
+                    // down was the notification action, which is not where anyone looks.
+                    SessionService.stop(context)
+                    (context as? android.app.Activity)?.finish()
+                },
+            )
+
+            Box(modifier = Modifier.weight(1f)) {
+                when {
+                    // Tabletop always splits at the crease: content up, terminal down.
+                    fold.mode == DisplayMode.Tabletop -> TabletopLayout(fold)
+
+                    // Compact: one surface at a time — a split would leave neither usable.
+                    fold.mode == DisplayMode.Cover ->
+                        if (showTerminal) TerminalPane(Modifier.fillMaxSize())
+                        else EditorPane(Modifier.fillMaxSize())
+
+                    showTerminal -> Column(Modifier.fillMaxSize()) {
+                        EditorPane(
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(0.6f),
+                        )
+                        Spacer(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                        )
+                        TerminalPane(
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(0.4f),
+                        )
+                    }
+
+                    else -> EditorPane(Modifier.fillMaxSize())
+                }
+                if (state is SessionState.Reconnecting) ReconnectOverlay()
+            }
+
+            KeyRow()
+        }
     }
 }
 
 /**
- * Setup's second half, reported from inside the editor.
+ * Setup's second half, reported from wherever the user happens to be standing.
  *
  * The toolchain finishes installing after the IDE has opened, so this is the only place
  * the user would otherwise learn that git is still on its way — and, just as usefully,
@@ -244,28 +257,41 @@ fun Shell(state: SessionState) {
 @Composable
 private fun SetupStrip() {
     val stage by RootfsInstaller.stage.collectAsStateWithLifecycle()
-    val label = when (val current = stage) {
+    val current = stage
+    // Failed has to say so here. The toolchain installs behind the running editor, so this
+    // strip is the only surface watching when it breaks, and falling through to null left
+    // the user with an editor whose git, gh and tmux never arrived and nothing on screen
+    // that ever mentioned it.
+    val failure = (current as? RootfsInstaller.Stage.Failed)?.message
+    val label = when (current) {
         is RootfsInstaller.Stage.Working -> current.what
         is RootfsInstaller.Stage.Downloading -> "Downloading ${current.what}"
         else -> null
-    } ?: return
+    }
+    if (label == null && failure == null) return
 
     Column(Modifier.fillMaxWidth()) {
         Text(
-            "$label — you can keep working",
+            failure ?: "$label — you can keep working",
             fontFamily = FontFamily.Monospace,
             fontSize = 10.sp,
-            color = MaterialTheme.colorScheme.primary,
+            color = if (failure != null) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surface)
                 .padding(horizontal = 12.dp, vertical = 3.dp),
         )
-        LinearProgressIndicator(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(2.dp),
-        )
+        if (failure == null) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(2.dp),
+            )
+        }
     }
 }
 

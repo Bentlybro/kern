@@ -150,6 +150,21 @@ object ModifierKeys {
             (if (alt) KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON else 0) or
             (if (shift) KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON else 0)
 
+    /**
+     * Read a modifier for the keystroke in flight and drop it.
+     *
+     * A sticky modifier that outlives its keystroke is not sticky, it is stuck: leave ctrl
+     * on, type on the soft keyboard, and every character arrives as a control code. The key
+     * row was the only thing that ever cleared it, so anything typed on Gboard - or
+     * anything at all in the cockpit, which has no key row and no lit chip to explain
+     * itself - carried the modifier forever.
+     */
+    fun consumeCtrl(): Boolean = ctrl.also { ctrl = false }
+
+    fun consumeAlt(): Boolean = alt.also { alt = false }
+
+    fun consumeShift(): Boolean = shift.also { shift = false }
+
     fun clear() {
         ctrl = false
         alt = false

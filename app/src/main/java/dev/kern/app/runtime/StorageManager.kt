@@ -2,6 +2,8 @@ package dev.kern.app.runtime
 
 import android.content.Context
 import android.os.StatFs
+import dev.kern.app.ui.TerminalSessions
+import dev.kern.app.ui.WorkbenchWebView
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.Dispatchers
@@ -109,8 +111,23 @@ object StorageManager {
      */
     suspend fun deleteGuest(context: Context): Boolean = withContext(Dispatchers.IO) {
         CodeServer.stop()
+        // The terminals and the workbench are process scoped, so they used to survive this
+        // and carry on addressing a guest that is gone - a shell whose cwd is an unlinked
+        // directory while its next absolute path lands in the *replacement* rootfs, and a
+        // WebView still showing the old workbench. Before the tree goes, so nothing is
+        // still writing into it, and on the main thread because both own views.
+        withContext(Dispatchers.Main) {
+            TerminalSessions.destroyAll()
+            WorkbenchWebView.destroy()
+        }
+        // The paths the app remembers are inside the guest and outlive it too.
+        ProjectRepository.forgetAll(context)
         val root = LinuxRuntime.rootfsDir(context)
         runCatching { root.deleteRecursively() }.getOrDefault(false)
+        // The setup downloads sit in the cache rather than the rootfs, so deleting only
+        // the guest left a failed transfer's bytes on the device with nothing in the app
+        // able to reclaim them, and the next setup reusing what was left.
+        RootfsInstaller.clearCachedDownloads(context)
         // Tell the UI the world changed, or it keeps routing to a guest that is gone.
         LinuxRuntime.notifyInstallChanged()
         !LinuxRuntime.isInstalled(context)

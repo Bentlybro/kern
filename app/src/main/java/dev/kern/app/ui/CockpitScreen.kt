@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.kern.app.runtime.AgentRepository
+import dev.kern.app.runtime.AppScope
 import dev.kern.app.runtime.GitCommands
 import dev.kern.app.runtime.ProjectRepository
 import kotlinx.coroutines.delay
@@ -63,6 +64,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
     val context = LocalContext.current
+    val app = context.applicationContext
     val scope = rememberCoroutineScope()
 
     val sessions by TerminalSessions.sessions.collectAsStateWithLifecycle()
@@ -210,9 +212,16 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 onMessage = { commitMsg = it },
                 enabled = busy == null && status?.isRepo == true,
                 onCommit = {
+                    val text = commitMsg
                     busy = "Committing..."
+                    // git runs on the app scope: a commit cancelled halfway leaves
+                    // .git/index.lock behind, and every later git operation in that repo
+                    // fails on it - including the workbench's SCM panel. Leaving the
+                    // cockpit now only gives up on showing the result; the poll above
+                    // picks the truth back up on return.
+                    val work = AppScope.start { GitCommands.commitAll(app, project, text) }
                     scope.launch {
-                        result = GitCommands.commitAll(context, project, commitMsg)
+                        result = work.await()
                         busy = null
                         commitMsg = ""
                         refresh++
@@ -220,8 +229,9 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 },
                 onPush = {
                     busy = "Pushing..."
+                    val work = AppScope.start { GitCommands.push(app, project) }
                     scope.launch {
-                        result = GitCommands.push(context, project)
+                        result = work.await()
                         busy = null
                         refresh++
                     }

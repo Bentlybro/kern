@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.kern.app.runtime.AppScope
 import dev.kern.app.runtime.RootfsInstaller
 import dev.kern.app.runtime.StorageManager
 import kotlinx.coroutines.launch
@@ -50,6 +51,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
     val context = LocalContext.current
+    val app = context.applicationContext
     val scope = rememberCoroutineScope()
 
     var usage by remember { mutableStateOf<StorageManager.Usage?>(null) }
@@ -136,8 +138,11 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
             enabled = busy == null,
             onClick = {
                 busy = "Cleaning up..."
+                // On the app scope for the same reason as Repair beside it: closing
+                // settings used to kill the guest command partway through.
+                val work = AppScope.start { StorageManager.cleanUp(app) }
                 scope.launch {
-                    result = StorageManager.cleanUp(context)
+                    result = work.await()
                     busy = null
                     reload++
                 }
@@ -194,8 +199,13 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
                 enabled = busy == null,
                 onClick = {
                     busy = "Deleting..."
+                    // App scope too: if the screen closes first the delete still has to
+                    // happen, or the app returns to a guest the user was told was gone.
+                    // deleteGuest tells the routing itself, so the callback below is only
+                    // the fast path back to setup.
+                    val work = AppScope.start { StorageManager.deleteGuest(app) }
                     scope.launch {
-                        StorageManager.deleteGuest(context)
+                        work.await()
                         busy = null
                         onGuestDeleted()
                     }

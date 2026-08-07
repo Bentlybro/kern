@@ -54,11 +54,15 @@ internal class KernTerminalViewClient(
 
     override fun onLongPress(event: MotionEvent?): Boolean = false
 
-    override fun readControlKey(): Boolean = ModifierKeys.ctrl
+    // Where a sticky modifier is spent. Each read clears only its own key: the vendored
+    // view reads all three for one keystroke, so clearing the lot on the first read would
+    // swallow ctrl+shift. Ctrl and alt are read again inside `inputCodePoint`, but OR'd
+    // with the value captured before the clear, so spending them here is still safe.
+    override fun readControlKey(): Boolean = ModifierKeys.consumeCtrl()
 
-    override fun readAltKey(): Boolean = ModifierKeys.alt
+    override fun readAltKey(): Boolean = ModifierKeys.consumeAlt()
 
-    override fun readShiftKey(): Boolean = ModifierKeys.shift
+    override fun readShiftKey(): Boolean = ModifierKeys.consumeShift()
 
     override fun readFnKey(): Boolean = false
 

@@ -229,6 +229,29 @@ object WorkbenchWebView {
         instance?.let { (it.parent as? ViewGroup)?.removeView(it) }
     }
 
+    /**
+     * Throw the workbench away, for when the guest behind it has been deleted.
+     *
+     * The instance is process scoped, so a delete and reinstall used to come back to this
+     * same WebView still showing the old workbench or the error page it had fallen to, with
+     * nothing telling the user that opening any folder would reload it. The storage goes
+     * too: VS Code keeps its layout and its own recently-opened list in localStorage, and
+     * the login cookie names a token the reinstall has already replaced.
+     *
+     * Main thread only, and detached before destroyed - chromium reports either mistake a
+     * long way from here.
+     */
+    fun destroy() {
+        instance?.let { view ->
+            (view.parent as? ViewGroup)?.removeView(view)
+            view.destroy()
+        }
+        instance = null
+        contextWrapper = null
+        WebStorage.getInstance().deleteAllData()
+        CookieManager.getInstance().removeAllCookies(null)
+    }
+
     fun current(): WebView? = instance
 
     /** Switch the workbench to a different workspace folder. */
@@ -350,6 +373,14 @@ object WorkbenchWebView {
 
         fun toggleSourceControl() = showView("scm", KeyEvent.KEYCODE_G)
 
+        /**
+         * Search across the workspace. Ctrl+Shift+F is `workbench.action.findInFiles` and
+         * Search lives in the primary sidebar, so [showView]'s hide branch applies to it
+         * unchanged. Nothing else in the app can reach it: the activity bar is hidden, and
+         * [find] only searches the open editor.
+         */
+        fun toggleSearch() = showView("search", KeyEvent.KEYCODE_F)
+
         fun commandPalette() =
             sendKey(KeyEvent.KEYCODE_P, KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON)
 
@@ -364,6 +395,21 @@ object WorkbenchWebView {
         fun save() = sendKey(KeyEvent.KEYCODE_S, KeyEvent.META_CTRL_ON)
 
         fun find() = sendKey(KeyEvent.KEYCODE_F, KeyEvent.META_CTRL_ON)
+
+        /**
+         * Undo and redo, deliberately here rather than in the key row: [sendKey] hands the
+         * event straight to the WebView, so these cannot land in a terminal even when one
+         * has focus - and Ctrl+Z at a shell is SIGTSTP, which would suspend whatever the
+         * user is running.
+         *
+         * Nothing else on the device can produce Ctrl+Z. There are no letter keys in the
+         * key row, and the workbench settings hide every one of VS Code's own undo
+         * affordances, which left the command palette as the only route.
+         */
+        fun undo() = sendKey(KeyEvent.KEYCODE_Z, KeyEvent.META_CTRL_ON)
+
+        fun redo() =
+            sendKey(KeyEvent.KEYCODE_Z, KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON)
 
         fun escape() = sendKey(KeyEvent.KEYCODE_ESCAPE)
     }

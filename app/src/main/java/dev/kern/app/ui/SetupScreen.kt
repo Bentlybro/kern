@@ -75,6 +75,13 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
 
     val installed = remember(stage, installChanges) { LinuxRuntime.isInstalled(context) }
 
+    // Not `installed`: a download that died before the filesystem was unpacked leaves
+    // nothing installed and most of the payload in the cache, and gating the delete on the
+    // guest hid the one control that clears it in exactly the state that needs it.
+    val removable = remember(stage, installChanges) {
+        installed || RootfsInstaller.hasCachedDownloads(context)
+    }
+
     // code-server is installed *before* the toolchain step, so "is code-server present?"
     // turns true partway through setup. Gating on `installing` too is what stops the
     // screen offering to open the IDE while apt is still working — starting the session
@@ -123,6 +130,17 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
 
         BatteryHint(context)
 
+        // The service knows exactly why the server never came up, and this was the only
+        // screen that never said. Without it a dead server reads as "Linux is installed"
+        // over a button that walks into the same 90-second wait every time.
+        (state as? SessionState.Failed)?.let {
+            Text(
+                it.message,
+                fontSize = 12.5.sp,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+
         if (ready) {
             Button(
                 onClick = onStart,
@@ -161,7 +179,7 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
         // user with no way to throw it away. An environment can be damaged beyond what
         // re-running setup fixes — an interrupted apt can take coreutils with it, and
         // then even `ls` is gone — so starting over has to be reachable from here.
-        if (installed && !installing) {
+        if (removable && !installing) {
             if (!confirmReset) {
                 TextButton(onClick = { confirmReset = true }) {
                     Text("Delete and start over", color = MaterialTheme.colorScheme.error)

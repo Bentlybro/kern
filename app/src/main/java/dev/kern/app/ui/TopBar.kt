@@ -69,16 +69,22 @@ internal fun TopBar(
         )
         Spacer(Modifier.width(8.dp))
 
-        // Only the four surfaces worth a permanent thumb target. Everything else lives
-        // behind "more" — reachable, but not competing for the bar. Still scrollable so
-        // the cover display cannot wrap the posture label.
+        // The surfaces worth a permanent thumb target, plus undo and redo. Everything
+        // else lives behind "more" - reachable, but not competing for the bar. Still
+        // scrollable so the cover display cannot wrap the posture label.
         Row(
             modifier = Modifier
                 .weight(1f)
                 .horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // Undo leads because the row scrolls: on the cover display only the first few
+            // chips are on screen, and this is the one you reach for the instant Gboard
+            // autocorrects an identifier. It is also the only way to send Ctrl+Z at all.
+            ActionChip("undo") { WorkbenchWebView.Commands.undo() }
+            ActionChip("redo") { WorkbenchWebView.Commands.redo() }
             ActionChip("files") { WorkbenchWebView.Commands.toggleSidebar() }
+            ActionChip("search") { WorkbenchWebView.Commands.toggleSearch() }
             ActionChip("git") { WorkbenchWebView.Commands.toggleSourceControl() }
             ActionChip("project") { onNavigate(ShellDestination.Projects) }
             if (mode != DisplayMode.Tabletop) {

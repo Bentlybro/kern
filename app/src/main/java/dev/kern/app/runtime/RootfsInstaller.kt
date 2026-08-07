@@ -39,6 +39,9 @@ object RootfsInstaller {
     private const val CODE_SERVER_URL =
         "https://github.com/coder/code-server/releases/download/v$CODE_SERVER_VERSION/code-server_${CODE_SERVER_VERSION}_arm64.deb"
 
+    private const val ARCHIVE_NAME = "ubuntu-base.tar.gz"
+    private const val DEB_NAME = "code-server.deb"
+
     sealed interface Stage {
         data object Idle : Stage
         data class Downloading(val what: String, val bytes: Long, val total: Long) : Stage {
@@ -132,12 +135,15 @@ object RootfsInstaller {
     suspend fun install(context: Context): Boolean = withContext(Dispatchers.IO) {
         try {
             val essential = coroutineScope {
-                val deb = File(context.cacheDir, "code-server.deb")
+                val deb = File(context.cacheDir, DEB_NAME)
                 var fetch: Deferred<Boolean>? = null
 
                 if (!LinuxRuntime.isInstalled(context)) {
-                    val archive = File(context.cacheDir, "ubuntu-base.tar.gz")
-                    if (!archive.exists() || archive.length() < 20L * 1024 * 1024) {
+                    val archive = File(context.cacheDir, ARCHIVE_NAME)
+                    // Existence alone: download renames only a transfer that arrived whole
+                    // into this name, so anything here is complete. The size guess this
+                    // replaces took 25 MB of the 34 MB image for a finished one.
+                    if (!archive.exists()) {
                         _stage.value = Stage.Downloading("Ubuntu base", 0, 0)
                         logLine("Downloading Ubuntu ${GuestConfig.UBUNTU_RELEASE} base image")
                         download(ROOTFS_URL, archive) { got, total ->
@@ -216,7 +222,15 @@ object RootfsInstaller {
             logLine("Editor ready — installing the toolchain in the background")
 
             _stage.value = Stage.Working("Installing tools")
-            Apt.install(context, TOOLS, ::logLine)
+            // Checked, not fired and forgotten: apt losing the connection partway leaves a
+            // guest with no git, gh or tmux, and reporting Done over that sends the user
+            // hunting for the problem everywhere except where it is.
+            if (!Apt.install(context, TOOLS, ::logLine)) {
+                return@withContext fail(
+                    "The editor is ready, but the toolchain did not finish installing - " +
+                        "git, gh and tmux are missing. Retry, or use Repair in settings.",
+                )
+            }
 
             _stage.value = Stage.Working("Finishing up")
             GuestConfig.polish(context)
@@ -235,7 +249,7 @@ object RootfsInstaller {
      * PRoot is busy unpacking into that same directory tree.
      */
     private suspend fun fetchServer(target: File): Boolean {
-        if (target.exists() && target.length() > 100L * 1024 * 1024) return true
+        if (target.exists()) return true
         var reported = -1
         return runCatching {
             download(CODE_SERVER_URL, target) { got, total ->
@@ -253,6 +267,29 @@ object RootfsInstaller {
             Log.w(TAG, "code-server download failed", it)
             false
         }
+    }
+
+    /**
+     * The setup downloads. They live in the cache rather than the rootfs so an install
+     * that failed can resume without fetching a quarter of a gigabyte again - which also
+     * means anything clearing up after a failed install has to reach them. Matched by
+     * prefix so the `.part` of a transfer that never finished is caught too.
+     */
+    private fun cachedDownloads(context: Context): List<File> =
+        context.cacheDir.listFiles()
+            ?.filter { it.name.startsWith(ARCHIVE_NAME) || it.name.startsWith(DEB_NAME) }
+            ?: emptyList()
+
+    /**
+     * Whether a failed setup left bytes behind. The download dies before the rootfs is
+     * unpacked far more often than after, and in that state `isInstalled` is false while
+     * the cache holds most of the payload - so the UI cannot decide from the guest alone
+     * whether there is anything to throw away.
+     */
+    fun hasCachedDownloads(context: Context): Boolean = cachedDownloads(context).isNotEmpty()
+
+    fun clearCachedDownloads(context: Context) {
+        cachedDownloads(context).forEach { runCatching { it.delete() } }
     }
 
     /** Cache and rootfs share a filesystem, so this is a rename, not a 218 MB copy. */

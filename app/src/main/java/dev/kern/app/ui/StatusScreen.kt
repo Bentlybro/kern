@@ -36,9 +36,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.kern.app.runtime.AppScope
 import dev.kern.app.runtime.BatteryOptimization
 import dev.kern.app.runtime.HealthCheck
 import dev.kern.app.runtime.UsageTracker
+import kotlinx.coroutines.flow.MutableStateFlow
+
+/**
+ * Packages currently being installed, or null when idle.
+ *
+ * Outside the composition because apt outlives this screen now: a screen-local flag came
+ * back cleared, re-enabled Fix on top of an apt that was still running, and the second one
+ * died on dpkg's lock.
+ */
+private val installingPackages = MutableStateFlow<String?>(null)
 
 /**
  * Environment health and usage stats (M6 + M5a). This is where the app tells the truth
@@ -47,12 +59,12 @@ import dev.kern.app.runtime.UsageTracker
 @Composable
 fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
     val context = LocalContext.current
+    val app = context.applicationContext
     val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<HealthCheck.Item>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var refresh by remember { mutableIntStateOf(0) }
-    /** Packages currently being installed, or null when idle. */
-    var installing by remember { mutableStateOf<String?>(null) }
+    val installing by installingPackages.collectAsStateWithLifecycle()
 
     LaunchedEffect(refresh) {
         loading = true
@@ -62,6 +74,26 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
 
     val totals = remember(refresh) { UsageTracker.totals(context) }
     val totalMs = totals.values.sum()
+
+    /** Install what a check said was missing, then re-run the checks. */
+    fun install(packages: List<String>) {
+        installingPackages.value = packages.joinToString(", ")
+        // apt runs on the app scope: leaving Status used to cancel it mid-unpack, and a
+        // dpkg stopped there is past what Repair can put back.
+        val work = AppScope.start {
+            try {
+                HealthCheck.install(app, packages)
+            } finally {
+                // Cleared here, not after the await below: that dies with the screen, and
+                // the label would then stay lit and hold every Fix button disabled.
+                installingPackages.value = null
+            }
+        }
+        scope.launch {
+            work.await()
+            refresh++
+        }
+    }
 
     ScreenSurface {
         ScreenHeader("status") {
@@ -146,14 +178,8 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                                 enabled = installing == null,
                                 onClick = {
                                     when (remedy) {
-                                        is HealthCheck.Remedy.Install -> {
-                                            installing = remedy.packages.joinToString(", ")
-                                            scope.launch {
-                                                HealthCheck.install(context, remedy.packages)
-                                                installing = null
-                                                refresh++
-                                            }
-                                        }
+                                        is HealthCheck.Remedy.Install ->
+                                            install(remedy.packages)
                                         HealthCheck.Remedy.OpenSettings -> onOpenSettings()
                                         HealthCheck.Remedy.BatterySettings ->
                                             BatteryOptimization.requestExemption(context)

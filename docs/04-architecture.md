@@ -1,5 +1,12 @@
 # 04 — Architecture
 
+> **Partly superseded.** The editor architecture below is current: a native shell around
+> the real VS Code workbench (option A) is what shipped. The *runtime* half is not — this
+> was written when Linux came from a separate Termux install, and Kern now embeds its own
+> Ubuntu and has no Termux dependency at all. Wherever this document says Termux, read
+> [11 — Embedded Linux](11-embedded-linux.md) instead, and see
+> [12 — Setup](12-setup.md) for how that environment is installed.
+
 ## Options considered
 
 Full analysis in [research/vscode-arch.md](research/vscode-arch.md) and

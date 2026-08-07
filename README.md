@@ -1,84 +1,100 @@
-# Kern — a real IDE that runs on the Galaxy Z Fold8
+# Kern
 
-A VS Code-class development environment that runs **entirely on the phone** — real
-editor, real terminal, real compilers and language servers, real extensions — wrapped in
-a native Android shell built for a foldable instead of a desktop squeezed onto glass.
+**A real Linux IDE for Android.** Not a remote client, not a toy editor — a complete
+Ubuntu development environment and the VS Code workbench, running entirely on the phone,
+in one app with nothing else to install.
 
-**Status: working.** You can clone a repo, open it, edit it with full language
-intelligence, run commands in a native terminal that survives the app being closed, and
-review and commit an agent's work one-handed. Everything below has been verified on
-device.
+```
+Ubuntu 26.04 LTS · code-server 4.131 · git · tmux · python3 · ripgrep
+```
 
-    ./gradlew assembleDebug    →    app/build/outputs/apk/debug/app-debug.apk
+Kern installs a real Ubuntu filesystem inside its own sandbox and runs it through PRoot.
+`apt install` works. Compilers, language servers and CLI agents are the ordinary glibc
+builds from the Ubuntu archive, not special mobile ports. No root, no Termux, no server
+in a datacentre.
+
+**Status: working, pre-release.** Setup takes about two minutes to a usable editor. It
+has been verified end to end on device — the numbers in this README are measured, not
+estimated.
+
+---
 
 ## What it does
 
-| | |
+|  |  |
 |---|---|
-| **Editor** | The real VS Code workbench (code-server), with its own chrome hidden — the web layer renders only the editor; tabs, status, and actions are native |
-| **Terminal** | Termux's native terminal emulator, no xterm.js and no WebView in the input path. Survives the app being killed (tmux) |
-| **Projects** | Native project list and `git clone`, reading the Termux filesystem directly |
-| **Agent cockpit** | Monitor an agent, reply one-handed, review a coloured unified diff, commit and push |
-| **Fold-native** | Four designed modes: cover, unfolded, tabletop (editor above the crease, terminal below), and DeX |
-| **Input** | Coding key row with sticky modifiers, explicit keyboard control, hardware-keyboard chords |
-| **Health** | A status screen that tells you what's wrong with the environment instead of failing silently |
+| **Editor** | The real VS Code workbench (code-server) with its own chrome hidden. The web layer renders only the editor; every surface around it is native Compose. |
+| **Terminal** | A genuine PTY into the guest, drawn by a native terminal emulator — no xterm.js, no WebView in the input path. `tmux` keeps sessions alive across detach. |
+| **Linux** | Ubuntu 26.04 LTS with working `apt`, fake root, and the whole Ubuntu archive available. |
+| **Projects** | Create a project, `git clone` one, or open any folder — read natively from the guest filesystem. |
+| **GitHub** | One-tap sign-in via device flow. Registers gh as git's credential helper, so `git push` then works everywhere: the editor's Git panel, the terminal, any agent. |
+| **Adaptive** | Lays out for the screen it is on — phone, tablet, unfolded, tabletop (editor above the crease, terminal below) and desktop mode. |
+| **Input** | A coding key row with sticky modifiers, explicit keyboard control, and hardware-keyboard chords. |
+| **Health** | A status screen that says what is wrong with the environment, with a button that fixes it rather than a command to copy. |
 
 ## How it works
 
-    ┌─ Kern (Kotlin / Compose) ────────────────────────────┐
-    │  native shell: postures · panes · IME insets · key row   │
-    │  ├─ editor pane  → WebView → localhost:13337 (workbench) │
-    │  ├─ terminal     → native emulator → localhost:13338     │
-    │  ├─ cockpit      → tmux capture-pane + git               │
-    │  └─ session service (foreground) supervises + restarts   │
-    └──────────────────────────┬───────────────────────────────┘
-                               │ Termux RUN_COMMAND + localhost
-    ┌──────────────────────────▼───────────────────────────────┐
-    │  Termux: code-server · socat pty bridge · tmux · git ·   │
-    │  clang · python · node · language servers                │
-    └──────────────────────────────────────────────────────────┘
+The interesting problem is that Android forbids executing code from app-writable storage.
+Kern sidesteps that without root and without a hack:
 
-The key constraint that shapes everything: an Android app **cannot execute Termux's
-binaries** — they live in Termux's private data directory under a different UID, and
-Android's W^X rules block exec from app-writable storage. So Termux hosts the toolchain
-and Kern drives it over `RUN_COMMAND` and localhost, gated by a per-install token.
+1. **PRoot lives in `nativeLibraryDir`**, which is read-only and therefore exempt from
+   W^X. Executing from there is Google's own documented alternative.
+2. **Guest binaries are never handed to the kernel.** `PROOT_LOADER` points at a small
+   static stub that `mmap`s the guest ELF `PROT_EXEC` and jumps to its entry point. That
+   needs only SELinux `file execute` — the permission apps retain — never
+   `execute_no_trans`, which was removed at targetSdk ≥ 29.
+3. **PRoot fakes uid 0**, which is what makes `apt` and `dpkg` work at all.
 
-Why the editor is still a web view — and why that is not a cop-out — is argued from
-evidence in [docs/08-decisions.md](docs/08-decisions.md) (decision **D12**). Short
-version: desktop VS Code is *also* a browser, and the three things that actually hurt on
-a phone (layout, keyboard, terminal) are host problems, not Monaco problems.
+The consequence is that this runs at **targetSdk 36** on a stock, unrooted device.
 
-## Setup
+The full mechanism, including the flags that are load-bearing and the ways they fail when
+they are wrong, is in [docs/11-embedded-linux.md](docs/11-embedded-linux.md).
 
-1. Install **Termux** (F-Droid or GitHub releases — not the Play build unless you know why).
-2. Install Kern's APK.
-3. Open Kern and follow the setup screen: copy one command into Termux, grant the
-   Termux permission, allow unrestricted battery.
-4. Recommended once: Developer options → **Disable child process restrictions** (Android
-   kills child processes above 32; this is why long builds die).
+## Requirements
 
-The `status` screen re-checks all of this at any time.
+- Android 8.0+, **arm64**
+- ~400 MB of download and ~1.2 GB of storage for the Linux environment
+- Wi-Fi for first run
+
+Developed against a Galaxy Z Fold8 and a Pixel. The adaptive layouts need a foldable to
+exercise properly; everything else is device-agnostic.
+
+## Building
+
+```
+./gradlew assembleDebug      # → app/build/outputs/apk/debug/app-debug.apk
+```
+
+Requires JDK 17 and the Android SDK with NDK (there is a small JNI PTY implementation).
+See [docs/09-building.md](docs/09-building.md).
+
+## First run
+
+Press **Set up Linux** once. Setup runs in two halves:
+
+| Phase | What happens | Measured |
+|---|---|---|
+| 1 | Ubuntu base image, unpack, configure apt, install code-server | **~133s to a usable editor** |
+| 2 | git, gh, tmux, curl, ripgrep, python3 — installed *behind* the running IDE | ~184s to complete |
+
+You are in the editor while the second half runs, with a strip reporting what is still
+installing. Live output is shown throughout — no unexplained multi-minute pauses.
 
 ## Documentation
 
-| Doc | Contents |
-|---|---|
-| [01 Goals](docs/01-goals-and-requirements.md) | Vision, parity checklist, non-goals |
-| [02 Device](docs/02-device.md) | Verified Z Fold8 specs and what they imply |
-| [03 Android constraints](docs/03-android-constraints.md) | Exec rules, process killers, storage, distribution |
-| [04 Architecture](docs/04-architecture.md) | Options compared, licensing map |
-| [05 UX](docs/05-ux.md) | The four display modes, keyboard strategy |
-| [06 Roadmap](docs/06-roadmap.md) | M0–M6 with what landed and what didn't |
-| [07 Risks](docs/07-risks.md) | Risk register |
-| [08 Decisions](docs/08-decisions.md) | Architecture decision records |
-| [09 Building](docs/09-building.md) | Build, install, debug |
-| [10 Native UI requirements](docs/10-native-ui-requirements.md) | The observed failures this design fixes |
-| [research/](docs/research/), [research2/](docs/research2/), [research3-terminal/](docs/research3-terminal/) | Verified findings with sources |
+Start at **[docs/README.md](docs/README.md)**, which indexes everything and says which
+documents describe the system as it is versus how it got here.
 
-## Licensing
+## Licence
 
-GPLv3-or-later (see [LICENSE](LICENSE)) because it vendors Termux's terminal emulator.
-Attribution and the list of modifications are in [NOTICE.md](NOTICE.md).
+GPLv3. Kern vendors Termux's terminal emulator and view, which are GPLv3, so the whole
+work is GPLv3. Attribution and third-party components are listed in
+[NOTICE.md](NOTICE.md).
 
-Not affiliated with Microsoft or the Termux project. Extensions come from Open VSX;
-Microsoft's marketplace and product-locked extensions are deliberately not used.
+## Acknowledgements
+
+- **[Termux](https://github.com/termux/termux-app)** — the terminal emulator and view,
+  and the maintained Android-patched PRoot build this depends on.
+- **[code-server](https://github.com/coder/code-server)** — VS Code as a server.
+- **[Ubuntu](https://ubuntu.com/)** — the base image and the archive behind `apt`.
+- **[PRoot](https://proot-me.github.io/)** — userspace `chroot` via `ptrace`.

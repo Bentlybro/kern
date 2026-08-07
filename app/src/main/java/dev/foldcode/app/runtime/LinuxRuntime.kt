@@ -8,6 +8,9 @@ import java.net.URL
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -30,6 +33,22 @@ object LinuxRuntime {
     const val CODE_SERVER_PORT = 13337
 
     private val commandCounter = AtomicLong(0)
+
+    /**
+     * Bumped whenever the guest is created or destroyed.
+     *
+     * The app's top-level routing needs this. Whether Linux is installed is a question
+     * about the filesystem, not something Compose can observe, so a plain `remember {}`
+     * of it is computed once and never again — which left the app sitting on "starting
+     * linux" forever after the environment was deleted out from under it.
+     */
+    private val _installChanges = MutableStateFlow(0)
+    val installChanges: StateFlow<Int> = _installChanges.asStateFlow()
+
+    /** Call after the rootfs is installed or deleted, so the UI re-reads the world. */
+    fun notifyInstallChanged() {
+        _installChanges.value++
+    }
 
     fun rootfsDir(context: Context): File = File(context.filesDir, "linux")
 

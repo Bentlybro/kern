@@ -113,6 +113,8 @@ object StorageManager {
         LinuxRuntime.stopCodeServer()
         val root = LinuxRuntime.rootfsDir(context)
         runCatching { root.deleteRecursively() }.getOrDefault(false)
+        // Tell the UI the world changed, or it keeps routing to a guest that is gone.
+        LinuxRuntime.notifyInstallChanged()
         !LinuxRuntime.isInstalled(context)
     }
 

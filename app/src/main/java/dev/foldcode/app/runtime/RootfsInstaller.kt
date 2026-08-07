@@ -134,6 +134,7 @@ object RootfsInstaller {
             LinuxRuntime.applyWorkbenchSettings(context)
             LinuxRuntime.run(context, "mkdir -p /root/projects", timeoutMs = 20_000)
 
+            LinuxRuntime.notifyInstallChanged()
             _stage.value = Stage.Done
             true
         } catch (e: Exception) {

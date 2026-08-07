@@ -74,16 +74,25 @@ private fun AppRoot() {
     // Only show setup when there is genuinely something to set up. When Linux is ready
     // the shell owns the loading state, so the app opens straight into the IDE instead
     // of a screen whose only job is a button.
-    val ready = remember {
+    //
+    // Keyed on installChanges: this is a question about the filesystem, which Compose
+    // cannot observe on its own. Remembered unconditionally, it was answered once at
+    // launch and never revisited, so deleting the environment stranded the app on
+    // "starting linux" instead of returning it to setup.
+    val installChanges by LinuxRuntime.installChanges.collectAsStateWithLifecycle()
+    val ready = remember(installChanges) {
         LinuxRuntime.isInstalled(context) && LinuxRuntime.isCodeServerInstalled(context)
     }
 
     when {
+        // Checked first: with no environment there is nothing for the IDE or the
+        // loading screen to be about, whatever the session last reported.
+        !ready -> SetupScreen(sessionState, onStart = { SessionService.start(context) })
+
         sessionState is SessionState.Healthy || sessionState is SessionState.Reconnecting ->
             Shell(sessionState)
 
-        ready && sessionState !is SessionState.Failed ->
-            BootingScreen(sessionState)
+        sessionState !is SessionState.Failed -> BootingScreen(sessionState)
 
         else -> SetupScreen(sessionState, onStart = { SessionService.start(context) })
     }

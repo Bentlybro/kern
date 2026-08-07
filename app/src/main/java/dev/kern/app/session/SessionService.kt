@@ -16,8 +16,8 @@ import dev.kern.app.MainActivity
 import dev.kern.app.R
 import dev.kern.app.runtime.AgentPrompt
 import dev.kern.app.runtime.AgentRepository
+import dev.kern.app.runtime.CodeServer
 import dev.kern.app.ui.TerminalSessions
-import dev.kern.app.runtime.LinuxRuntime
 import dev.kern.app.runtime.Secrets
 import java.net.HttpURLConnection
 import java.net.URL
@@ -109,8 +109,8 @@ class SessionService : Service() {
         if (isHealthy()) {
             Log.i(TAG, "supervise: adopted an already-running server")
         } else {
-            LinuxRuntime.applyWorkbenchSettings(this)
-            LinuxRuntime.startCodeServer(this, Secrets.token(this))
+            CodeServer.applyWorkbenchSettings(this)
+            CodeServer.start(this, Secrets.token(this))
             if (!awaitHealthy(90_000)) {
                 val why = "code-server did not start. See /root/.kern/server.log " +
                     "in the terminal."
@@ -121,7 +121,7 @@ class SessionService : Service() {
             }
         }
         _state.value = SessionState.Healthy
-        updateNotification("Running on 127.0.0.1:${LinuxRuntime.CODE_SERVER_PORT}")
+        updateNotification("Running on 127.0.0.1:${CodeServer.PORT}")
 
         var misses = 0
         var wasAwaiting = false
@@ -152,7 +152,7 @@ class SessionService : Service() {
 
             if (isHealthy()) {
                 if (misses > 0) {
-                    updateNotification("Running on 127.0.0.1:${LinuxRuntime.CODE_SERVER_PORT}")
+                    updateNotification("Running on 127.0.0.1:${CodeServer.PORT}")
                 }
                 misses = 0
                 _state.value = SessionState.Healthy
@@ -161,13 +161,13 @@ class SessionService : Service() {
                 if (misses >= 2) {
                     _state.value = SessionState.Reconnecting
                     updateNotification("Server died - restarting...")
-                    LinuxRuntime.stopCodeServer()
-                    LinuxRuntime.startCodeServer(this, Secrets.token(this))
+                    CodeServer.stop()
+                    CodeServer.start(this, Secrets.token(this))
                     if (awaitHealthy(45_000)) {
                         misses = 0
                         _state.value = SessionState.Healthy
                         updateNotification(
-                            "Running on 127.0.0.1:${LinuxRuntime.CODE_SERVER_PORT}",
+                            "Running on 127.0.0.1:${CodeServer.PORT}",
                         )
                     }
                 }
@@ -186,7 +186,7 @@ class SessionService : Service() {
     }
 
     private fun isHealthy(): Boolean = try {
-        val conn = URL(LinuxRuntime.HEALTH_URL).openConnection() as HttpURLConnection
+        val conn = URL(CodeServer.HEALTH_URL).openConnection() as HttpURLConnection
         conn.connectTimeout = 2_000
         conn.readTimeout = 2_000
         val ok = conn.responseCode in 200..299
@@ -198,7 +198,7 @@ class SessionService : Service() {
 
     private fun shutdown() {
         superviseJob?.cancel()
-        LinuxRuntime.stopCodeServer()
+        CodeServer.stop()
         _state.value = SessionState.Idle
         wakeLock?.let { if (it.isHeld) it.release() }
         stopForeground(STOP_FOREGROUND_REMOVE)

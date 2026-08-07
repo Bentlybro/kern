@@ -149,7 +149,7 @@ object RootfsInstaller {
                     // against the base image's 34, and unpacking is CPU bound, so fetching
                     // it here costs almost nothing on the clock instead of minutes of its
                     // own once unpacking has finished.
-                    if (!LinuxRuntime.isCodeServerInstalled(context)) {
+                    if (!CodeServer.isInstalled(context)) {
                         fetch = async { fetchServer(deb) }
                     }
 
@@ -170,7 +170,7 @@ object RootfsInstaller {
                 GuestConfig.apply(context)
                 logLine("Configured apt, DNS and dpkg")
 
-                if (!LinuxRuntime.isCodeServerInstalled(context)) {
+                if (!CodeServer.isInstalled(context)) {
                     _stage.value = Stage.Working("Updating package lists")
                     LinuxRuntime.run(
                         context,
@@ -198,7 +198,7 @@ object RootfsInstaller {
                         timeoutMs = 900_000,
                         onLine = ::logLine,
                     )
-                    if (!LinuxRuntime.isCodeServerInstalled(context)) {
+                    if (!CodeServer.isInstalled(context)) {
                         return@coroutineScope fail(
                             result?.stdout?.lines()?.lastOrNull { it.isNotBlank() }
                                 ?: "code-server did not install",
@@ -210,7 +210,7 @@ object RootfsInstaller {
             if (!essential) return@withContext false
 
             // Hand over: from here the editor can open, and the rest happens behind it.
-            LinuxRuntime.applyWorkbenchSettings(context)
+            CodeServer.applyWorkbenchSettings(context)
             LinuxRuntime.run(context, "mkdir -p /root/projects", timeoutMs = 20_000)
             LinuxRuntime.notifyInstallChanged()
             logLine("Editor ready — installing the toolchain in the background")
@@ -276,6 +276,8 @@ object RootfsInstaller {
         val target = LinuxRuntime.rootfsDir(context).apply { mkdirs() }
         val proot = LinuxRuntime.prootBinary(context)
 
+        // not LinuxRuntime.spawnInGuest(): `-r /` and these two binds on purpose, so
+        // Android's /system/bin/tar is reachable before a rootfs exists.
         val process = PtyProcess.spawn(
             command = proot.absolutePath,
             argv = listOf(

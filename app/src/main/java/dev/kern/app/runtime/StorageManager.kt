@@ -18,8 +18,6 @@ import kotlinx.coroutines.withContext
  */
 object StorageManager {
 
-    private const val PREFS = "kern"
-    private const val KEY_LIMIT_MB = "storage_limit_mb"
     private const val DEFAULT_LIMIT_MB = 4096
 
     data class Usage(
@@ -37,12 +35,10 @@ object StorageManager {
     }
 
     fun limitMb(context: Context): Int =
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_LIMIT_MB, DEFAULT_LIMIT_MB)
+        Prefs.of(context).getInt(Prefs.KEY_STORAGE_LIMIT_MB, DEFAULT_LIMIT_MB)
 
     fun setLimitMb(context: Context, value: Int) {
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putInt(KEY_LIMIT_MB, value).apply()
+        Prefs.of(context).edit().putInt(Prefs.KEY_STORAGE_LIMIT_MB, value).apply()
     }
 
     /** Options offered in the UI, in MB. */
@@ -112,7 +108,7 @@ object StorageManager {
      * is the recovery path when an install goes wrong.
      */
     suspend fun deleteGuest(context: Context): Boolean = withContext(Dispatchers.IO) {
-        LinuxRuntime.stopCodeServer()
+        CodeServer.stop()
         val root = LinuxRuntime.rootfsDir(context)
         runCatching { root.deleteRecursively() }.getOrDefault(false)
         // Tell the UI the world changed, or it keeps routing to a guest that is gone.

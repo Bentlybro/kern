@@ -1,14 +1,9 @@
 package dev.kern.app.runtime
 
 import android.content.Context
-import android.util.Log
-import java.io.File
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.withContext
 
 /**
  * Signing the guest in to GitHub.
@@ -21,32 +16,16 @@ import kotlinx.coroutines.withContext
  * The mechanism is GitHub's device flow, chosen because it suits a phone: no password
  * and no personal access token to type on a touch keyboard. GitHub issues an
  * eight-character code, the app copies it to the clipboard, and approval happens in a
- * browser.
- *
- * Driving `gh` turned out to have one sharp edge worth recording. Its prompts are drawn
- * by a TUI that asks the terminal where the cursor is (`ESC[6n`) and *blocks until the
- * terminal answers*, so feeding keystrokes to a bare pty deadlocks. The fix is to run it
- * under tmux, which is a real terminal emulator and answers on our behalf, and to read
- * the screen back with `capture-pane` as plain text rather than parsing escape codes.
- *
- * tmux then imposes its own constraint: a server started under one PRoot instance is
- * unreachable from another ("access not allowed"), because PRoot's fake ownership lives
- * in process memory and never reaches the socket on disk. So the whole flow stays inside
- * a single PRoot, and the script mirrors the pane to a file — which the app can simply
- * read, the rootfs being its own private storage.
+ * browser. Driving that flow is [GitHubDeviceFlow]'s job; what is left here is the state
+ * the UI watches.
  */
 object GitHubAuth {
-
-    private const val TAG = "Kern"
 
     /** Where the one-time code is entered. */
     const val DEVICE_URL = "https://github.com/login/device"
 
     /** gh keeps the token and the account name here, inside the guest. */
     private const val HOSTS = "/root/.config/gh/hosts.yml"
-
-    private const val WORK_DIR = "kern-gh"
-    private const val SCRIPT_NAME = "kern-ghlogin.sh"
 
     sealed interface Account {
         /**
@@ -73,18 +52,11 @@ object GitHubAuth {
     private val _step = MutableStateFlow<Step>(Step.Idle)
     val step: StateFlow<Step> = _step.asStateFlow()
 
-    /** The in-flight login, kept so the UI can cancel a flow the user abandons. */
-    @Volatile
-    private var loginProcess: PtyProcess? = null
-
-    /** Anchored on gh's own wording so it cannot match a stray token on screen. */
-    private val CODE = Regex("""one-time code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})""")
-
     /** Everything needed for git over HTTPS to work unattended. */
     val REQUIRED_TOOLS = listOf("git", "gh", "tmux")
 
     fun reset() {
-        if (loginProcess == null) _step.value = Step.Idle
+        if (!GitHubDeviceFlow.running) _step.value = Step.Idle
     }
 
     // ---- state --------------------------------------------------------------
@@ -141,79 +113,23 @@ object GitHubAuth {
 
     // ---- signing in ---------------------------------------------------------
 
-    suspend fun signIn(context: Context) = withContext(Dispatchers.IO) {
+    suspend fun signIn(context: Context) {
         _step.value = Step.Working("Contacting GitHub")
 
-        val guestTmp = LinuxRuntime.guestTmpDir(context)
-        val workDir = File(guestTmp, WORK_DIR)
-        val paneFile = File(workDir, "pane")
-        val rcFile = File(workDir, "rc")
-
-        try {
-            File(guestTmp, SCRIPT_NAME).writeText(LOGIN_SCRIPT)
-        } catch (e: Exception) {
-            _step.value = Step.Failed("Could not prepare the guest: ${e.message}")
-            return@withContext
-        }
-
-        val process = PtyProcess.spawn(
-            command = LinuxRuntime.prootBinary(context).absolutePath,
-            argv = LinuxRuntime.prootArgs(
-                context,
-                listOf("/bin/bash", "/tmp/$SCRIPT_NAME"),
-            ),
-            env = LinuxRuntime.prootEnv(context),
-            cwd = context.filesDir.absolutePath,
-            columns = 120,
-            rows = 40,
-        )
-        if (process == null) {
-            _step.value = Step.Failed("Could not start the Linux guest.")
-            return@withContext
-        }
-        loginProcess = process
-
-        // The script says little, but an unread pty eventually fills and would stall it.
-        process.drainInBackground("KernGhAuth")
-
-        var pane = ""
-        var cancelled = false
-        try {
-            while (true) {
-                // cancel() drops the handle. That is a deliberate stop, not a failure,
-                // and must not be reported as one.
-                if (loginProcess !== process) {
-                    cancelled = true
-                    break
-                }
-                if (paneFile.exists()) {
-                    pane = runCatching { paneFile.readText() }.getOrDefault(pane)
-                    CODE.find(pane)?.groupValues?.get(1)?.let { code ->
-                        if ((_step.value as? Step.AwaitingApproval)?.code != code) {
-                            _step.value = Step.AwaitingApproval(code)
-                        }
-                    }
-                }
-                if (rcFile.exists()) break
-                delay(1_000)
+        val outcome = GitHubDeviceFlow.run(context) { code ->
+            if ((_step.value as? Step.AwaitingApproval)?.code != code) {
+                _step.value = Step.AwaitingApproval(code)
             }
-        } finally {
-            loginProcess = null
-            runCatching { process.close() }
         }
-
-        val rc = runCatching { rcFile.readText().trim() }.getOrDefault("")
-        runCatching { workDir.deleteRecursively() }
-        runCatching { File(guestTmp, SCRIPT_NAME).delete() }
-
-        // cancel() has already put the UI back to Idle. Posting a failure on top would
-        // tell the user something went wrong when they are the one who stopped it.
-        if (cancelled) return@withContext
-
-        if (!rc.contains("EXIT=0")) {
-            Log.w(TAG, "gh auth login failed: rc=$rc pane=${pane.takeLast(300)}")
-            _step.value = Step.Failed(reasonFor(pane, rc))
-            return@withContext
+        when (outcome) {
+            // cancel() has already put the UI back to Idle. Posting a failure on top would
+            // tell the user something went wrong when they are the one who stopped it.
+            GitHubDeviceFlow.Outcome.Cancelled -> return
+            is GitHubDeviceFlow.Outcome.Failed -> {
+                _step.value = Step.Failed(outcome.message)
+                return
+            }
+            GitHubDeviceFlow.Outcome.Ok -> Unit
         }
 
         _step.value = Step.Working("Configuring git")
@@ -227,9 +143,7 @@ object GitHubAuth {
 
     /** Abandon a login the user no longer wants to finish. */
     fun cancel() {
-        val process = loginProcess
-        loginProcess = null
-        runCatching { process?.close() }
+        GitHubDeviceFlow.cancel()
         _step.value = Step.Idle
     }
 
@@ -284,67 +198,4 @@ object GitHubAuth {
             ?.substringAfter('=')
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
-
-    /**
-     * The most useful thing on screen, preferring whatever gh complained about. gh's own
-     * prompts stay on the pane after they are answered, so they are filtered out —
-     * otherwise a failure gets reported as "Press Enter to open github.com".
-     */
-    private fun reasonFor(pane: String, rc: String): String {
-        if (rc.contains("timeout")) return "The code expired before it was approved."
-        val lines = pane.lines()
-            .map { it.trim() }
-            .filter {
-                it.isNotEmpty() &&
-                    !it.startsWith("?") &&
-                    !it.startsWith("!") &&
-                    !it.startsWith("Press Enter") &&
-                    !CODE.containsMatchIn(it)
-            }
-        return lines.lastOrNull { it.contains("error", true) || it.contains("failed", true) }
-            ?.take(160)
-            ?: lines.lastOrNull()?.take(160)
-            ?: "GitHub sign-in did not complete."
-    }
-
-    /**
-     * Runs entirely inside one PRoot instance and mirrors gh's screen to a file.
-     *
-     * gh asks two questions before it starts polling GitHub, and both are answered here
-     * rather than from Kotlin — inside tmux the answer is a keystroke, and this is the
-     * only process that can reach the tmux server. Each answer is sent once; the prompt
-     * stays on screen afterwards, so a flag file guards against pressing Enter again
-     * into whatever has focus by then.
-     */
-    private val LOGIN_SCRIPT = """
-        #!/bin/bash
-        set -u
-        DIR=/tmp/$WORK_DIR
-        rm -rf "${'$'}DIR"; mkdir -p "${'$'}DIR"
-        export BROWSER=true NO_COLOR=1 GH_NO_UPDATE_NOTIFIER=1
-
-        SESSION=kern-ghauth
-        tmux kill-session -t "${'$'}SESSION" 2>/dev/null
-        tmux new-session -d -s "${'$'}SESSION" -x 120 -y 40 bash -c \
-          'gh auth login --hostname github.com --git-protocol https --web; echo "EXIT=${'$'}?" > /tmp/$WORK_DIR/rc'
-
-        # 900 seconds, which is how long a GitHub device code stays valid.
-        for _ in ${'$'}(seq 1 900); do
-          tmux capture-pane -t "${'$'}SESSION" -p > "${'$'}DIR/pane" 2>/dev/null || break
-
-          if [ ! -f "${'$'}DIR/.credentials" ] && grep -q 'credentials? (Y/n)' "${'$'}DIR/pane"; then
-            tmux send-keys -t "${'$'}SESSION" Enter && touch "${'$'}DIR/.credentials"
-          fi
-          if [ ! -f "${'$'}DIR/.browser" ] && grep -q 'Press Enter to open' "${'$'}DIR/pane"; then
-            tmux send-keys -t "${'$'}SESSION" Enter && touch "${'$'}DIR/.browser"
-          fi
-
-          [ -f "${'$'}DIR/rc" ] && break
-          sleep 1
-        done
-
-        tmux capture-pane -t "${'$'}SESSION" -p > "${'$'}DIR/pane" 2>/dev/null
-        [ -f "${'$'}DIR/rc" ] || echo "EXIT=timeout" > "${'$'}DIR/rc"
-        tmux kill-session -t "${'$'}SESSION" 2>/dev/null
-    """.trimIndent()
 }

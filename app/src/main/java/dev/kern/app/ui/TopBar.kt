@@ -31,6 +31,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.kern.app.session.SessionState
 
 @Composable
@@ -45,9 +46,7 @@ internal fun TopBar(
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    // Re-read when the menu opens, so choosing an agent in settings is reflected without
-    // needing a restart.
-    val agentConfigured = remember(menuOpen) { AgentRepository.isConfigured(context) }
+    val agentCommand by AgentRepository.commandFlow(context).collectAsStateWithLifecycle()
 
 
     Row(
@@ -71,7 +70,7 @@ internal fun TopBar(
         Spacer(Modifier.width(8.dp))
 
         // Only the four surfaces worth a permanent thumb target. Everything else lives
-        // behind "more" â€” reachable, but not competing for the bar. Still scrollable so
+        // behind "more" — reachable, but not competing for the bar. Still scrollable so
         // the cover display cannot wrap the posture label.
         Row(
             modifier = Modifier
@@ -92,7 +91,9 @@ internal fun TopBar(
             // Only when there is an agent to open. Someone who never wanted one should
             // not be carrying a permanent chip for it, and the cockpit's diff and commit
             // half is still reachable through "more".
-            if (agentConfigured) ActionChip("agent") { onNavigate(ShellDestination.Cockpit) }
+            if (agentCommand.isNotBlank()) {
+                ActionChip("agent") { onNavigate(ShellDestination.Cockpit) }
+            }
         }
 
         Spacer(Modifier.width(6.dp))

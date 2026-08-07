@@ -37,8 +37,6 @@ object LinuxRuntime {
 
     private const val TAG = "Kern"
 
-    const val CODE_SERVER_PORT = 13337
-
     private val commandCounter = AtomicLong(0)
 
     /**
@@ -80,7 +78,7 @@ object LinuxRuntime {
 
     private fun nativeLibDir(context: Context): File = File(context.applicationInfo.nativeLibraryDir)
 
-    fun prootBinary(context: Context): File = File(nativeLibDir(context), "libproot.so")
+    internal fun prootBinary(context: Context): File = File(nativeLibDir(context), "libproot.so")
 
     /** Guest home; also where cloned projects live. */
     fun projectsDir(context: Context): File =
@@ -92,16 +90,13 @@ object LinuxRuntime {
             (File(root, "bin/bash").exists() || File(root, "usr/bin/bash").exists())
     }
 
-    fun isCodeServerInstalled(context: Context): Boolean =
-        File(rootfsDir(context), "usr/bin/code-server").exists()
-
     /**
      * Everything the IDE needs to open. The app's whole top-level route turns on this, so
      * it lives here rather than being spelled out at each of the three places that ask —
      * a third condition added to two of three hands the user the IDE while the setup
      * screen still thinks there is work to do.
      */
-    fun isReady(context: Context): Boolean = isInstalled(context) && isCodeServerInstalled(context)
+    fun isReady(context: Context): Boolean = isInstalled(context) && CodeServer.isInstalled(context)
 
     /** How the guest describes itself, e.g. "Ubuntu 26.04 LTS". */
     suspend fun osPrettyName(context: Context): String? =
@@ -111,7 +106,7 @@ object LinuxRuntime {
             timeoutMs = 25_000,
         )?.stdout?.trim()?.takeIf { it.isNotBlank() }
 
-    fun prootEnv(context: Context): Map<String, String> {
+    internal fun prootEnv(context: Context): Map<String, String> {
         val nativeLib = nativeLibDir(context)
         return mapOf(
             // proot's baked RUNPATH points at Termux's prefix, which we do not have.
@@ -139,7 +134,7 @@ object LinuxRuntime {
      * SELinux forbids hard links in app storage and dpkg depends on them, so without it
      * the first `apt install` fails.
      */
-    fun prootArgs(
+    internal fun prootArgs(
         context: Context,
         guestCommand: List<String>,
         workingDir: String = "/root",
@@ -180,6 +175,22 @@ object LinuxRuntime {
         args += guestCommand
         return args
     }
+
+    /** The one way to start a process inside the guest. */
+    internal fun spawnInGuest(
+        context: Context,
+        guestCommand: List<String>,
+        workingDir: String = "/root",
+        columns: Int = 200,
+        rows: Int = 50,
+    ): PtyProcess? = PtyProcess.spawn(
+        command = prootBinary(context).absolutePath,
+        argv = prootArgs(context, guestCommand, workingDir),
+        env = prootEnv(context),
+        cwd = context.filesDir.absolutePath,
+        columns = columns,
+        rows = rows,
+    )
 
     // ---- running commands ---------------------------------------------------
 
@@ -232,13 +243,10 @@ object LinuxRuntime {
                 "bash /tmp/fc-$id.sh > /tmp/fc-$id.out 2> /tmp/fc-$id.err; " +
                     "echo \$? > /tmp/fc-$id.rc"
 
-            val process = PtyProcess.spawn(
-                command = prootBinary(context).absolutePath,
-                argv = prootArgs(context, listOf("/bin/bash", "-lc", wrapper), workingDir),
-                env = prootEnv(context),
-                cwd = context.filesDir.absolutePath,
-                columns = 200,
-                rows = 50,
+            val process = spawnInGuest(
+                context,
+                listOf("/bin/bash", "-lc", wrapper),
+                workingDir,
             ) ?: return@withContext null
 
             val exit = try {
@@ -305,16 +313,11 @@ object LinuxRuntime {
         columns: Int,
         rows: Int,
         workingDir: String = ProjectRepository.currentFolder(context),
-    ): PtyProcess? = PtyProcess.spawn(
-        command = prootBinary(context).absolutePath,
-        argv = prootArgs(
-            context,
-            // not sq(): the user's own agent command line must stay a command, not a word.
-            listOf("/bin/bash", "-lc", "exec $command"),
-            workingDir,
-        ),
-        env = prootEnv(context),
-        cwd = context.filesDir.absolutePath,
+    ): PtyProcess? = spawnInGuest(
+        context,
+        // not sq(): the user's own agent command line must stay a command, not a word.
+        listOf("/bin/bash", "-lc", "exec $command"),
+        workingDir,
         columns = columns,
         rows = rows,
     )
@@ -335,122 +338,19 @@ object LinuxRuntime {
          * than the thing you are working on just means typing `cd` before every session.
          */
         workingDir: String = ProjectRepository.currentFolder(context),
-    ): PtyProcess? = PtyProcess.spawn(
-        command = prootBinary(context).absolutePath,
-        argv = prootArgs(
-            context,
-            // tmux keeps the session alive across terminal detach/reattach. `-c` so the
-            // session it creates starts in the project too, not just the bash that ran it.
-            listOf(
-                "/bin/bash",
-                "-lc",
-                "tmux new-session -A -s ${sq(sessionName)} -c ${sq(workingDir)} || exec bash -l",
-            ),
-            workingDir,
+    ): PtyProcess? = spawnInGuest(
+        context,
+        // tmux keeps the session alive across terminal detach/reattach. `-c` so the
+        // session it creates starts in the project too, not just the bash that ran it.
+        listOf(
+            "/bin/bash",
+            "-lc",
+            "tmux new-session -A -s ${sq(sessionName)} -c ${sq(workingDir)} || exec bash -l",
         ),
-        env = prootEnv(context),
-        cwd = context.filesDir.absolutePath,
+        workingDir,
         columns = columns,
         rows = rows,
     )
-
-    // ---- code-server --------------------------------------------------------
-
-    fun codeServerUrl(folder: String = "/root"): String =
-        "http://127.0.0.1:$CODE_SERVER_PORT/?folder=$folder"
-
-    const val HEALTH_URL = "http://127.0.0.1:$CODE_SERVER_PORT/healthz"
-
-    /**
-     * Start code-server inside the guest if it is not already listening. Idempotent via
-     * a pidfile; deliberately not `pgrep`, whose pattern would also match the very shell
-     * doing the checking.
-     */
-    /**
-     * The long-lived PRoot process hosting code-server.
-     *
-     * Held for the app's lifetime on purpose. PRoot supervises everything it traces, so
-     * this handle *is* the running guest — closing it would take the server down with
-     * it, and letting it be collected would do the same.
-     */
-    @Volatile
-    private var serverProcess: PtyProcess? = null
-
-    /**
-     * Start code-server in the guest. Returns as soon as it has been launched; whether it
-     * actually came up is decided by health-polling, not by this call.
-     */
-    fun startCodeServer(context: Context, token: String): Boolean {
-        if (serverProcess != null) return true
-
-        val script = """
-            mkdir -p /root/.kern /root/.local/share/code-server/User
-            export PASSWORD=${sq(token)}
-            exec code-server --auth password --bind-addr 127.0.0.1:$CODE_SERVER_PORT \
-              --disable-telemetry --disable-update-check \
-              >> /root/.kern/server.log 2>&1
-        """.trimIndent()
-
-        val process = PtyProcess.spawn(
-            command = prootBinary(context).absolutePath,
-            argv = prootArgs(context, listOf("/bin/bash", "-lc", script)),
-            env = prootEnv(context),
-            cwd = context.filesDir.absolutePath,
-            columns = 200,
-            rows = 50,
-        ) ?: return false
-
-        serverProcess = process
-        // Drain the pty in the background: the server writes to a log file, but anything
-        // that does reach the pty would eventually fill the buffer and stall it.
-        process.drainInBackground("KernServerDrain")
-
-        return true
-    }
-
-    fun stopCodeServer() {
-        serverProcess?.close()
-        serverProcess = null
-    }
-
-    fun isCodeServerRunning(): Boolean = serverProcess != null
-
-    /** Push workbench settings so the web layer renders only the editor (see docs/06). */
-    suspend fun applyWorkbenchSettings(context: Context) {
-        val settingsFile = File(
-            rootfsDir(context),
-            "root/.local/share/code-server/User/settings.json",
-        )
-        runCatching {
-            settingsFile.parentFile?.mkdirs()
-            settingsFile.writeText(WORKBENCH_SETTINGS)
-        }.onFailure { Log.w(TAG, "could not write workbench settings: ${it.message}") }
-    }
-
-    private val WORKBENCH_SETTINGS = """
-        {
-          "workbench.activityBar.location": "hidden",
-          "workbench.statusBar.visible": false,
-          "workbench.secondarySideBar.defaultVisibility": "hidden",
-          "workbench.layoutControl.enabled": false,
-          "workbench.editor.editorActionsLocation": "hidden",
-          "window.menuBarVisibility": "hidden",
-          "window.commandCenter": false,
-          "workbench.startupEditor": "none",
-          "workbench.colorTheme": "Default Dark Modern",
-          "editor.minimap.enabled": false,
-          "editor.wordWrap": "on",
-          "editor.fontSize": 14,
-          "editor.stickyScroll.enabled": false,
-          "editor.acceptSuggestionOnEnter": "off",
-          "terminal.integrated.fontSize": 13,
-          "keyboard.dispatch": "keyCode",
-          "security.workspace.trust.enabled": false,
-          "update.mode": "none",
-          "telemetry.telemetryLevel": "off",
-          "chat.commandCenter.enabled": false
-        }
-    """.trimIndent()
 
     /**
      * Prove the bundled PRoot runs, independent of whether a rootfs exists. A failure
@@ -460,6 +360,8 @@ object LinuxRuntime {
         val proot = prootBinary(context)
         if (!proot.exists()) return@withContext "libproot.so missing"
         withTimeoutOrNull(15_000) {
+            // not spawnInGuest(): no -r and no binds on purpose, so this still answers
+            // with no rootfs present — a failure here is the native layer, not the guest.
             val process = PtyProcess.spawn(
                 command = proot.absolutePath,
                 argv = listOf(proot.absolutePath, "--version"),

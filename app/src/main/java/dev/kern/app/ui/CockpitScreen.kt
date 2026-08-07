@@ -78,7 +78,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
     var refresh by remember { mutableIntStateOf(0) }
 
     val project = remember(refresh) { ProjectRepository.currentFolder(context) }
-    val command = remember(refresh, agent) { AgentRepository.command(context) }
+    val command by AgentRepository.commandFlow(context).collectAsStateWithLifecycle()
 
     // Only the git side is polled now. The terminal repaints itself, so there is nothing
     // to poll for output, and every read here is a round trip into the guest.

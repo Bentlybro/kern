@@ -1,6 +1,8 @@
 package dev.kern.app.runtime
 
 import android.content.Context
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Which CLI agent the cockpit runs, and the state of the work it is doing.
@@ -12,9 +14,6 @@ import android.content.Context
  * Giving it the same emulator the terminal uses was the whole fix.
  */
 object AgentRepository {
-
-    private const val PREFS = "kern"
-    private const val KEY_COMMAND = "agent_command"
 
     // ---- which agent --------------------------------------------------------
 
@@ -34,13 +33,31 @@ object AgentRepository {
 
     /** Empty means no agent, which is a normal way to use Kern. */
     fun command(context: Context): String =
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_COMMAND, "").orEmpty()
+        Prefs.of(context).getString(Prefs.KEY_AGENT_COMMAND, "").orEmpty()
 
-    fun setCommand(context: Context, value: String) {
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY_COMMAND, value.trim()).apply()
+    /** Null until the first read — empty is a real answer here, so it cannot mean "unread". */
+    private val _command = MutableStateFlow<String?>(null)
+
+    /**
+     * The same fact as [command], live.
+     *
+     * A pref is not observable, so every reader used to re-read it on a key of its own
+     * invention — the top bar on its overflow menu opening, the cockpit on a refresh
+     * counter — and picking an agent in settings then showed up anywhere between at once
+     * and never. Collect this instead and there is one answer at a time.
+     */
+    fun commandFlow(context: Context): StateFlow<String> {
+        if (_command.value == null) _command.value = command(context)
+        // Non-null from here on: seeded above, and setCommand only ever writes a String.
+        @Suppress("UNCHECKED_CAST")
+        return _command as StateFlow<String>
     }
 
-    fun isConfigured(context: Context): Boolean = command(context).isNotBlank()
+    fun setCommand(context: Context, value: String) {
+        Prefs.of(context).edit().putString(Prefs.KEY_AGENT_COMMAND, value.trim()).apply()
+        // Published as typed rather than trimmed: the settings field edits this flow
+        // directly now, and trimming each keystroke would eat the space in a two-word
+        // command. What the next process reads is still the trimmed form.
+        _command.value = value
+    }
 }

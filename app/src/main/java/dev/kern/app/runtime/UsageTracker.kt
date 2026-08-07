@@ -19,9 +19,6 @@ object UsageTracker {
 
     enum class Surface { Editor, Terminal, Cockpit, Projects, Chrome }
 
-    private const val PREFS = "kern_usage"
-    private const val EPOCH_KEY = "usage_epoch"
-
     /**
      * Bump whenever a surface is added, removed or re-scoped.
      *
@@ -37,9 +34,9 @@ object UsageTracker {
 
     /** The store, with any totals from a superseded attribution scheme already dropped. */
     private fun prefs(context: Context): SharedPreferences {
-        val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (prefs.getInt(EPOCH_KEY, 0) != EPOCH) {
-            prefs.edit().clear().putInt(EPOCH_KEY, EPOCH).apply()
+        val prefs = Prefs.usage(context)
+        if (prefs.getInt(Prefs.KEY_USAGE_EPOCH, 0) != EPOCH) {
+            prefs.edit().clear().putInt(Prefs.KEY_USAGE_EPOCH, EPOCH).apply()
         }
         return prefs
     }
@@ -81,7 +78,7 @@ object UsageTracker {
     fun reset(context: Context) {
         // Keep the epoch stamp, or the next read would see an unstamped store and treat
         // an intentional reset as a migration.
-        prefs(context).edit().clear().putInt(EPOCH_KEY, EPOCH).apply()
+        prefs(context).edit().clear().putInt(Prefs.KEY_USAGE_EPOCH, EPOCH).apply()
         current = null
     }
 

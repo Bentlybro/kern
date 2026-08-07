@@ -79,8 +79,8 @@ sealed interface ShellDestination {
 /**
  * The native fold shell (M2, decision D12).
  *
- * The workbench WebView is handed *only* an editor pane; all chrome â€” status, actions,
- * key row, and the posture-specific layout around it â€” is native Compose. IME insets are
+ * The workbench WebView is handed *only* an editor pane; all chrome — status, actions,
+ * key row, and the posture-specific layout around it — is native Compose. IME insets are
  * owned here, so opening the keyboard resizes panes instead of glitching the web layout.
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -200,7 +200,7 @@ fun Shell(state: SessionState) {
                 // Tabletop always splits at the crease: content up, terminal down.
                 fold.mode == DisplayMode.Tabletop -> TabletopLayout(fold)
 
-                // Compact: one surface at a time â€” a split would leave neither usable.
+                // Compact: one surface at a time — a split would leave neither usable.
                 fold.mode == DisplayMode.Cover ->
                     if (showTerminal) TerminalPane(Modifier.fillMaxSize())
                     else EditorPane(Modifier.fillMaxSize())
@@ -237,7 +237,7 @@ fun Shell(state: SessionState) {
  * Setup's second half, reported from inside the editor.
  *
  * The toolchain finishes installing after the IDE has opened, so this is the only place
- * the user would otherwise learn that git is still on its way â€” and, just as usefully,
+ * the user would otherwise learn that git is still on its way — and, just as usefully,
  * that it has arrived. Two lines of chrome, and it removes itself when there is nothing
  * left to say.
  */
@@ -252,7 +252,7 @@ private fun SetupStrip() {
 
     Column(Modifier.fillMaxWidth()) {
         Text(
-            "$label â€” you can keep working",
+            "$label — you can keep working",
             fontFamily = FontFamily.Monospace,
             fontSize = 10.sp,
             color = MaterialTheme.colorScheme.primary,
@@ -320,7 +320,7 @@ private fun ReconnectOverlay() {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
             Text(
-                "Server died â€” restartingâ€¦",
+                "Server died — restarting…",
                 modifier = Modifier.padding(top = 12.dp),
                 color = MaterialTheme.colorScheme.onBackground,
             )

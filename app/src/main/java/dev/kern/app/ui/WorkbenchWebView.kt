@@ -18,7 +18,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import dev.kern.app.runtime.LinuxRuntime
+import dev.kern.app.runtime.CodeServer
+import dev.kern.app.runtime.Prefs
 import dev.kern.app.runtime.ProjectRepository
 import dev.kern.app.runtime.Secrets
 import kotlin.math.abs
@@ -106,17 +107,19 @@ object WorkbenchWebView {
      * VS Code persists its layout (open panels, sidebar visibility) in localStorage,
      * which outlives a settings.json change - so a one-time storage wipe is the only
      * deterministic way to make new layout defaults take effect.
+     *
+     * The settings this pairs with are `CodeServer.WORKBENCH_SETTINGS`, now in another
+     * file: editing a layout key there without bumping this leaves existing installs on
+     * the old layout.
      */
     private const val LAYOUT_EPOCH = 3
-    private const val PREFS = "kern"
-    private const val KEY_LAYOUT_EPOCH = "layout_epoch"
 
     private fun resetLayoutIfStale(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (prefs.getInt(KEY_LAYOUT_EPOCH, 0) == LAYOUT_EPOCH) return
+        val prefs = Prefs.of(context)
+        if (prefs.getInt(Prefs.KEY_LAYOUT_EPOCH, 0) == LAYOUT_EPOCH) return
         WebStorage.getInstance().deleteAllData()
         CookieManager.getInstance().removeAllCookies(null)
-        prefs.edit().putInt(KEY_LAYOUT_EPOCH, LAYOUT_EPOCH).apply()
+        prefs.edit().putInt(Prefs.KEY_LAYOUT_EPOCH, LAYOUT_EPOCH).apply()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -215,7 +218,7 @@ object WorkbenchWebView {
                 WorkbenchBridge.NAME,
             )
 
-            loadUrl(LinuxRuntime.codeServerUrl(ProjectRepository.currentFolder(activityContext)))
+            loadUrl(CodeServer.url(ProjectRepository.currentFolder(activityContext)))
         }
         instance = webView
         return webView
@@ -230,7 +233,7 @@ object WorkbenchWebView {
 
     /** Switch the workbench to a different workspace folder. */
     fun openFolder(path: String) {
-        instance?.loadUrl(LinuxRuntime.codeServerUrl(path))
+        instance?.loadUrl(CodeServer.url(path))
     }
 
     /**

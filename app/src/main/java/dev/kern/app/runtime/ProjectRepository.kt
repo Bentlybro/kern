@@ -14,9 +14,6 @@ object ProjectRepository {
     const val HOME = "/root"
     const val PROJECTS_DIR = "$HOME/projects"
 
-    private const val PREFS = "kern"
-    private const val KEY_RECENTS = "recent_projects"
-    private const val KEY_CURRENT = "current_folder"
     private const val MAX_RECENTS = 8
 
     data class Entry(val name: String, val path: String, val isRepo: Boolean)
@@ -129,24 +126,23 @@ object ProjectRepository {
     // ---- recents -------------------------------------------------------------
 
     fun recents(context: Context): List<String> =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_RECENTS, null)
+        Prefs.of(context)
+            .getString(Prefs.KEY_RECENTS, null)
             ?.split('\n')
             ?.filter { it.isNotBlank() }
             ?: emptyList()
 
     fun rememberOpened(context: Context, path: String) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val prefs = Prefs.of(context)
         val updated = (listOf(path) + recents(context).filter { it != path }).take(MAX_RECENTS)
         prefs.edit()
-            .putString(KEY_RECENTS, updated.joinToString("\n"))
-            .putString(KEY_CURRENT, path)
+            .putString(Prefs.KEY_RECENTS, updated.joinToString("\n"))
+            .putString(Prefs.KEY_CURRENT_FOLDER, path)
             .apply()
     }
 
     fun currentFolder(context: Context): String {
-        val saved = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_CURRENT, null)
+        val saved = Prefs.of(context).getString(Prefs.KEY_CURRENT_FOLDER, null)
         // Paths from before the move to an in-app Linux no longer exist; falling back
         // avoids the workbench opening on a missing workspace.
         return saved?.takeIf { it.startsWith("/root") } ?: HOME

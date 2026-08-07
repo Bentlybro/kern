@@ -110,7 +110,16 @@ class SessionService : Service() {
             Log.i(TAG, "supervise: adopted an already-running server")
         } else {
             CodeServer.applyWorkbenchSettings(this)
-            CodeServer.start(this, Secrets.token(this))
+            // A refused spawn is known immediately, so say so immediately rather than
+            // spending ninety seconds polling a server that was never launched and then
+            // pointing the user at a log file that cannot exist.
+            if (!CodeServer.start(this, Secrets.token(this))) {
+                val why = "Could not launch code-server. Try Repair in settings."
+                Log.e(TAG, "supervise: $why")
+                _state.value = SessionState.Failed(why)
+                updateNotification("Failed to start - open the app for details")
+                return
+            }
             if (!awaitHealthy(90_000)) {
                 val why = "code-server did not start. See /root/.kern/server.log " +
                     "in the terminal."

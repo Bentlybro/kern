@@ -95,8 +95,19 @@ class PtyProcess private constructor(
     }
 
     /** [drain] on a daemon thread called [name], for a child that outlives this call. */
-    fun drainInBackground(name: String) {
-        Thread({ drain() }, name).apply { isDaemon = true }.start()
+    /**
+     * Drain on a daemon thread, calling [onClosed] once the pty reaches EIO.
+     *
+     * The drain ending is the one honest signal that the child is gone: a pty master raises
+     * EIO instead of EOF when its last slave closes. A caller holding a long-lived process
+     * has no other way to notice it died, and treating a dead handle as a live one is worse
+     * than having no handle at all.
+     */
+    fun drainInBackground(name: String, onClosed: (() -> Unit)? = null) {
+        Thread({
+            drain()
+            onClosed?.invoke()
+        }, name).apply { isDaemon = true }.start()
     }
 
     companion object {

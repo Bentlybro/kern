@@ -59,12 +59,28 @@ object CodeServer {
         """.trimIndent()
 
         val process = LinuxRuntime.spawnInGuest(context, listOf("/bin/bash", "-lc", script))
-            ?: return false
+        if (process == null) {
+            // Worth saying out loud. Observed once on a fresh install: the server never
+            // started, nothing was logged, and the app sat on "starting Linux" until the
+            // health wait timed out ninety seconds later and blamed a log file that had
+            // never been created. A spawn that fails is a different fault from a server
+            // that starts and dies, and the two must not look the same from outside.
+            Log.e(TAG, "start: could not spawn code-server in the guest")
+            return false
+        }
 
         serverProcess = process
         // Drain the pty in the background: the server writes to a log file, but anything
-        // that does reach the pty would eventually fill the buffer and stall it.
-        process.drainInBackground("KernServerDrain")
+        // that does reach the pty would eventually fill the buffer and stall it. Clearing
+        // the handle when the drain ends is what stops a dead server being reported as
+        // running for the life of the process — `start` returns early on a non-null handle,
+        // so without this one death meant no restart would ever be attempted again.
+        process.drainInBackground("KernServerDrain") {
+            if (serverProcess === process) {
+                Log.w(TAG, "code-server exited")
+                serverProcess = null
+            }
+        }
 
         return true
     }

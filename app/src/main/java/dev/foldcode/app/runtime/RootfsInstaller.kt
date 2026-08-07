@@ -4,9 +4,12 @@ import android.content.Context
 import android.util.Log
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -79,6 +82,28 @@ object RootfsInstaller {
     val isRunning: Boolean get() = job?.isActive == true
 
     /**
+     * A rolling tail of what setup is actually doing.
+     *
+     * Setup takes minutes, and a single line like "Installing tools" for three of them
+     * is indistinguishable from being stuck. This is the real output, so it is obvious
+     * that something is happening and obvious what.
+     */
+    private val _log = MutableStateFlow<List<String>>(emptyList())
+    val log: StateFlow<List<String>> = _log.asStateFlow()
+
+    private const val LOG_LINES = 400
+
+    private fun logLine(line: String) {
+        val text = line.trim()
+        if (text.isEmpty()) return
+        // apt redraws these dozens of times a second and they say nothing useful.
+        if (text.startsWith("(Reading database") || text.startsWith("Selecting previously")) {
+            return
+        }
+        _log.value = (_log.value + text).takeLast(LOG_LINES)
+    }
+
+    /**
      * Begin setup unless it is already running. Safe to call repeatedly — [install] is
      * idempotent, so this doubles as the resume path for a setup that was interrupted.
      */
@@ -96,81 +121,163 @@ object RootfsInstaller {
     const val ESTIMATED_DOWNLOAD_MB = 400
     const val ESTIMATED_DISK_MB = 1400
 
+    /**
+     * git, gh and tmux are load-bearing: cloning and pushing, signing in to GitHub, and
+     * session persistence. ca-certificates is too — without a trust store, anything
+     * speaking TLS from Go (gh) or curl fails with "certificate signed by unknown
+     * authority". The rest just make the IDE useful straight away.
+     */
+    private const val TOOLS =
+        "ca-certificates git gh tmux curl ripgrep python3 python3-pip"
+
+    /**
+     * Setup, in two halves.
+     *
+     * The first half is only what the editor cannot open without: a filesystem and
+     * code-server. The second is the toolchain, which is worth having but blocks nobody
+     * from writing code — so the app is told the environment is usable in between, and
+     * the rest installs while the user is already working.
+     *
+     * Idempotent throughout: each step checks whether it is needed, which is what makes
+     * this double as Repair and as the resume path for an interrupted setup.
+     */
     suspend fun install(context: Context): Boolean = withContext(Dispatchers.IO) {
         try {
-            if (!LinuxRuntime.isInstalled(context)) {
-                val archive = File(context.cacheDir, "ubuntu-base.tar.gz")
-                if (!archive.exists() || archive.length() < 20L * 1024 * 1024) {
-                    _stage.value = Stage.Downloading("Ubuntu base", 0, 0)
-                    LinuxRuntime.download(ROOTFS_URL, archive) { got, total ->
-                        _stage.value = Stage.Downloading("Ubuntu base", got, total)
+            val essential = coroutineScope {
+                val deb = File(context.cacheDir, "code-server.deb")
+                var fetch: Deferred<Boolean>? = null
+
+                if (!LinuxRuntime.isInstalled(context)) {
+                    val archive = File(context.cacheDir, "ubuntu-base.tar.gz")
+                    if (!archive.exists() || archive.length() < 20L * 1024 * 1024) {
+                        _stage.value = Stage.Downloading("Ubuntu base", 0, 0)
+                        logLine("Downloading Ubuntu $UBUNTU_RELEASE base image")
+                        LinuxRuntime.download(ROOTFS_URL, archive) { got, total ->
+                            _stage.value = Stage.Downloading("Ubuntu base", got, total)
+                        }
+                    }
+
+                    // Start the big download now rather than later. code-server is 218 MB
+                    // against the base image's 34, and unpacking is CPU bound, so fetching
+                    // it here costs almost nothing on the clock instead of minutes of its
+                    // own once unpacking has finished.
+                    if (!LinuxRuntime.isCodeServerInstalled(context)) {
+                        fetch = async { fetchServer(deb) }
+                    }
+
+                    _stage.value = Stage.Working("Unpacking Ubuntu")
+                    logLine("Unpacking the filesystem")
+                    if (!extract(context, archive)) {
+                        fetch?.cancel()
+                        return@coroutineScope fail("Could not unpack the filesystem")
+                    }
+                    archive.delete()
+
+                    _stage.value = Stage.Working("Configuring")
+                    configure(context)
+                    logLine("Configured apt, DNS and dpkg")
+                }
+
+                if (!LinuxRuntime.isCodeServerInstalled(context)) {
+                    _stage.value = Stage.Working("Updating package lists")
+                    LinuxRuntime.run(
+                        context,
+                        "apt-get update 2>&1",
+                        timeoutMs = 300_000,
+                        onLine = ::logLine,
+                    )
+
+                    if (fetch == null) fetch = async { fetchServer(deb) }
+                    _stage.value = Stage.Working("Downloading code-server")
+                    if (fetch.await() != true) {
+                        return@coroutineScope fail("Could not download code-server")
+                    }
+
+                    _stage.value = Stage.Working("Installing code-server")
+                    val staged = File(LinuxRuntime.rootfsDir(context), "tmp/code-server.deb")
+                    if (!moveInto(deb, staged)) {
+                        return@coroutineScope fail("Could not stage the code-server package")
+                    }
+
+                    // apt (not dpkg) so dependencies resolve.
+                    val result = LinuxRuntime.run(
+                        context,
+                        "apt-get install -y /tmp/code-server.deb 2>&1; rm -f /tmp/code-server.deb",
+                        timeoutMs = 900_000,
+                        onLine = ::logLine,
+                    )
+                    if (!LinuxRuntime.isCodeServerInstalled(context)) {
+                        return@coroutineScope fail(
+                            result?.stdout?.lines()?.lastOrNull { it.isNotBlank() }
+                                ?: "code-server did not install",
+                        )
                     }
                 }
-
-                _stage.value = Stage.Working("Unpacking Ubuntu")
-                if (!extract(context, archive)) {
-                    return@withContext fail("Could not unpack the filesystem")
-                }
-                archive.delete()
-
-                _stage.value = Stage.Working("Configuring")
-                configure(context)
+                true
             }
+            if (!essential) return@withContext false
 
-            if (!LinuxRuntime.isCodeServerInstalled(context)) {
-                _stage.value = Stage.Working("Updating package lists")
-                val update = LinuxRuntime.run(context, "apt-get update", timeoutMs = 300_000)
-                if (update?.ok != true) {
-                    Log.w(TAG, "apt-get update: ${update?.stderr?.take(300)}")
-                }
-
-                val deb = File(LinuxRuntime.rootfsDir(context), "tmp/code-server.deb")
-                _stage.value = Stage.Downloading("code-server", 0, 0)
-                LinuxRuntime.download(CODE_SERVER_URL, deb) { got, total ->
-                    _stage.value = Stage.Downloading("code-server", got, total)
-                }
-
-                _stage.value = Stage.Working("Installing code-server")
-                // apt (not dpkg) so dependencies resolve.
-                val install = LinuxRuntime.run(
-                    context,
-                    "apt-get install -y /tmp/code-server.deb && rm -f /tmp/code-server.deb",
-                    timeoutMs = 900_000,
-                )
-                if (!LinuxRuntime.isCodeServerInstalled(context)) {
-                    return@withContext fail(
-                        install?.stderr?.lines()?.lastOrNull { it.isNotBlank() }
-                            ?: "code-server did not install",
-                    )
-                }
-            }
+            // Hand over: from here the editor can open, and the rest happens behind it.
+            LinuxRuntime.applyWorkbenchSettings(context)
+            LinuxRuntime.run(context, "mkdir -p /root/projects", timeoutMs = 20_000)
+            LinuxRuntime.notifyInstallChanged()
+            logLine("Editor ready — installing the toolchain in the background")
 
             _stage.value = Stage.Working("Installing tools")
-            // git, gh and tmux are load-bearing: cloning and pushing, signing in to
-            // GitHub, and session persistence. ca-certificates is too — without a trust
-            // store, anything speaking TLS from Go (gh) or curl fails with
-            // "certificate signed by unknown authority". The rest just make the IDE
-            // useful straight away. Idempotent, so re-running repairs a partial setup.
             LinuxRuntime.run(
                 context,
-                "apt-get install -y ca-certificates git gh tmux curl ripgrep " +
-                    "python3 python3-pip && update-ca-certificates",
+                "apt-get install -y $TOOLS 2>&1; update-ca-certificates 2>&1",
                 timeoutMs = 1_200_000,
+                onLine = ::logLine,
             )
 
             _stage.value = Stage.Working("Finishing up")
             polish(context)
+            logLine("Setup complete")
 
-            LinuxRuntime.applyWorkbenchSettings(context)
-            LinuxRuntime.run(context, "mkdir -p /root/projects", timeoutMs = 20_000)
-
-            LinuxRuntime.notifyInstallChanged()
             _stage.value = Stage.Done
             true
         } catch (e: Exception) {
             Log.e(TAG, "setup failed", e)
             fail(e.message ?: e.javaClass.simpleName)
         }
+    }
+
+    /**
+     * Fetched into the app's cache rather than the rootfs, so it can download while
+     * PRoot is busy unpacking into that same directory tree.
+     */
+    private suspend fun fetchServer(target: File): Boolean {
+        if (target.exists() && target.length() > 100L * 1024 * 1024) return true
+        var reported = -1
+        return runCatching {
+            LinuxRuntime.download(CODE_SERVER_URL, target) { got, total ->
+                if (total > 0) {
+                    val percent = (got * 100 / total).toInt()
+                    // Every 10%: often enough to look alive, rarely enough to read.
+                    if (percent >= reported + 10) {
+                        reported = percent
+                        logLine("code-server download $percent%")
+                    }
+                }
+            }
+            true
+        }.getOrElse {
+            Log.w(TAG, "code-server download failed", it)
+            false
+        }
+    }
+
+    /** Cache and rootfs share a filesystem, so this is a rename, not a 218 MB copy. */
+    private fun moveInto(source: File, target: File): Boolean {
+        target.parentFile?.mkdirs()
+        if (target.exists()) target.delete()
+        if (source.renameTo(target)) return true
+        return runCatching {
+            source.copyTo(target, overwrite = true)
+            source.delete()
+            true
+        }.getOrDefault(false)
     }
 
     private fun fail(message: String): Boolean {
@@ -271,6 +378,25 @@ object RootfsInstaller {
                 appendLine("Acquire::PDiffs \"false\";")
                 appendLine("Acquire::Retries \"3\";")
                 appendLine("APT::Install-Recommends \"false\";")
+                // Translated descriptions are several MB of download that nothing here
+                // ever reads.
+                appendLine("Acquire::Languages \"none\";")
+            },
+        )
+        write(
+            File(root, "etc/dpkg/dpkg.cfg.d/01-foldcode"),
+            buildString {
+                // dpkg fsyncs after every extracted file, which on phone storage is the
+                // single largest cost of installing anything. Container images disable it
+                // for exactly this reason. The exposure is a half-written install if the
+                // device loses power mid-apt, and Repair already recovers from that.
+                appendLine("force-unsafe-io")
+                // Nothing on a phone reads man pages or package docs, and skipping them
+                // saves both time and a surprising amount of space.
+                appendLine("path-exclude=/usr/share/doc/*")
+                appendLine("path-exclude=/usr/share/man/*")
+                appendLine("path-exclude=/usr/share/info/*")
+                appendLine("path-exclude=/usr/share/groff/*")
             },
         )
         write(

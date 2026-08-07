@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,6 +32,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
+import dev.foldcode.app.runtime.RootfsInstaller
 import dev.foldcode.app.runtime.UsageTracker
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +47,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.foldcode.app.session.SessionService
 import dev.foldcode.app.session.SessionState
 
@@ -149,6 +152,8 @@ fun Shell(state: SessionState) {
             onOpenSettings = { showSettings = true },
         )
 
+        SetupStrip()
+
         Box(modifier = Modifier.weight(1f)) {
             when {
                 // Tabletop always splits at the crease: content up, terminal down.
@@ -184,6 +189,42 @@ fun Shell(state: SessionState) {
         }
 
         KeyRow()
+    }
+}
+
+/**
+ * Setup's second half, reported from inside the editor.
+ *
+ * The toolchain finishes installing after the IDE has opened, so this is the only place
+ * the user would otherwise learn that git is still on its way — and, just as usefully,
+ * that it has arrived. Two lines of chrome, and it removes itself when there is nothing
+ * left to say.
+ */
+@Composable
+private fun SetupStrip() {
+    val stage by RootfsInstaller.stage.collectAsStateWithLifecycle()
+    val label = when (val current = stage) {
+        is RootfsInstaller.Stage.Working -> current.what
+        is RootfsInstaller.Stage.Downloading -> "Downloading ${current.what}"
+        else -> null
+    } ?: return
+
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            "$label — you can keep working",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 12.dp, vertical = 3.dp),
+        )
+        LinearProgressIndicator(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(2.dp),
+        )
     }
 }
 

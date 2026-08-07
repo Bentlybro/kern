@@ -6,6 +6,10 @@ import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +29,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +57,7 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val stage by RootfsInstaller.stage.collectAsStateWithLifecycle()
+    val log by RootfsInstaller.log.collectAsStateWithLifecycle()
     var confirmReset by remember { mutableStateOf(false) }
 
     /**
@@ -110,6 +116,7 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
 
         Spacer(Modifier.height(4.dp))
         StageView(stage)
+        if (log.isNotEmpty()) LogView(log)
         Spacer(Modifier.weight(1f))
 
         BatteryHint(context)
@@ -174,6 +181,45 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
                     TextButton(onClick = { confirmReset = false }) { Text("Cancel") }
                 }
             }
+        }
+    }
+}
+
+/**
+ * The real output, tailed live.
+ *
+ * Setup is several minutes of work, and a lone "Installing tools" for three of them
+ * looks identical to being stuck. Showing what apt is actually doing costs nothing and
+ * removes the guessing.
+ */
+@Composable
+private fun LogView(lines: List<String>) {
+    val listState = rememberLazyListState()
+    LaunchedEffect(lines.size) {
+        if (lines.isNotEmpty()) listState.animateScrollToItem(lines.lastIndex)
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(150.dp)
+            .border(
+                1.dp,
+                MaterialTheme.colorScheme.surfaceVariant,
+                RoundedCornerShape(8.dp),
+            )
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        items(lines) { line ->
+            Text(
+                line,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 9.5.sp,
+                maxLines = 2,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

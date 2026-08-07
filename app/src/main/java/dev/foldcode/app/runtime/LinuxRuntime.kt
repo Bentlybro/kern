@@ -182,6 +182,11 @@ object LinuxRuntime {
         script: String,
         timeoutMs: Long = 30_000,
         workingDir: String = "/root",
+        /**
+         * Called with each whole line as it is written, for commands worth watching.
+         * The output file is ours, so this is a cheap tail rather than another pipe.
+         */
+        onLine: ((String) -> Unit)? = null,
     ): Result? = withContext(Dispatchers.IO) {
         if (!isInstalled(context)) return@withContext null
 
@@ -214,7 +219,13 @@ object LinuxRuntime {
 
             val exit = try {
                 withTimeoutOrNull(timeoutMs) {
-                    while (!rcFile.exists()) delay(100)
+                    var seen = 0
+                    while (!rcFile.exists()) {
+                        if (onLine != null) seen = tail(outFile, seen, onLine)
+                        delay(if (onLine != null) 250 else 100)
+                    }
+                    // One last pass, or the closing lines are never reported.
+                    if (onLine != null) tail(outFile, seen, onLine)
                     rcFile.readText().trim().toIntOrNull() ?: 0
                 }
             } finally {
@@ -232,6 +243,28 @@ object LinuxRuntime {
         } finally {
             listOf(scriptFile, outFile, errFile, rcFile).forEach { runCatching { it.delete() } }
         }
+    }
+
+    /**
+     * Report whole lines appended since [from]; returns the new offset.
+     *
+     * Only complete lines are emitted, so a half-written line is never shown and is
+     * picked up on the next pass. Carriage returns count as breaks because apt redraws
+     * its progress that way, and each redraw is a line worth seeing in its own right.
+     */
+    private fun tail(file: File, from: Int, onLine: (String) -> Unit): Int {
+        if (!file.exists()) return from
+        val text = runCatching { file.readText() }.getOrNull() ?: return from
+        if (text.length <= from) return from
+
+        val fresh = text.substring(from)
+        val cut = fresh.lastIndexOfAny(charArrayOf('\n', '\r'))
+        if (cut < 0) return from
+
+        fresh.substring(0, cut)
+            .split('\n', '\r')
+            .forEach { line -> if (line.isNotBlank()) onLine(line) }
+        return from + cut + 1
     }
 
     /** Spawn an interactive login shell on its own pty — this backs the terminal. */

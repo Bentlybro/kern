@@ -7,7 +7,11 @@ import android.content.MutableContextWrapper
 import android.content.pm.ApplicationInfo
 import android.os.SystemClock
 import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.webkit.CookieManager
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -19,6 +23,62 @@ import androidx.core.view.WindowInsetsCompat
 import dev.kern.app.runtime.LinuxRuntime
 import dev.kern.app.runtime.ProjectRepository
 import dev.kern.app.runtime.Secrets
+import kotlin.math.abs
+
+/**
+ * The workbench WebView, with one behaviour added: after a scroll it refuses to give the
+ * IME an input connection until the user taps again.
+ *
+ * Everything about the keyboard here is decided by someone else. The editor keeps its
+ * editable focused once a caret is placed, and a focused editable is, to Android, a
+ * standing request for a keyboard — so the keyboard ducks away while a drag is in flight
+ * and is put straight back when it settles. Blurring from JavaScript does not stop it
+ * (the workbench simply refocuses), and hiding the keyboard from here is worse still: it
+ * argues with a decision already made and produces a visible open/close flicker on every
+ * swipe. Both were tried.
+ *
+ * What does work is refusing the request rather than undoing its result. Re-showing the
+ * keyboard restarts input, which asks this view for a connection, and a scroll is not a
+ * request to type. The refusal lasts until a gesture ends without having become a scroll
+ * — a tap — which is exactly when the user has asked to edit.
+ *
+ * Typing is unaffected: the key row and hardware keys are dispatched as key events and
+ * never travel through an input connection.
+ */
+private class WorkbenchWeb(context: Context) : WebView(context) {
+
+    private val slop = ViewConfiguration.get(context).scaledTouchSlop
+    private var downX = 0f
+    private var downY = 0f
+    private var movedThisGesture = false
+
+    /** Set by a scroll, cleared by a tap. */
+    private var afterScroll = false
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = event.x
+                downY = event.y
+                movedThisGesture = false
+            }
+
+            MotionEvent.ACTION_MOVE -> if (!movedThisGesture) {
+                if (abs(event.x - downX) > slop || abs(event.y - downY) > slop) {
+                    movedThisGesture = true
+                    afterScroll = true
+                }
+            }
+
+            // A gesture that never moved is a tap, and a tap is a request to edit.
+            MotionEvent.ACTION_UP -> if (!movedThisGesture) afterScroll = false
+        }
+        return super.onTouchEvent(event)
+    }
+
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? =
+        if (afterScroll) null else super.onCreateInputConnection(outAttrs)
+}
 
 /**
  * Process-scoped WebView so the workbench survives activity recreation (fold/unfold,
@@ -69,7 +129,7 @@ object WorkbenchWebView {
         val wrapper = MutableContextWrapper(activityContext)
         contextWrapper = wrapper
 
-        val webView = WebView(wrapper).apply {
+        val webView = WorkbenchWeb(wrapper).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -139,6 +199,7 @@ object WorkbenchWebView {
                         }
                     },
                     onSelection = { info -> post { selectionListener?.invoke(info) } },
+                    onDebug = { message -> android.util.Log.i("Kern", "workbench: $message") },
                 ),
                 WorkbenchBridge.NAME,
             )

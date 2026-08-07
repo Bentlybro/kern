@@ -124,9 +124,9 @@ object StorageManager {
         ProjectRepository.forgetAll(context)
         val root = LinuxRuntime.rootfsDir(context)
         runCatching { root.deleteRecursively() }.getOrDefault(false)
-        // The setup downloads sit in the cache rather than the rootfs, so deleting only
-        // the guest left a failed transfer's bytes on the device with nothing in the app
-        // able to reclaim them, and the next setup reusing what was left.
+        // The setup downloads are staged outside the rootfs, so deleting only the guest
+        // left a failed transfer's bytes on the device with nothing in the app able to
+        // reclaim them, and the next setup resuming into what was left.
         RootfsInstaller.clearCachedDownloads(context)
         // Tell the UI the world changed, or it keeps routing to a guest that is gone.
         LinuxRuntime.notifyInstallChanged()

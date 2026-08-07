@@ -70,8 +70,9 @@ internal fun TopBar(
         Spacer(Modifier.width(8.dp))
 
         // The surfaces worth a permanent thumb target, plus undo and redo. Everything
-        // else lives behind "more" - reachable, but not competing for the bar. Still
-        // scrollable so the cover display cannot wrap the posture label.
+        // else lives behind "more" - reachable, but not competing for the bar. Scrollable
+        // because the full set does not fit a folded phone, and wrapping the bar would
+        // eat a row of editor.
         Row(
             modifier = Modifier
                 .weight(1f)
@@ -103,14 +104,6 @@ internal fun TopBar(
         }
 
         Spacer(Modifier.width(6.dp))
-        Text(
-            mode.name.lowercase(),
-            fontFamily = FontFamily.Monospace,
-            fontSize = 11.sp,
-            maxLines = 1,
-            softWrap = false,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
 
         Box {
             ActionChip("more") { menuOpen = true }

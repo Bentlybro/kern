@@ -8,8 +8,7 @@ re-verified the same way.
 This supersedes the staged plan in decision **D4** (which assumed we would eventually
 build a Termux-prefix bootstrap). The PRoot route is better: it is self-contained, gives
 us the *entire Ubuntu archive* instead of termux-packages, and — the surprise — works at
-**targetSdk 36**, which also reopens Play Store distribution that decision D5 had ruled
-out.
+**targetSdk 36**.
 
 ## Why this is allowed at targetSdk 36
 

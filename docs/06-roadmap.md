@@ -384,8 +384,14 @@ be settled with data after a couple of weeks of real use instead of a hunch.
   vendored Termux files, the exact modifications made to them, runtime dependencies, and
   the trademark position.
 - ✅ **README** rewritten to describe the working product.
-- ☐ Remaining for an actual public release: in-app updater, F-Droid metadata,
-  screenshots/demo video, and a final trademark check on the name (decision D8).
+- ☐ Remaining for an actual public release: in-app updater, screenshots/demo video, and a
+  final trademark check on the name (decision D8).
+- ✗ **F-Droid is out**, and this is settled rather than deferred. F-Droid is not a
+  submission form, it is a build-recipe project that compiles from source on its own
+  infrastructure. Kern ships five prebuilt Termux binaries in `jniLibs/`, one of them
+  hand-patched, so a recipe would mean owning Termux's Android patches to PRoot forever.
+  Distribution is GitHub Releases; Obtainium consumes that shape directly. IzzyOnDroid,
+  which accepts the maintainer's own APK, is the only sideload index worth revisiting.
 
 ## M5 (original scope, for reference)
 
@@ -414,7 +420,7 @@ be settled with data after a couple of weeks of real use instead of a hunch.
 ## Post-v1 candidate tracks (unordered)
 
 - CodeMirror-6-based satellite quick-editor for cover screen / instant-open (D9).
-- F-Droid submission; targetSdk-28 fallback variant if linker64 path degrades.
+- targetSdk-28 fallback variant if linker64 path degrades.
 - Fold8 Ultra + Flip8 + tablet layout tuning; trifold when it matters.
 - Voice-driven agent input; local model integration (Gemini Nano 4 via ML Kit).
 - Community: plugin/config sharing, key-row layout gallery.

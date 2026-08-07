@@ -259,6 +259,21 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 )
             }
+            // The last resort when something above says Fail and nothing here can fix it.
+            // A phone has no adb and no second screen, so without this the user has the
+            // whole story on the display in front of them and no way to send it anywhere.
+            item {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    Text(
+                        "Something wrong? This copies your device, Android version, free " +
+                            "space and the tail of the setup log, ready to paste into a " +
+                            "GitHub issue.",
+                        fontSize = 11.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    CopyDiagnosticsButton(Modifier.padding(top = 4.dp))
+                }
+            }
             item { Spacer(Modifier.height(24.dp)) }
         }
     }

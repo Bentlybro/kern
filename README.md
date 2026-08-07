@@ -55,19 +55,33 @@ Kern sidesteps that without root and without a hack:
    `execute_no_trans`, which was removed at targetSdk ≥ 29.
 3. **PRoot fakes uid 0**, which is what makes `apt` and `dpkg` work at all.
 
-The consequence is that this runs at **targetSdk 36** on a stock, unrooted device.
+The consequence is that this runs at **targetSdk 35** on a stock, unrooted device.
 
 The full mechanism, including the flags that are load-bearing and the ways they fail when
 they are wrong, is in [docs/11-embedded-linux.md](docs/11-embedded-linux.md).
 
 ## Requirements
 
-- Android 8.0+, **arm64**
+- Android 10 or later, **arm64**
 - ~400 MB of download and ~1.2 GB of storage for the Linux environment
 - Wi-Fi for first run
 
 Developed against a Galaxy Z Fold8 and a Pixel. The adaptive layouts need a foldable to
 exercise properly; everything else is device-agnostic.
+
+## What Kern will not do
+
+- **No Docker, and no other container runtime.** PRoot fakes root; it cannot create
+  namespaces or cgroups, and an unprivileged Android app never gets to. This is
+  permanent, not a missing feature.
+- **arm64 only.** There is no x86_64 build and no plan for one — PRoot's ptrace
+  interception is unproven under the binary translation an x86 Android device would
+  need.
+- **Guest processes do not survive a force-stop.** Everything in the Linux environment
+  is a child of Kern's own process, so killing the app from the task switcher or from
+  Settings kills the shell, the server and anything they were running. Android offers an
+  app no way around this without root. Files on disk are safe; unsaved work and running
+  jobs are not.
 
 ## Building
 

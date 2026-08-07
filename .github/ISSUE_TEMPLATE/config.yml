@@ -1,0 +1,14 @@
+# Blank issues are off. The bug form's fields are the whole diagnosis, and a free-text
+# report with none of them costs more to chase than it saved to file. There are no
+# Discussions on this repository, so the links below point at the docs instead.
+blank_issues_enabled: false
+contact_links:
+  - name: Kern cannot do this, and will not learn to
+    url: https://github.com/Bentlybro/kern#what-kern-will-not-do
+    about: No Docker, arm64 only, and nothing in the Linux guest survives a force-stop. These are Android limits on an unprivileged app, not bugs.
+  - name: Setup failed and you want it working now
+    url: https://github.com/Bentlybro/kern/blob/main/docs/12-setup.md#recovery
+    about: Retry is always safe to press, Repair reconfigures a damaged guest, and the setup screen can delete everything and start over.
+  - name: What Kern needs from a phone
+    url: https://github.com/Bentlybro/kern#requirements
+    about: Android 10 or later, arm64, and roughly 400 MB of download plus 1.2 GB of storage.

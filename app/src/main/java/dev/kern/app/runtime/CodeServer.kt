@@ -3,6 +3,7 @@ package dev.kern.app.runtime
 import android.content.Context
 import android.util.Log
 import java.io.File
+import org.json.JSONObject
 
 /**
  * The VS Code workbench the app actually shows: one code-server process inside the Linux
@@ -79,6 +80,10 @@ object CodeServer {
      * Push workbench settings so the web layer renders only the editor. Why the workbench's
      * own chrome is hidden rather than styled is in docs/05-ux.md, and what the native shell
      * puts in its place is in docs/10-native-ui-requirements.md.
+     *
+     * Merged, not written whole: this runs on every cold start, and the file belongs to the
+     * user and to anything they install into the workbench as much as it does to Kern. Only
+     * Kern's own keys are overwritten.
      */
     suspend fun applyWorkbenchSettings(context: Context) {
         val settingsFile = File(
@@ -87,8 +92,32 @@ object CodeServer {
         )
         runCatching {
             settingsFile.parentFile?.mkdirs()
-            settingsFile.writeText(WORKBENCH_SETTINGS)
+            settingsFile.writeText(mergedWorkbenchSettings(settingsFile))
         }.onFailure { Log.w(TAG, "could not write workbench settings: ${it.message}") }
+    }
+
+    /**
+     * Kern's keys overlaid on whatever is in [settingsFile] already.
+     *
+     * A settings.json that will not parse is replaced rather than repaired, but never
+     * quietly: that log line is the only trace the user gets of why their keys went away.
+     * Note that org.json reads the comments VS Code permits in this file and cannot write
+     * them back, so a merge does cost the user any comments - still far cheaper than the
+     * whole-file overwrite this replaced.
+     */
+    private fun mergedWorkbenchSettings(settingsFile: File): String {
+        val existing = settingsFile.takeIf { it.isFile }?.readText().orEmpty()
+        val merged = if (existing.isBlank()) {
+            JSONObject()
+        } else {
+            runCatching { JSONObject(existing) }.getOrElse {
+                Log.w(TAG, "settings.json was not valid JSON, replacing it: ${it.message}")
+                JSONObject()
+            }
+        }
+        val ours = JSONObject(WORKBENCH_SETTINGS)
+        for (key in ours.keys()) merged.put(key, ours.get(key))
+        return merged.toString(2)
     }
 
     /**
@@ -96,6 +125,10 @@ object CodeServer {
      * localStorage, which outlives a settings.json write, so an existing install keeps the
      * layout it already had until `WorkbenchWebView.LAYOUT_EPOCH` is bumped in the same
      * edit — that bump is what wipes the stored state so these defaults can take effect.
+     *
+     * `files.autoSave` is here rather than left to the user because Android can kill this
+     * process at any moment and gives an app no mechanism to refuse; a delayed save is all
+     * that stands between that kill and someone's unsaved work.
      */
     private val WORKBENCH_SETTINGS = """
         {
@@ -108,6 +141,7 @@ object CodeServer {
           "window.commandCenter": false,
           "workbench.startupEditor": "none",
           "workbench.colorTheme": "Default Dark Modern",
+          "files.autoSave": "afterDelay",
           "editor.minimap.enabled": false,
           "editor.wordWrap": "on",
           "editor.fontSize": 14,

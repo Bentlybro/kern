@@ -1,0 +1,198 @@
+name: Upstream canary
+
+# Kern's first run is four downloads from servers this project does not control, and until
+# now nothing watched any of them. The compiler cannot see them, and neither can a human
+# with a phone unless that human wipes the guest and spends 400 MB to find out.
+#
+# The failure this exists for is already scheduled. Canonical prunes the plain
+# ubuntu-base-XX.YY-base-arm64.tar.gz name from cdimage once the first point release
+# ships - it has already happened to 24.04. The day it happens to 26.04, every new install
+# dies on step one with a bare URL printed in red, and the first person to know is a
+# stranger with a fresh phone.
+#
+# So probe all four once a week and open an issue on anything that is not a 200. The URLs
+# are rebuilt from the constants in the source rather than pasted here, so a version bump
+# carries the canary with it instead of leaving it checking last year's release.
+on:
+  schedule:
+    # Monday morning UTC, offset from the CodeQL run so the two do not queue together.
+    - cron: '41 6 * * 1'
+  workflow_dispatch:
+
+# Least privilege at the top; the one job that needs more asks for it below.
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-canary
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Probe the upstream downloads
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: read
+      issues: write   # and nothing else: this job reports, it never builds or releases
+
+    steps:
+      # Pinned to a commit SHA rather than a tag, like every other workflow here. A tag can
+      # be repointed by whoever owns the action; a SHA cannot.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read the constants out of the source
+        id: constants
+        run: |
+          guest=app/src/main/java/dev/kern/app/runtime/GuestConfig.kt
+          installer=app/src/main/java/dev/kern/app/runtime/RootfsInstaller.kt
+
+          release=$(grep -oP 'UBUNTU_RELEASE = "\K[^"]+' "$guest" || true)
+          codename=$(grep -oP 'UBUNTU_CODENAME = "\K[^"]+' "$guest" || true)
+          server=$(grep -oP 'CODE_SERVER_VERSION = "\K[^"]+' "$installer" || true)
+
+          # Loud on purpose. A canary that quietly probes an empty version string reports
+          # green forever, which is the exact disease this workflow exists to cure.
+          if [ -z "$release" ] || [ -z "$codename" ] || [ -z "$server" ]; then
+            echo "::error::Could not read UBUNTU_RELEASE, UBUNTU_CODENAME or"
+            echo "::error::CODE_SERVER_VERSION out of the source. If they were renamed or"
+            echo "::error::moved, this workflow has to move with them."
+            exit 1
+          fi
+
+          echo "Ubuntu $release ($codename), code-server $server"
+          {
+            echo "release=$release"
+            echo "codename=$codename"
+            echo "server=$server"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Probe
+        id: probe
+        env:
+          RELEASE: ${{ steps.constants.outputs.release }}
+          CODENAME: ${{ steps.constants.outputs.codename }}
+          SERVER: ${{ steps.constants.outputs.server }}
+        run: |
+          report="$RUNNER_TEMP/canary-report.md"
+          : > "$report"
+
+          base="https://cdimage.ubuntu.com/ubuntu-base/releases/$RELEASE/release"
+          rootfs="$base/ubuntu-base-$RELEASE-base-arm64.tar.gz"
+          sums="$base/SHA256SUMS"
+          deb="https://github.com/coder/code-server/releases/download/v$SERVER/code-server_${SERVER}_arm64.deb"
+          # dists/<codename>/Release rather than the mirror root: the root answers 200
+          # whether or not the suite Kern writes into sources.list still exists, and a
+          # codename gone stale is the failure that would actually reach a user.
+          ports="http://ports.ubuntu.com/ubuntu-ports/dists/$CODENAME/Release"
+
+          # HEAD following redirects, because the GitHub asset URL is a 302 to a signed CDN
+          # link and the code that matters is the one at the far end. Retries because a
+          # single timed-out Monday morning is not news worth an issue.
+          probe() {
+            local what=$1 url=$2 code
+            code=$(curl -fsIL -o /dev/null -w '%{http_code}' \
+                     --retry 3 --retry-delay 5 --max-time 60 "$url" || true)
+            [ -n "$code" ] || code="000"
+            if [ "$code" = "200" ]; then
+              printf 'ok    %s  %s\n' "$code" "$what"
+            else
+              printf 'FAIL  %s  %s\n' "$code" "$what"
+              printf -- '- **%s** answered `%s`\n  `%s`\n' "$what" "$code" "$url" >> "$report"
+            fi
+          }
+
+          probe "Ubuntu $RELEASE rootfs, plain name" "$rootfs"
+          probe "Ubuntu $RELEASE SHA256SUMS" "$sums"
+          probe "code-server $SERVER arm64 .deb" "$deb"
+          probe "ports.ubuntu.com, $CODENAME suite" "$ports"
+
+          # The plain name is the part Canonical prunes; SHA256SUMS is what names whatever
+          # the current file is actually called. Checking that this list still holds an
+          # arm64 base image is the half that keeps meaning something once the installer
+          # resolves the filename from it - at which point it is the more important half.
+          if listing=$(curl -fsS --retry 3 --retry-delay 5 --max-time 60 "$sums"); then
+            arm64=$(echo "$listing" | grep -E "ubuntu-base-$RELEASE[^ ]*-base-arm64\.tar\.gz" || true)
+            if [ -z "$arm64" ]; then
+              printf 'FAIL  ---  SHA256SUMS lists no arm64 base image for %s\n' "$RELEASE"
+              printf -- '- **SHA256SUMS lists no `ubuntu-base-%s*-base-arm64.tar.gz`**\n  `%s`\n' \
+                "$RELEASE" "$sums" >> "$report"
+            else
+              echo "ok    ---  SHA256SUMS lists:"
+              echo "$arm64" | sed 's/^/            /'
+            fi
+          fi
+
+          if [ -s "$report" ]; then
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Upstream canary: something moved"
+              echo
+              cat "$report"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+            echo "### Upstream canary: everything answered 200" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Open an issue
+        if: steps.probe.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TITLE: "Upstream canary: a download Kern needs stopped answering 200"
+          RELEASE: ${{ steps.constants.outputs.release }}
+          CODENAME: ${{ steps.constants.outputs.codename }}
+          SERVER: ${{ steps.constants.outputs.server }}
+        run: |
+          # One open issue at a time, matched on the exact title. A second dependency going
+          # down while the first is still open is the same news, and a bot that files it
+          # again every Monday is a bot people mute.
+          #
+          # Matched by title and not by label deliberately: gh errors on a label the
+          # repository does not have, which would turn a real outage into a failed step
+          # with an unrelated message.
+          if gh issue list --state open --limit 100 --json title --jq '.[].title' \
+               | grep -Fxq "$TITLE"; then
+            echo "::notice::Already open, not filing a duplicate: $TITLE"
+            exit 1
+          fi
+
+          body="$RUNNER_TEMP/canary-issue.md"
+
+          # The heredocs sit at the block's own indent so YAML strips it back to column 0.
+          cat > "$body" <<'EOF'
+          Kern's first run downloads four things from servers this project does not
+          control. The weekly canary probed them and at least one did not answer 200.
+
+          EOF
+          cat "$RUNNER_TEMP/canary-report.md" >> "$body"
+          cat >> "$body" <<EOF
+
+          Checked against Ubuntu $RELEASE ($CODENAME) and code-server $SERVER, read out of
+          the source at $GITHUB_SHA.
+
+          $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          EOF
+          cat >> "$body" <<'EOF'
+
+          What each failure means:
+
+          - **The tarball 404s while SHA256SUMS is healthy.** A point release shipped and
+            Canonical pruned the plain name - 24.04 did exactly this. The live filename is
+            whatever SHA256SUMS lists.
+          - **SHA256SUMS 404s, or lists no arm64 base image.** cdimage restructured, or the
+            release is past end of life. Setup can then neither find the image nor verify it.
+          - **The .deb 404s.** GitHub release assets do not expire on their own, so that
+            release was deleted or retagged. `CODE_SERVER_VERSION` has to move.
+          - **ports.ubuntu.com fails.** Either the mirror is having a bad hour, which passes,
+            or `UBUNTU_CODENAME` no longer names a live suite - in which case apt is dead
+            inside every guest that already exists, not only new ones.
+          EOF
+
+          gh issue create --title "$TITLE" --body-file "$body"
+
+          # Filed and red. A canary that finds a problem and still shows green in the
+          # Actions list is half a canary.
+          exit 1

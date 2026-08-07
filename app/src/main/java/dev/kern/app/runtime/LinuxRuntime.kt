@@ -84,10 +84,46 @@ object LinuxRuntime {
     fun projectsDir(context: Context): File =
         File(rootfsDir(context), "root/projects")
 
-    fun isInstalled(context: Context): Boolean {
+    /**
+     * The shape of a whole Ubuntu base: a release file, a shell, apt, and dpkg's database.
+     *
+     * Deliberately more than the os-release-and-bash pair this grew out of. Those two are
+     * among the first things any extraction produces, so a tar that stopped partway
+     * satisfied both - while apt can do nothing without the other two, and apt is the only
+     * thing the rest of setup asks of this filesystem.
+     */
+    internal fun rootfsLooksComplete(context: Context): Boolean {
         val root = rootfsDir(context)
         return File(root, "etc/os-release").exists() &&
-            (File(root, "bin/bash").exists() || File(root, "usr/bin/bash").exists())
+            (File(root, "bin/bash").exists() || File(root, "usr/bin/bash").exists()) &&
+            (File(root, "bin/apt-get").exists() || File(root, "usr/bin/apt-get").exists()) &&
+            File(root, "var/lib/dpkg/status").exists()
+    }
+
+    /**
+     * Written once the archive has been unpacked and the result checked.
+     *
+     * Existence is the whole contract; the release inside it is there for a bug report.
+     * Inside the rootfs on purpose, so deleting the guest takes it away too.
+     */
+    private fun installMarker(context: Context): File = File(rootfsDir(context), ".kern-installed")
+
+    internal fun markInstalled(context: Context) {
+        runCatching { installMarker(context).writeText(GuestConfig.UBUNTU_RELEASE + "\n") }
+    }
+
+    fun isInstalled(context: Context): Boolean {
+        if (!rootfsLooksComplete(context)) return false
+        // A file test alone cannot tell a finished extraction from one that hit ENOSPC
+        // in the middle, and believing the latter was fatal: the guest reported itself
+        // installed, so setup skipped extraction on every later run and Retry could never
+        // reach the one step that was broken - only deleting everything could.
+        //
+        // The second half is for guests installed before the marker existed. Those are
+        // real installs and telling their owners to start again would be a lie.
+        // code-server is the proof: apt installs it *inside* the guest, after extraction,
+        // so a filesystem that has it is one that unpacked far enough to run.
+        return installMarker(context).exists() || CodeServer.isInstalled(context)
     }
 
     /**

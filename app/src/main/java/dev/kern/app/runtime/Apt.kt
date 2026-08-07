@@ -20,8 +20,12 @@ object Apt {
     /** apt on phone storage is slow, and a full toolchain is minutes of it. */
     private const val INSTALL_TIMEOUT_MS = 1_200_000L
 
+    /** Finishing an unpack dpkg never got to finish is fast when there is nothing to do. */
+    private const val RECOVER_TIMEOUT_MS = 600_000L
+
     /**
-     * apt-get update, then install, then update-ca-certificates if it was in the set.
+     * Recover dpkg, apt-get update, then install, then update-ca-certificates if it was in
+     * the set.
      *
      * Both scripts fold stderr into stdout: [onLine] tails the output file, and a caller
      * watching an install wants the failure most of all.
@@ -31,6 +35,19 @@ object Apt {
         packages: List<String>,
         onLine: ((String) -> Unit)? = null,
     ): Boolean = withContext(Dispatchers.IO) {
+        // Android kills this app whenever it likes, and an apt killed mid-unpack leaves dpkg
+        // in a state where every later install refuses to start with "dpkg was interrupted,
+        // you must manually run 'dpkg --configure -a'". Nothing in the app used to run it,
+        // so Repair could not repair the one failure it most needed to, and the only way out
+        // was a terminal command a phone-only user has no reason to know. Observed on a real
+        // device: a guest with code-server and no git, and a Repair that could not fix it.
+        // It is a no-op on a healthy guest, so it costs nothing to always try.
+        LinuxRuntime.run(
+            context,
+            "dpkg --configure -a 2>&1",
+            timeoutMs = RECOVER_TIMEOUT_MS,
+            onLine = onLine,
+        )
         LinuxRuntime.run(
             context,
             "apt-get update 2>&1",

@@ -256,6 +256,7 @@ fun Shell(state: SessionState) {
  */
 @Composable
 private fun SetupStrip() {
+    val context = LocalContext.current
     val stage by RootfsInstaller.stage.collectAsStateWithLifecycle()
     val current = stage
     // Failed has to say so here. The toolchain installs behind the running editor, so this
@@ -263,6 +264,7 @@ private fun SetupStrip() {
     // the user with an editor whose git, gh and tmux never arrived and nothing on screen
     // that ever mentioned it.
     val failure = (current as? RootfsInstaller.Stage.Failed)?.message
+        ?.let { Diagnostics.explain(context, it) }
     val label = when (current) {
         is RootfsInstaller.Stage.Working -> current.what
         is RootfsInstaller.Stage.Downloading -> "Downloading ${current.what}"
@@ -291,6 +293,11 @@ private fun SetupStrip() {
                     .fillMaxWidth()
                     .height(2.dp),
             )
+        } else {
+            // The editor is already open by the time the toolchain breaks, so the setup
+            // screen is behind the user and this strip is the only place the report can
+            // still be taken from.
+            CopyDiagnosticsButton(Modifier.height(30.dp))
         }
     }
 }

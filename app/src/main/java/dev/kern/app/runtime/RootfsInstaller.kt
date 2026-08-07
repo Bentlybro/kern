@@ -32,15 +32,45 @@ object RootfsInstaller {
 
     private const val TAG = "Kern"
 
-    private const val ROOTFS_URL =
-        "https://cdimage.ubuntu.com/ubuntu-base/releases/${GuestConfig.UBUNTU_RELEASE}/release/" +
-            "ubuntu-base-${GuestConfig.UBUNTU_RELEASE}-base-arm64.tar.gz"
+    private const val CDIMAGE_BASE =
+        "https://cdimage.ubuntu.com/ubuntu-base/releases/${GuestConfig.UBUNTU_RELEASE}/release/"
+
+    /**
+     * The name cdimage serves today, used only when SHA256SUMS cannot be read.
+     *
+     * Canonical prunes this plain name once point releases ship: 24.04's is already a 404
+     * and its SHA256SUMS lists only 24.04.3 and 24.04.4. 26.04 will follow, and a URL
+     * built from the release alone is therefore a bomb with Canonical's finger on the
+     * timer - every new install dying at step one, fixable only by shipping an app.
+     */
+    private const val ROOTFS_FALLBACK_NAME =
+        "ubuntu-base-${GuestConfig.UBUNTU_RELEASE}-base-arm64.tar.gz"
+
     private const val CODE_SERVER_VERSION = "4.131.0"
     private const val CODE_SERVER_URL =
         "https://github.com/coder/code-server/releases/download/v$CODE_SERVER_VERSION/code-server_${CODE_SERVER_VERSION}_arm64.deb"
 
+    /**
+     * Pinned, unlike the base image's - and correct here for the reason it is wrong there.
+     * This URL names an immutable GitHub release asset, so the bytes behind it cannot
+     * change unless the version does. Taken from the release API's own `digest` for
+     * code-server_4.131.0_arm64.deb, 228,520,934 bytes. Change it in the same commit as
+     * [CODE_SERVER_VERSION], or setup will refuse a package that is perfectly good.
+     */
+    private const val CODE_SERVER_SHA256 =
+        "b0758c3692f3fc2a7311d6ab58c4f91efc4bc277938cff4a4164f7f9683542cf"
+
     private const val ARCHIVE_NAME = "ubuntu-base.tar.gz"
-    private const val DEB_NAME = "code-server.deb"
+
+    /**
+     * The version is in the name because a file at the final name is trusted on sight.
+     * Without it, the 218 MB package left by an older Kern would be handed to apt as if
+     * it were this one, and its `.part` would be resumed against a different URL.
+     */
+    private const val DEB_NAME = "code-server-$CODE_SERVER_VERSION.deb"
+
+    /** Both staged names, and the `.part` of either, matched by prefix. */
+    private val DOWNLOAD_PREFIXES = listOf("ubuntu-base", "code-server")
 
     sealed interface Stage {
         data object Idle : Stage
@@ -135,18 +165,28 @@ object RootfsInstaller {
     suspend fun install(context: Context): Boolean = withContext(Dispatchers.IO) {
         try {
             val essential = coroutineScope {
-                val deb = File(context.cacheDir, DEB_NAME)
-                var fetch: Deferred<Boolean>? = null
+                val deb = File(downloadDir(context), DEB_NAME)
+                var fetch: Deferred<String?>? = null
 
                 if (!LinuxRuntime.isInstalled(context)) {
-                    val archive = File(context.cacheDir, ARCHIVE_NAME)
+                    val archive = File(downloadDir(context), ARCHIVE_NAME)
                     // Existence alone: download renames only a transfer that arrived whole
-                    // into this name, so anything here is complete. The size guess this
-                    // replaces took 25 MB of the 34 MB image for a finished one.
+                    // and matched its checksum into this name, so anything here is
+                    // complete. The size guess this replaces took 25 MB of the 34 MB image
+                    // for a finished one.
                     if (!archive.exists()) {
                         _stage.value = Stage.Downloading("Ubuntu base", 0, 0)
                         logLine("Downloading Ubuntu ${GuestConfig.UBUNTU_RELEASE} base image")
-                        download(ROOTFS_URL, archive) { got, total ->
+                        val source = resolveRootfs()
+                        logLine(
+                            if (source.sha256 != null) {
+                                "${source.name}, checked against SHA256SUMS"
+                            } else {
+                                "${source.name} - SHA256SUMS was unreachable, so this one " +
+                                    "cannot be checked"
+                            },
+                        )
+                        download(source.url, archive, source.sha256) { got, total ->
                             _stage.value = Stage.Downloading("Ubuntu base", got, total)
                         }
                     }
@@ -187,9 +227,8 @@ object RootfsInstaller {
 
                     if (fetch == null) fetch = async { fetchServer(deb) }
                     _stage.value = Stage.Working("Downloading code-server")
-                    if (fetch.await() != true) {
-                        return@coroutineScope fail("Could not download code-server")
-                    }
+                    val failure = fetch.await()
+                    if (failure != null) return@coroutineScope fail(failure)
 
                     _stage.value = Stage.Working("Installing code-server")
                     val staged = File(LinuxRuntime.guestTmpDir(context), "code-server.deb")
@@ -245,14 +284,73 @@ object RootfsInstaller {
     }
 
     /**
-     * Fetched into the app's cache rather than the rootfs, so it can download while
-     * PRoot is busy unpacking into that same directory tree.
+     * Which base image to fetch, and what it should hash to, asked of cdimage rather than
+     * assumed.
+     *
+     * Deliberately not a compile-time hash constant. Pinning one would turn Canonical's
+     * routine rename into a checksum mismatch - Kern accusing itself of shipping a
+     * tampered mirror, on Canonical's schedule, fixable only by shipping a new app.
+     * SHA256SUMS is one fetch answering both questions at once, and it cannot rot that
+     * way. If it is unreachable, today's literal name still gets a try: a cdimage
+     * restructure should cost verification, not the install.
      */
-    private suspend fun fetchServer(target: File): Boolean {
-        if (target.exists()) return true
+    private fun resolveRootfs(): RootfsSource {
+        val fallback = RootfsSource(
+            ROOTFS_FALLBACK_NAME,
+            CDIMAGE_BASE + ROOTFS_FALLBACK_NAME,
+            null,
+        )
+        val sums = runCatching { fetchText(CDIMAGE_BASE + "SHA256SUMS") }
+            .onFailure { Log.w(TAG, "could not read SHA256SUMS", it) }
+            .getOrNull() ?: return fallback
+
+        var best: RootfsSource? = null
+        var bestVersion = emptyList<Int>()
+        for (line in sums.lineSequence()) {
+            val match = ROOTFS_LINE.matchEntire(line.trim()) ?: continue
+            val (digest, name, version) = match.destructured
+            // Point releases of our own series only. 26.04.1 supersedes 26.04, but 26.10
+            // is a different Ubuntu and the codename GuestConfig writes into sources.list
+            // would no longer describe it.
+            val ours = version == GuestConfig.UBUNTU_RELEASE ||
+                version.startsWith("${GuestConfig.UBUNTU_RELEASE}.")
+            if (!ours) continue
+            val parts = version.split('.').map { it.toIntOrNull() ?: 0 }
+            if (best == null || newer(parts, bestVersion)) {
+                best = RootfsSource(name, CDIMAGE_BASE + name, digest.lowercase())
+                bestVersion = parts
+            }
+        }
+        return best ?: fallback
+    }
+
+    private class RootfsSource(val name: String, val url: String, val sha256: String?)
+
+    /** `<digest> *ubuntu-base-26.04-base-arm64.tar.gz`, with the point release captured. */
+    private val ROOTFS_LINE =
+        Regex("""([0-9a-fA-F]{64})\s+\*?(ubuntu-base-([0-9.]+)-base-arm64\.tar\.gz)""")
+
+    /** Number by number, because 26.04.10 is newer than 26.04.9 and sorts before it. */
+    private fun newer(candidate: List<Int>, incumbent: List<Int>): Boolean {
+        for (i in 0 until maxOf(candidate.size, incumbent.size)) {
+            val left = candidate.getOrElse(i) { 0 }
+            val right = incumbent.getOrElse(i) { 0 }
+            if (left != right) return left > right
+        }
+        return false
+    }
+
+    /**
+     * Fetched outside the rootfs, so it can download while PRoot is busy unpacking into
+     * that same directory tree. Returns null when the package is there, otherwise why it
+     * is not: a checksum mismatch and a dead connection ask very different things of the
+     * user, and both used to arrive as "Could not download code-server".
+     */
+    private suspend fun fetchServer(target: File): String? {
+        if (target.exists()) return null
         var reported = -1
         return runCatching {
-            download(CODE_SERVER_URL, target) { got, total ->
+            download(CODE_SERVER_URL, target, CODE_SERVER_SHA256) { got, total ->
                 if (total > 0) {
                     val percent = (got * 100 / total).toInt()
                     // Every 10%: often enough to look alive, rarely enough to read.
@@ -262,23 +360,37 @@ object RootfsInstaller {
                     }
                 }
             }
-            true
+            null
         }.getOrElse {
             Log.w(TAG, "code-server download failed", it)
-            false
+            it.message ?: "Could not download code-server"
         }
     }
 
     /**
-     * The setup downloads. They live in the cache rather than the rootfs so an install
-     * that failed can resume without fetching a quarter of a gigabyte again - which also
-     * means anything clearing up after a failed install has to reach them. Matched by
-     * prefix so the `.part` of a transfer that never finished is caught too.
+     * Where the two setup downloads are staged.
+     *
+     * Not the cache: Android empties that when the device runs low on space, which is
+     * exactly the device that cannot afford to fetch a quarter of a gigabyte twice, and it
+     * can do it mid-transfer. `noBackupFilesDir` sits on the same filesystem as the rootfs,
+     * so [moveInto] is still a rename rather than a 218 MB copy, and it keeps
+     * re-downloadable bytes out of cloud backup where they have no business being.
+     */
+    private fun downloadDir(context: Context): File = context.noBackupFilesDir
+
+    /**
+     * The setup downloads. They live outside the rootfs so an install that failed can
+     * resume without fetching a quarter of a gigabyte again - which also means anything
+     * clearing up after a failed install has to reach them. Matched by prefix so the
+     * `.part` of a transfer that never finished is caught too, and the cache is still
+     * swept because installs before v0.1.1 staged there.
      */
     private fun cachedDownloads(context: Context): List<File> =
-        context.cacheDir.listFiles()
-            ?.filter { it.name.startsWith(ARCHIVE_NAME) || it.name.startsWith(DEB_NAME) }
-            ?: emptyList()
+        listOf(downloadDir(context), context.cacheDir).flatMap { dir ->
+            dir.listFiles()
+                ?.filter { file -> DOWNLOAD_PREFIXES.any { file.name.startsWith(it) } }
+                ?: emptyList()
+        }
 
     /**
      * Whether a failed setup left bytes behind. The download dies before the rootfs is
@@ -292,7 +404,7 @@ object RootfsInstaller {
         cachedDownloads(context).forEach { runCatching { it.delete() } }
     }
 
-    /** Cache and rootfs share a filesystem, so this is a rename, not a 218 MB copy. */
+    /** Staging and rootfs share a filesystem, so this is a rename, not a 218 MB copy. */
     private fun moveInto(source: File, target: File): Boolean {
         target.parentFile?.mkdirs()
         if (target.exists()) target.delete()
@@ -339,7 +451,13 @@ object RootfsInstaller {
         process.waitFor()
         process.close()
 
-        // toybox tar warns about metadata it cannot apply; judge by the result.
-        return LinuxRuntime.isInstalled(context)
+        // toybox tar warns about metadata it cannot apply, so its exit status is no use;
+        // judge by the result. Not by asking isInstalled, which now wants the marker this
+        // is about to write - and not by the two files it used to ask for either, because
+        // a tar that ran out of space partway leaves those behind and nothing downstream
+        // could tell the difference.
+        if (!LinuxRuntime.rootfsLooksComplete(context)) return false
+        LinuxRuntime.markInstalled(context)
+        return true
     }
 }

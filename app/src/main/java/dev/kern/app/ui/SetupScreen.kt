@@ -1,10 +1,6 @@
 package dev.kern.app.ui
 
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.os.PowerManager
-import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyColumn
@@ -44,6 +40,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.kern.app.runtime.BatteryOptimization
 import dev.kern.app.runtime.LinuxRuntime
 import dev.kern.app.runtime.RootfsInstaller
 import dev.kern.app.runtime.StorageManager
@@ -291,14 +288,11 @@ private fun StageView(stage: RootfsInstaller.Stage) {
 /** Android suspends background work aggressively; this is the one thing worth asking for. */
 @Composable
 private fun BatteryHint(context: Context) {
-    val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
     // The user grants this in Settings, outside the app, so the answer is only ever
     // stale here — re-read it on the way back rather than leaving the hint up forever.
-    var exempt by remember {
-        mutableStateOf(pm.isIgnoringBatteryOptimizations(context.packageName))
-    }
+    var exempt by remember { mutableStateOf(BatteryOptimization.isExempt(context)) }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        exempt = pm.isIgnoringBatteryOptimizations(context.packageName)
+        exempt = BatteryOptimization.isExempt(context)
     }
     if (exempt) return
 
@@ -314,13 +308,8 @@ private fun BatteryHint(context: Context) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        TextButton(onClick = {
-            context.startActivity(
-                Intent(
-                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                    Uri.parse("package:" + context.packageName),
-                ),
-            )
-        }) { Text("Allow") }
+        TextButton(onClick = { BatteryOptimization.requestExemption(context) }) {
+            Text("Allow")
+        }
     }
 }

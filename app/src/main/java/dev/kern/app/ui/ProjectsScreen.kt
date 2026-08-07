@@ -39,7 +39,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -322,7 +321,7 @@ private fun FolderRow(
                 .size(6.dp)
                 .clip(CircleShape)
                 .background(
-                    if (isRepo) Color(0xFF6FAE7F) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (isRepo) KernColors.Ok else MaterialTheme.colorScheme.onSurfaceVariant,
                 ),
         )
         Spacer(Modifier.width(12.dp))

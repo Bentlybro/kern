@@ -149,7 +149,7 @@ object GitHubAuth {
     suspend fun signIn(context: Context) = withContext(Dispatchers.IO) {
         _step.value = Step.Working("Contacting GitHub")
 
-        val guestTmp = File(LinuxRuntime.rootfsDir(context), "tmp").apply { mkdirs() }
+        val guestTmp = LinuxRuntime.guestTmpDir(context)
         val workDir = File(guestTmp, WORK_DIR)
         val paneFile = File(workDir, "pane")
         val rcFile = File(workDir, "rc")

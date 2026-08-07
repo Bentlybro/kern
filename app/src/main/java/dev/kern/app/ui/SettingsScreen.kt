@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.kern.app.runtime.GuestConfig
 import dev.kern.app.runtime.LinuxRuntime
 import dev.kern.app.runtime.RootfsInstaller
 import dev.kern.app.runtime.StorageManager
@@ -139,9 +140,9 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
                     // An environment set up by an older build stays on the release it
                     // was built from; say so, rather than leaving the version looking
                     // like a bug.
-                    if (!name.contains(RootfsInstaller.UBUNTU_RELEASE)) {
+                    if (!name.contains(GuestConfig.UBUNTU_RELEASE)) {
                         Text(
-                            "New setups now use Ubuntu ${RootfsInstaller.UBUNTU_RELEASE}. " +
+                            "New setups now use Ubuntu ${GuestConfig.UBUNTU_RELEASE}. " +
                                 "Existing environments are left alone, so this one stays " +
                                 "as it is - delete it below and run setup again to move " +
                                 "over. Push anything in ~/projects first.",

@@ -81,7 +81,7 @@ object ProjectRepository {
             )
             result.exitCode == 4 -> Outcome.Failure("Created the folder, but git init failed")
             result.ok -> Outcome.Success(target, safe)
-            else -> Outcome.Failure(lastLine(result) ?: "Could not create the folder")
+            else -> Outcome.Failure(result.lastLine() ?: "Could not create the folder")
         }
     }
 
@@ -108,7 +108,7 @@ object ProjectRepository {
                 "git is not installed yet — check Status, it may still be setting up.",
             )
             result.ok -> Outcome.Success(target, name)
-            else -> Outcome.Failure(lastLine(result) ?: "git clone failed (exit ${result.exitCode})")
+            else -> Outcome.Failure(result.lastLine() ?: "git clone failed (exit ${result.exitCode})")
         }
     }
 
@@ -122,12 +122,6 @@ object ProjectRepository {
         raw.trim()
             .replace(Regex("[^A-Za-z0-9._-]"), "-")
             .trim('-', '.')
-
-    private fun lastLine(result: LinuxRuntime.Result): String? =
-        (result.stdout + "\n" + result.stderr)
-            .split('\n')
-            .map { it.trim() }
-            .lastOrNull { it.isNotEmpty() }
 
     private fun deriveName(url: String): String =
         url.trim().trimEnd('/').substringAfterLast('/').removeSuffix(".git")

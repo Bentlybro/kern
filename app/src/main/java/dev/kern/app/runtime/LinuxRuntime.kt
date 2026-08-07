@@ -59,7 +59,11 @@ object LinuxRuntime {
 
     fun rootfsDir(context: Context): File = File(context.filesDir, "linux")
 
-    fun tmpDir(context: Context): File = File(context.filesDir, "tmp").apply { mkdirs() }
+    /** PRoot's own scratch dir, on the **host** side, handed to it as `PROOT_TMP_DIR`. */
+    fun prootTmpDir(context: Context): File = File(context.filesDir, "tmp").apply { mkdirs() }
+
+    /** `/tmp` as seen from inside the guest. Not the same directory as [prootTmpDir]. */
+    fun guestTmpDir(context: Context): File = File(rootfsDir(context), "tmp").apply { mkdirs() }
 
     /**
      * Where PRoot parks the real file behind each translated hard link.
@@ -107,7 +111,7 @@ object LinuxRuntime {
             "PROOT_LOADER" to File(nativeLib, "libproot_loader.so").absolutePath,
             "PROOT_LOADER32" to File(nativeLib, "libproot_loader32.so").absolutePath,
             // Without this proot tries Termux's prefix and warns on every launch.
-            "PROOT_TMP_DIR" to tmpDir(context).absolutePath,
+            "PROOT_TMP_DIR" to prootTmpDir(context).absolutePath,
             "PROOT_L2S_DIR" to l2sDir(context).absolutePath,
             "TERM" to "xterm-256color",
             "HOME" to "/root",
@@ -175,6 +179,11 @@ object LinuxRuntime {
         val ok: Boolean get() = exitCode == 0
         val lines: List<String>
             get() = stdout.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+
+        /** The last thing the command said, from either stream — what an error message wants. */
+        fun lastLine(limit: Int = 160): String? =
+            (stdout.lineSequence() + stderr.lineSequence())
+                .map { it.trim() }.lastOrNull { it.isNotEmpty() }?.take(limit)
     }
 
     /**
@@ -198,7 +207,7 @@ object LinuxRuntime {
         if (!isInstalled(context)) return@withContext null
 
         val id = commandCounter.incrementAndGet()
-        val guestTmp = File(rootfsDir(context), "tmp").apply { mkdirs() }
+        val guestTmp = guestTmpDir(context)
         val scriptFile = File(guestTmp, "fc-$id.sh")
         val outFile = File(guestTmp, "fc-$id.out")
         val errFile = File(guestTmp, "fc-$id.err")

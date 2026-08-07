@@ -1,7 +1,6 @@
 package dev.kern.app.runtime
 
 import android.content.Context
-import android.os.PowerManager
 import android.os.StatFs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -88,12 +87,7 @@ object HealthCheck {
     }
 
     private suspend fun guestItem(context: Context): Item {
-        val result = LinuxRuntime.run(
-            context,
-            ". /etc/os-release 2>/dev/null; echo \"\$PRETTY_NAME\"",
-            timeoutMs = 25_000,
-        )
-        val name = result?.stdout?.trim().orEmpty()
+        val name = LinuxRuntime.osPrettyName(context).orEmpty()
         return if (name.isNotBlank()) {
             Item("Linux", Level.Ok, name)
         } else {
@@ -221,9 +215,8 @@ object HealthCheck {
             else -> Item("Kernel page size", Level.Warn, "Unexpected: $size bytes.")
         }
 
-    private fun batteryItem(context: Context): Item {
-        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-        return if (pm.isIgnoringBatteryOptimizations(context.packageName)) {
+    private fun batteryItem(context: Context): Item =
+        if (BatteryOptimization.isExempt(context)) {
             Item("Battery", Level.Ok, "Exempt from battery optimisation.")
         } else {
             Item(
@@ -234,7 +227,6 @@ object HealthCheck {
                 remedyLabel = "Allow",
             )
         }
-    }
 
     private fun storageItem(context: Context): Item {
         // Only free space here: measuring the guest means walking tens of thousands of

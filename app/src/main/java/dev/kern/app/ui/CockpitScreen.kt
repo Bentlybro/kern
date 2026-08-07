@@ -41,7 +41,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -50,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.kern.app.runtime.AgentRepository
+import dev.kern.app.runtime.GitCommands
 import dev.kern.app.runtime.ProjectRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -74,7 +74,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
     val sessions by TerminalSessions.sessions.collectAsStateWithLifecycle()
     val agent = sessions.firstOrNull { it.kind == TerminalSessions.Kind.Agent }
 
-    var status by remember { mutableStateOf<AgentRepository.GitStatus?>(null) }
+    var status by remember { mutableStateOf<GitCommands.Status?>(null) }
     var diff by remember { mutableStateOf<List<String>>(emptyList()) }
     var showDiff by remember { mutableStateOf(false) }
     var reply by remember { mutableStateOf("") }
@@ -90,8 +90,8 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
     // to poll for output, and every read here is a round trip into the guest.
     LaunchedEffect(showDiff, refresh) {
         while (true) {
-            status = AgentRepository.gitStatus(context, project)
-            if (showDiff) diff = AgentRepository.gitDiff(context, project)
+            status = GitCommands.status(context, project)
+            if (showDiff) diff = GitCommands.diff(context, project)
             delay(if (showDiff) 6000 else 4000)
         }
     }
@@ -115,7 +115,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 Modifier
                     .size(9.dp)
                     .clip(CircleShape)
-                    .background(if (running) Color(0xFF6FAE7F) else Color(0xFF8F929A)),
+                    .background(if (running) KernColors.Ok else MaterialTheme.colorScheme.secondary),
             )
             Spacer(Modifier.width(8.dp))
             Text(
@@ -238,7 +238,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 onCommit = {
                     busy = "Committing..."
                     scope.launch {
-                        result = AgentRepository.gitCommitAll(context, project, commitMsg)
+                        result = GitCommands.commitAll(context, project, commitMsg)
                         busy = null
                         commitMsg = ""
                         refresh++
@@ -247,7 +247,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 onPush = {
                     busy = "Pushing..."
                     scope.launch {
-                        result = AgentRepository.gitPush(context, project)
+                        result = GitCommands.push(context, project)
                         busy = null
                         refresh++
                     }
@@ -357,9 +357,9 @@ private fun DiffView(lines: List<String>) {
             val colour = when {
                 line.startsWith("+++") || line.startsWith("---") ->
                     MaterialTheme.colorScheme.onSurfaceVariant
-                line.startsWith("@@") -> Color(0xFF7FA7D0)
-                line.startsWith("+") -> Color(0xFF6FAE7F)
-                line.startsWith("-") -> Color(0xFFD07158)
+                line.startsWith("@@") -> KernColors.DiffHunk
+                line.startsWith("+") -> KernColors.Ok
+                line.startsWith("-") -> MaterialTheme.colorScheme.error
                 line.startsWith("diff ") -> MaterialTheme.colorScheme.primary
                 else -> MaterialTheme.colorScheme.onSurfaceVariant
             }

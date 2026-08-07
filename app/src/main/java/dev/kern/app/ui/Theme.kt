@@ -18,6 +18,19 @@ private val AmoledScheme = darkColorScheme(
     error = Color(0xFFD07158),
 )
 
+/**
+ * The colours that carry a status, in one place.
+ *
+ * Only what the scheme above has no name for lives here: "failed" is already `error` and
+ * "unknown" is already `secondary`, and giving either a second name here is how the two
+ * copies drift apart again.
+ */
+object KernColors {
+    val Ok = Color(0xFF6FAE7F)
+    val Warn = Color(0xFFC99A4E)
+    val DiffHunk = Color(0xFF7FA7D0)
+}
+
 @Composable
 fun KernTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = AmoledScheme, content = content)

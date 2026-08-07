@@ -1,7 +1,5 @@
 package dev.kern.app.ui
 
-import android.content.Intent
-import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
@@ -37,11 +35,11 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.kern.app.runtime.BatteryOptimization
 import dev.kern.app.runtime.HealthCheck
 import dev.kern.app.runtime.UsageTracker
 
@@ -136,9 +134,9 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                 ) {
                     val color = when (item.level) {
-                        HealthCheck.Level.Ok -> Color(0xFF6FAE7F)
-                        HealthCheck.Level.Warn -> Color(0xFFC99A4E)
-                        HealthCheck.Level.Fail -> Color(0xFFD07158)
+                        HealthCheck.Level.Ok -> KernColors.Ok
+                        HealthCheck.Level.Warn -> KernColors.Warn
+                        HealthCheck.Level.Fail -> MaterialTheme.colorScheme.error
                     }
                     Box(
                         Modifier
@@ -184,14 +182,8 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                                             }
                                         }
                                         HealthCheck.Remedy.OpenSettings -> onOpenSettings()
-                                        HealthCheck.Remedy.BatterySettings -> runCatching {
-                                            context.startActivity(
-                                                Intent(
-                                                    Settings
-                                                        .ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
-                                                ),
-                                            )
-                                        }
+                                        HealthCheck.Remedy.BatterySettings ->
+                                            BatteryOptimization.requestExemption(context)
                                     }
                                 },
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),

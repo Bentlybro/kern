@@ -14,6 +14,7 @@ import android.os.PowerManager
 import android.util.Log
 import dev.kern.app.MainActivity
 import dev.kern.app.R
+import dev.kern.app.runtime.AgentPrompt
 import dev.kern.app.runtime.AgentRepository
 import dev.kern.app.ui.TerminalSessions
 import dev.kern.app.runtime.LinuxRuntime
@@ -138,12 +139,11 @@ class SessionService : Service() {
             if (++agentTick % 2 == 0) {
                 runCatching {
                     val screen = TerminalSessions.agentScreen()
-                    val awaiting = screen != null && TerminalSessions.agentAwaitingInput(screen)
+                    val awaiting = screen != null && AgentPrompt.awaitingInput(screen)
                     if (awaiting && !wasAwaiting) {
                         notifyAgent(
                             "Agent needs you",
-                            screen!!.lines().lastOrNull { it.isNotBlank() }?.trim()?.take(120)
-                                ?: "Waiting for input",
+                            AgentPrompt.lastLine(screen!!)?.take(120) ?: "Waiting for input",
                         )
                     }
                     wasAwaiting = awaiting

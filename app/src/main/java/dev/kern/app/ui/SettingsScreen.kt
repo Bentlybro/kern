@@ -111,6 +111,9 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            SectionTitle("Updates")
+            UpdateSection()
+
             SectionTitle("GitHub")
             GitHubSection()
 

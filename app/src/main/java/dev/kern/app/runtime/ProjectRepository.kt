@@ -47,39 +47,78 @@ object ProjectRepository {
         }.sortedBy { it.name.lowercase() }
     }
 
+    /**
+     * Create an empty project folder and, optionally, start a git repository in it.
+     *
+     * The counterpart to [clone]: not everything starts life on a remote, and without
+     * this the only ways to get a workspace were to clone one or to make the directory
+     * by hand in the terminal.
+     */
+    suspend fun create(context: Context, name: String, initGit: Boolean): Outcome {
+        val safe = sanitise(name)
+        if (safe.isBlank()) return Outcome.Failure("Give the project a name")
+
+        val target = "$PROJECTS_DIR/$safe"
+        val script = """
+            mkdir -p '$PROJECTS_DIR'
+            if [ -e '$target' ]; then echo EXISTS >&2; exit 2; fi
+            mkdir -p '$target' || exit 1
+            ${if (initGit) "cd '$target' && git init -q 2>&1" else ""}
+        """.trimIndent()
+
+        val result = LinuxRuntime.run(context, script, timeoutMs = 60_000)
+            ?: return Outcome.Failure("The Linux environment did not respond")
+
+        return when {
+            result.exitCode == 2 -> Outcome.Failure("A folder named \"$safe\" already exists")
+            result.ok -> Outcome.Success(target, safe)
+            else -> Outcome.Failure(lastLine(result) ?: "Could not create the folder")
+        }
+    }
+
     /** Clone [url] into the projects directory. Returns the new path, or an error string. */
-    suspend fun clone(context: Context, url: String, nameOverride: String? = null): CloneResult {
-        val name = (nameOverride?.takeIf { it.isNotBlank() } ?: deriveName(url))
-            .replace(Regex("[^A-Za-z0-9._-]"), "-")
-        if (name.isBlank()) return CloneResult.Failure("Could not work out a folder name")
+    suspend fun clone(context: Context, url: String, nameOverride: String? = null): Outcome {
+        val name = sanitise(nameOverride?.takeIf { it.isNotBlank() } ?: deriveName(url))
+        if (name.isBlank()) return Outcome.Failure("Could not work out a folder name")
 
         val target = "$PROJECTS_DIR/$name"
         val script = """
             mkdir -p '$PROJECTS_DIR'
             if [ -e '$target' ]; then echo "EXISTS" >&2; exit 2; fi
-            command -v git >/dev/null 2>&1 || pkg install -y git >/dev/null 2>&1
+            command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }
             git clone --depth 1 '$url' '$target' 2>&1
         """.trimIndent()
 
         // Clones can be slow on mobile networks; give them room.
         val result = LinuxRuntime.run(context, script, timeoutMs = 600_000)
-            ?: return CloneResult.Failure("Timed out. The clone may still be running in Termux.")
+            ?: return Outcome.Failure("Timed out. The clone may still be running.")
 
         return when {
-            result.exitCode == 2 -> CloneResult.Failure("A folder named \"$name\" already exists")
-            result.ok -> CloneResult.Success(target, name)
-            else -> {
-                val detail = (result.stdout + "\n" + result.stderr)
-                    .split('\n').map { it.trim() }.lastOrNull { it.isNotEmpty() }
-                CloneResult.Failure(detail ?: "git clone failed (exit ${result.exitCode})")
-            }
+            result.exitCode == 2 -> Outcome.Failure("A folder named \"$name\" already exists")
+            result.exitCode == 3 -> Outcome.Failure(
+                "git is not installed yet — check Status, it may still be setting up.",
+            )
+            result.ok -> Outcome.Success(target, name)
+            else -> Outcome.Failure(lastLine(result) ?: "git clone failed (exit ${result.exitCode})")
         }
     }
 
-    sealed interface CloneResult {
-        data class Success(val path: String, val name: String) : CloneResult
-        data class Failure(val message: String) : CloneResult
+    sealed interface Outcome {
+        data class Success(val path: String, val name: String) : Outcome
+        data class Failure(val message: String) : Outcome
     }
+
+    /** Folder names come from human typing and from URLs; neither is shell-safe. */
+    private fun sanitise(raw: String): String =
+        raw.trim()
+            .replace(Regex("[^A-Za-z0-9._-]"), "-")
+            .trim('-', '.')
+
+    private fun lastLine(result: LinuxRuntime.Result): String? =
+        (result.stdout + "\n" + result.stderr)
+            .split('\n')
+            .map { it.trim() }
+            .lastOrNull { it.isNotEmpty() }
 
     private fun deriveName(url: String): String =
         url.trim().trimEnd('/').substringAfterLast('/').removeSuffix(".git")

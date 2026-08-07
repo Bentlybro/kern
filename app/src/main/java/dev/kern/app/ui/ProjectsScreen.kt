@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -63,8 +64,16 @@ fun ProjectsScreen(
     var loading by remember { mutableStateOf(true) }
     var cloneUrl by remember { mutableStateOf("") }
     var cloning by remember { mutableStateOf(false) }
+    var newName by remember { mutableStateOf("") }
+    var creating by remember { mutableStateOf(false) }
+    // On by default: nearly every project wants one eventually, and starting a repo at
+    // creation is the difference between having history and wishing you had.
+    var initGit by remember { mutableStateOf(true) }
     var message by remember { mutableStateOf<String?>(null) }
     var reloadToken by remember { mutableIntStateOf(0) }
+
+    /** One guest command at a time; both actions write to the same directory. */
+    val busy = cloning || creating
 
     val recents = remember(reloadToken) { ProjectRepository.recents(context) }
 
@@ -110,10 +119,64 @@ fun ProjectsScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             OutlinedTextField(
+                value = newName,
+                onValueChange = { newName = it; message = null },
+                singleLine = true,
+                enabled = !busy,
+                label = { Text("new project", fontSize = 12.sp) },
+                placeholder = { Text("my-app", fontSize = 12.sp) },
+                keyboardOptions = KeyboardOptions(
+                    autoCorrectEnabled = false,
+                    imeAction = ImeAction.Done,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Button(
+                    enabled = newName.isNotBlank() && !busy,
+                    onClick = {
+                        creating = true
+                        message = "Creating..."
+                        scope.launch {
+                            val outcome =
+                                ProjectRepository.create(context, newName.trim(), initGit)
+                            creating = false
+                            when (outcome) {
+                                is ProjectRepository.Outcome.Success -> {
+                                    newName = ""
+                                    message = "Created ${outcome.name}"
+                                    reloadToken++
+                                    open(outcome.path)
+                                }
+                                is ProjectRepository.Outcome.Failure ->
+                                    message = outcome.message
+                            }
+                        }
+                    },
+                ) { Text(if (creating) "Creating..." else "Create") }
+
+                Checkbox(
+                    checked = initGit,
+                    onCheckedChange = { initGit = it },
+                    enabled = !busy,
+                )
+                Text(
+                    "git repo",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            Spacer(Modifier.height(2.dp))
+
+            OutlinedTextField(
                 value = cloneUrl,
                 onValueChange = { cloneUrl = it; message = null },
                 singleLine = true,
-                enabled = !cloning,
+                enabled = !busy,
                 label = { Text("git clone URL", fontSize = 12.sp) },
                 placeholder = { Text("https://github.com/user/repo.git", fontSize = 12.sp) },
                 keyboardOptions = KeyboardOptions(
@@ -127,29 +190,28 @@ fun ProjectsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Button(
-                    enabled = cloneUrl.isNotBlank() && !cloning,
+                    enabled = cloneUrl.isNotBlank() && !busy,
                     onClick = {
                         cloning = true
                         message = "Cloning..."
                         scope.launch {
-                            when (val r = ProjectRepository.clone(context, cloneUrl.trim())) {
-                                is ProjectRepository.CloneResult.Success -> {
-                                    cloning = false
+                            val outcome = ProjectRepository.clone(context, cloneUrl.trim())
+                            cloning = false
+                            when (outcome) {
+                                is ProjectRepository.Outcome.Success -> {
                                     cloneUrl = ""
-                                    message = "Cloned ${r.name}"
+                                    message = "Cloned ${outcome.name}"
                                     reloadToken++
-                                    open(r.path)
+                                    open(outcome.path)
                                 }
-                                is ProjectRepository.CloneResult.Failure -> {
-                                    cloning = false
-                                    message = r.message
-                                }
+                                is ProjectRepository.Outcome.Failure ->
+                                    message = outcome.message
                             }
                         }
                     },
                 ) { Text(if (cloning) "Cloning..." else "Clone") }
 
-                if (cloning) {
+                if (busy) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(18.dp),
                         strokeWidth = 2.dp,
@@ -161,8 +223,11 @@ fun ProjectsScreen(
                 Text(
                     it,
                     fontSize = 12.sp,
-                    color = if (it.startsWith("Cloned")) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (it.startsWith("Cloned") || it.startsWith("Created")) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                 )
             }
         }
@@ -196,7 +261,7 @@ fun ProjectsScreen(
             if (!loading && entries.isEmpty()) {
                 item {
                     Text(
-                        "No projects yet - clone one above.",
+                        "No projects yet - create one or clone a repository above.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),

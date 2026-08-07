@@ -326,15 +326,35 @@ object WorkbenchWebView {
 
     /** Workbench commands we drive from native chrome, via their default keybindings. */
     object Commands {
-        fun toggleSidebar() = sendKey(KeyEvent.KEYCODE_B, KeyEvent.META_CTRL_ON)
-
         /**
-         * Source control. Ctrl+Shift+G is VS Code's own binding, and it toggles: pressing
-         * it while the panel is open closes it, which is what makes this a chip rather
-         * than a one way trip.
+         * Which sidebar view we last opened, or null when we last closed it.
+         *
+         * Needed because neither shortcut alone gives a toggle. Ctrl+B toggles whether
+         * the sidebar is *visible* without changing which view it holds, so after
+         * switching to source control the files chip only hid and showed source control.
+         * Ctrl+Shift+E and Ctrl+Shift+G select a view, but only collapse the sidebar when
+         * focus is already inside it, and a chip tap leaves focus in the editor, so they
+         * only ever opened. Tracking it here gives both chips the behaviour people
+         * expect: tap to show, tap the same one again to hide.
+         *
+         * It can drift if the sidebar is changed some other way. Tapping twice recovers,
+         * which is a fair price for not needing to interrogate the workbench.
          */
-        fun toggleSourceControl() =
-            sendKey(KeyEvent.KEYCODE_G, KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON)
+        private var sidebarView: String? = null
+
+        private fun showView(name: String, keyCode: Int) {
+            if (sidebarView == name) {
+                sendKey(KeyEvent.KEYCODE_B, KeyEvent.META_CTRL_ON)
+                sidebarView = null
+            } else {
+                sendKey(keyCode, KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON)
+                sidebarView = name
+            }
+        }
+
+        fun toggleSidebar() = showView("explorer", KeyEvent.KEYCODE_E)
+
+        fun toggleSourceControl() = showView("scm", KeyEvent.KEYCODE_G)
 
         fun commandPalette() =
             sendKey(KeyEvent.KEYCODE_P, KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON)

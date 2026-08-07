@@ -76,7 +76,13 @@ fun Shell(state: SessionState) {
     BackHandler(enabled = showStatus && !showSettings) { showStatus = false }
     BackHandler(enabled = showProjects) { showProjects = false }
     BackHandler(enabled = showCockpit && !showProjects) { showCockpit = false }
-    BackHandler(enabled = !showProjects && !showCockpit) { WorkbenchWebView.Commands.escape() }
+    // Must exclude every overlay above it. Compose gives priority to the most recently
+    // registered enabled handler, so without these terms this one outranks the settings
+    // and status handlers declared above and they never fire — back sent ESC into a
+    // detached WebView and those screens simply ignored the gesture.
+    BackHandler(
+        enabled = !showProjects && !showCockpit && !showSettings && !showStatus,
+    ) { WorkbenchWebView.Commands.escape() }
 
     // M5a: record where session time actually goes, so decision D12 can be settled with
     // a number instead of a hunch.

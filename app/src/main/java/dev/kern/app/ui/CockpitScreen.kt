@@ -254,6 +254,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
             ReplyBar(
                 value = reply,
                 onValue = { reply = it },
+                agentId = agent.id,
                 onSend = {
                     TerminalSessions.writeTo(agent.id, reply)
                     reply = ""
@@ -264,7 +265,12 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
 }
 
 @Composable
-private fun ReplyBar(value: String, onValue: (String) -> Unit, onSend: () -> Unit) {
+private fun ReplyBar(
+    value: String,
+    onValue: (String) -> Unit,
+    agentId: Int,
+    onSend: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -284,10 +290,14 @@ private fun ReplyBar(value: String, onValue: (String) -> Unit, onSend: () -> Uni
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // The answers an agent asks for most, without opening the keyboard for them.
-            TextButton(onClick = { TerminalSessions.write("yes\n") }) { Text("yes") }
-            TextButton(onClick = { TerminalSessions.write("no\n") }) { Text("no") }
-            TextButton(onClick = { TerminalSessions.write("\n") }) {
+            // Addressed to the agent, not written into whatever happens to have focus.
+            // The ambient write() resolves to the focused view or the active *shell* —
+            // the active id is never set to an agent — so these answers went to a bash
+            // prompt the user could not see, or nowhere at all, while the agent sat
+            // waiting. Answering y/n one handed is the entire point of this screen.
+            TextButton(onClick = { TerminalSessions.writeTo(agentId, "yes") }) { Text("yes") }
+            TextButton(onClick = { TerminalSessions.writeTo(agentId, "no") }) { Text("no") }
+            TextButton(onClick = { TerminalSessions.writeTo(agentId, "") }) {
                 Text("enter", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
             }
             Spacer(Modifier.weight(1f))

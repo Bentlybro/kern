@@ -328,6 +328,14 @@ object WorkbenchWebView {
     object Commands {
         fun toggleSidebar() = sendKey(KeyEvent.KEYCODE_B, KeyEvent.META_CTRL_ON)
 
+        /**
+         * Source control. Ctrl+Shift+G is VS Code's own binding, and it toggles: pressing
+         * it while the panel is open closes it, which is what makes this a chip rather
+         * than a one way trip.
+         */
+        fun toggleSourceControl() =
+            sendKey(KeyEvent.KEYCODE_G, KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON)
+
         fun commandPalette() =
             sendKey(KeyEvent.KEYCODE_P, KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON)
 

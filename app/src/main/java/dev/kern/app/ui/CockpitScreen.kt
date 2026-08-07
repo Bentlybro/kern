@@ -32,6 +32,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,8 +44,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.kern.app.runtime.AgentRepository
 import dev.kern.app.runtime.ProjectRepository
@@ -52,66 +55,25 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * Start and stop the agent, or say plainly that there isn't one.
+ * The agent cockpit (M5): watch an agent work, steer it, review the diff and commit,
+ * all one handed.
  *
- * Having no agent is a supported choice rather than a broken state, so this says so and
- * points at where to pick one — while the diff and commit tabs behind it carry on being
- * useful to someone who never wants an AI anywhere near their code.
- */
-@Composable
-private fun AgentBar(project: String) {
-    val context = LocalContext.current
-    val running by AgentRepository.running.collectAsStateWithLifecycle()
-    val command = remember(running) { AgentRepository.command(context) }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        when {
-            command.isBlank() -> Text(
-                "No agent set — settings > agent. The diff and commit tabs work without one.",
-                fontSize = 11.5.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            running -> {
-                TextButton(onClick = { AgentRepository.stop() }) {
-                    Text("stop", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                }
-                Text(
-                    command,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    softWrap = false,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            else -> Button(onClick = { AgentRepository.start(context, project) }) {
-                Text("Start $command", fontSize = 13.sp)
-            }
-        }
-    }
-}
-
-/**
- * The agent cockpit (M5): monitor, steer and approve work one-handed.
+ * The agent's output is a **real terminal**, the same emulator the terminal pane uses.
+ * It used to be a list of lines, which is why TUI agents looked broken here: they do not
+ * emit lines, they repaint a screen with cursor movement, and stripping escapes out of
+ * that produces nonsense rather than text.
  *
- * This is the surface the fold's cover screen exists for — the phone is demonstrably
- * good at reviewing and approving, and poor at typing, so the cockpit leads with agent
- * output, a unified diff, and one-thumb commit rather than an editor.
+ * The diff and commit half works with no agent at all, which is deliberate. Plenty of
+ * people want to review and push from a phone without one anywhere near their code.
  */
 @Composable
 fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var snapshot by remember { mutableStateOf(AgentRepository.Snapshot(emptyList(), AgentRepository.State.Unknown)) }
+    val sessions by TerminalSessions.sessions.collectAsStateWithLifecycle()
+    val agent = sessions.firstOrNull { it.kind == TerminalSessions.Kind.Agent }
+
     var status by remember { mutableStateOf<AgentRepository.GitStatus?>(null) }
     var diff by remember { mutableStateOf<List<String>>(emptyList()) }
     var showDiff by remember { mutableStateOf(false) }
@@ -121,21 +83,15 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
     var refresh by remember { mutableIntStateOf(0) }
 
     val project = remember(refresh) { ProjectRepository.currentFolder(context) }
+    val command = remember(refresh, agent) { AgentRepository.command(context) }
 
-    // Only one poller runs at a time. The git reads enter the guest, and overlapping them
-    // starves whichever request the user is actually waiting on. Agent output is read
-    // from a buffer this process already holds, so that part is free.
+    // Only the git side is polled now. The terminal repaints itself, so there is nothing
+    // to poll for output, and every read here is a round trip into the guest.
     LaunchedEffect(showDiff, refresh) {
         while (true) {
-            if (showDiff) {
-                diff = AgentRepository.gitDiff(context, project)
-                status = AgentRepository.gitStatus(context, project)
-                delay(6000)
-            } else {
-                snapshot = AgentRepository.snapshot(context, 40)
-                status = AgentRepository.gitStatus(context, project)
-                delay(4000)
-            }
+            status = AgentRepository.gitStatus(context, project)
+            if (showDiff) diff = AgentRepository.gitDiff(context, project)
+            delay(if (showDiff) 6000 else 4000)
         }
     }
 
@@ -146,7 +102,6 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
             .windowInsetsPadding(WindowInsets.systemBars)
             .imePadding(),
     ) {
-        // Header: state at a glance, in form as well as words.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -154,16 +109,16 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val (dot, label) = when (snapshot.state) {
-                AgentRepository.State.AwaitingInput -> Color(0xFFC99A4E) to "needs you"
-                AgentRepository.State.Working -> Color(0xFF6FAE7F) to "working"
-                AgentRepository.State.Idle -> Color(0xFF8F929A) to "idle"
-                AgentRepository.State.Unknown -> Color(0xFF8F929A) to "—"
-            }
-            Box(Modifier.size(9.dp).clip(CircleShape).background(dot))
+            val running = agent != null
+            Box(
+                Modifier
+                    .size(9.dp)
+                    .clip(CircleShape)
+                    .background(if (running) Color(0xFF6FAE7F) else Color(0xFF8F929A)),
+            )
             Spacer(Modifier.width(8.dp))
             Text(
-                label,
+                if (running) "running" else "idle",
                 fontFamily = FontFamily.Monospace,
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurface,
@@ -188,7 +143,40 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
             }
         }
 
-        AgentBar(project)
+        // Start and stop, or say plainly that no agent is set.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            when {
+                command.isBlank() -> Text(
+                    "No agent set — settings > agent. The diff and commit tabs work without one.",
+                    fontSize = 11.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                agent != null -> {
+                    TextButton(onClick = { TerminalSessions.stopAgent() }) {
+                        Text("stop", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                    }
+                    Text(
+                        command,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                else -> Button(onClick = { TerminalSessions.startAgent(context, command) }) {
+                    Text("Start $command", fontSize = 13.sp)
+                }
+            }
+        }
 
         Row(
             modifier = Modifier
@@ -204,174 +192,188 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
         }
 
         Box(Modifier.weight(1f)) {
-            if (showDiff) DiffView(diff) else OutputView(snapshot.tail)
-        }
-
-        // Steering: reply to the agent, or commit its work — the two one-thumb actions.
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            busy?.let {
-                Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
-            }
-
             if (showDiff) {
-                OutlinedTextField(
-                    value = commitMsg,
-                    onValueChange = { commitMsg = it },
-                    singleLine = true,
-                    label = { Text("commit message", fontSize = 12.sp) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        enabled = commitMsg.isNotBlank() && busy == null,
-                        onClick = {
-                            busy = "Committing…"
-                            scope.launch {
-                                val r = AgentRepository.gitCommitAll(context, project, commitMsg)
-                                commitMsg = ""
-                                busy = r
-                                refresh++
-                                delay(4000)
-                                busy = null
-                            }
+                DiffView(diff)
+            } else if (agent != null) {
+                // The real emulator, keyed so a restarted agent gets a fresh view rather
+                // than the old one rebound to a dead pty.
+                key(agent.id) {
+                    AndroidView(
+                        modifier = Modifier.fillMaxSize(),
+                        factory = {
+                            TerminalSessions.detachAll()
+                            agent.view
                         },
-                    ) { Text("Commit all") }
-                    TextButton(
-                        enabled = busy == null,
-                        onClick = {
-                            busy = "Pushing…"
-                            scope.launch {
-                                busy = AgentRepository.gitPush(context, project)
-                                delay(4000)
-                                busy = null
-                            }
-                        },
-                    ) { Text("Push") }
+                    )
                 }
             } else {
-                OutlinedTextField(
-                    value = reply,
-                    onValueChange = { reply = it },
-                    singleLine = true,
-                    label = { Text("reply to agent", fontSize = 12.sp) },
-                    keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    QuickReply("yes") { scope.launch { AgentRepository.send(context, "yes") } }
-                    QuickReply("no") { scope.launch { AgentRepository.send(context, "no") } }
-                    QuickReply("↵") { scope.launch { AgentRepository.send(context, "") } }
-                    Button(
-                        enabled = reply.isNotBlank(),
-                        onClick = {
-                            val text = reply
-                            reply = ""
-                            scope.launch { AgentRepository.send(context, text) }
-                        },
-                    ) { Text("Send") }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun OutputView(tail: List<String>) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 10.dp),
-    ) {
-        if (tail.isEmpty()) {
-            item {
                 Text(
-                    "Nothing running yet. Start the agent above, or use the diff and " +
-                        "commit tabs on their own.",
+                    if (command.isBlank()) {
+                        "Nothing running. The diff and commit tabs work on their own."
+                    } else {
+                        "Nothing running. Start $command above."
+                    },
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 16.dp),
+                    modifier = Modifier.padding(16.dp),
                 )
             }
         }
-        items(tail) { line ->
+
+        busy?.let {
             Text(
-                line.ifBlank { " " },
-                fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
-                maxLines = 3,
-                color = MaterialTheme.colorScheme.onBackground,
+                it,
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+            )
+        }
+
+        if (showDiff) {
+            CommitBar(
+                message = commitMsg,
+                onMessage = { commitMsg = it },
+                enabled = busy == null && status?.isRepo == true,
+                onCommit = {
+                    busy = "Committing..."
+                    scope.launch {
+                        busy = AgentRepository.gitCommitAll(context, project, commitMsg)
+                        commitMsg = ""
+                        refresh++
+                    }
+                },
+                onPush = {
+                    busy = "Pushing..."
+                    scope.launch {
+                        busy = AgentRepository.gitPush(context, project)
+                        refresh++
+                    }
+                },
+            )
+        } else if (agent != null) {
+            ReplyBar(
+                value = reply,
+                onValue = { reply = it },
+                onSend = {
+                    TerminalSessions.writeTo(agent.id, reply)
+                    reply = ""
+                },
             )
         }
     }
 }
 
-/** Unified diff, coloured — split diffs are unreadable at phone width (docs/05). */
 @Composable
-private fun DiffView(diff: List<String>) {
-    LazyColumn(
+private fun ReplyBar(value: String, onValue: (String) -> Unit, onSend: () -> Unit) {
+    Column(
         modifier = Modifier
-            .fillMaxSize()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 10.dp),
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (diff.isEmpty()) {
-            item {
-                Text(
-                    "No changes in the working tree.",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 16.dp),
-                )
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValue,
+            singleLine = true,
+            label = { Text("reply to agent", fontSize = 12.sp) },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // The answers an agent asks for most, without opening the keyboard for them.
+            TextButton(onClick = { TerminalSessions.write("yes\n") }) { Text("yes") }
+            TextButton(onClick = { TerminalSessions.write("no\n") }) { Text("no") }
+            TextButton(onClick = { TerminalSessions.write("\n") }) {
+                Text("enter", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
             }
+            Spacer(Modifier.weight(1f))
+            Button(enabled = value.isNotBlank(), onClick = onSend) { Text("Send") }
         }
-        items(diff) { line ->
-            val color = when {
+    }
+}
+
+@Composable
+private fun CommitBar(
+    message: String,
+    onMessage: (String) -> Unit,
+    enabled: Boolean,
+    onCommit: () -> Unit,
+    onPush: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        OutlinedTextField(
+            value = message,
+            onValueChange = onMessage,
+            singleLine = true,
+            label = { Text("commit message", fontSize = 12.sp) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(enabled = enabled && message.isNotBlank(), onClick = onCommit) {
+                Text("Commit all")
+            }
+            TextButton(enabled = enabled, onClick = onPush) { Text("Push") }
+        }
+    }
+}
+
+/** Unified diff, coloured. The one format that stays readable at phone width. */
+@Composable
+private fun DiffView(lines: List<String>) {
+    if (lines.isEmpty()) {
+        Text(
+            "No changes.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(16.dp),
+        )
+        return
+    }
+    LazyColumn(Modifier.fillMaxSize()) {
+        items(lines) { line ->
+            val colour = when {
                 line.startsWith("+++") || line.startsWith("---") ->
                     MaterialTheme.colorScheme.onSurfaceVariant
+                line.startsWith("@@") -> Color(0xFF7FA7D0)
                 line.startsWith("+") -> Color(0xFF6FAE7F)
                 line.startsWith("-") -> Color(0xFFD07158)
-                line.startsWith("@@") -> MaterialTheme.colorScheme.primary
                 line.startsWith("diff ") -> MaterialTheme.colorScheme.primary
-                else -> MaterialTheme.colorScheme.onBackground
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
             }
             Text(
-                line.ifBlank { " " },
+                line,
                 fontFamily = FontFamily.Monospace,
-                fontSize = 11.sp,
-                maxLines = 1,
-                softWrap = false,
-                color = color,
+                fontSize = 10.5.sp,
+                color = colour,
+                maxLines = 3,
+                modifier = Modifier.padding(horizontal = 12.dp),
             )
         }
+        item { Spacer(Modifier.height(16.dp)) }
     }
 }
 
 @Composable
-private fun Tab(label: String, active: Boolean, onClick: () -> Unit) {
-    TextButton(onClick = onClick) {
-        Text(
-            label,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            color = if (active) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-private fun QuickReply(label: String, onClick: () -> Unit) {
-    TextButton(
-        onClick = onClick,
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.height(44.dp),
-    ) {
-        Text(label, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
-    }
+private fun Tab(label: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        fontFamily = FontFamily.Monospace,
+        fontSize = 13.sp,
+        color = if (selected) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    )
 }

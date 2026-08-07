@@ -15,6 +15,7 @@ import android.util.Log
 import dev.kern.app.MainActivity
 import dev.kern.app.R
 import dev.kern.app.runtime.AgentRepository
+import dev.kern.app.ui.TerminalSessions
 import dev.kern.app.runtime.LinuxRuntime
 import dev.kern.app.runtime.Secrets
 import java.net.HttpURLConnection
@@ -122,7 +123,7 @@ class SessionService : Service() {
         updateNotification("Running on 127.0.0.1:${LinuxRuntime.CODE_SERVER_PORT}")
 
         var misses = 0
-        var lastAgentState: AgentRepository.State? = null
+        var wasAwaiting = false
         var agentTick = 0
         while (scope.isActive) {
             delay(15_000)
@@ -130,19 +131,22 @@ class SessionService : Service() {
             // Pocket workflow (M5): while a session is running, watch for the agent
             // stopping to ask something and raise a notification so the phone can be in
             // a pocket. Polled every other health tick - cheap, and tool-agnostic.
+            //
+            // Reads the rendered screen rather than a byte stream, because a TUI agent
+            // repaints in place: the last thing written and the last thing shown are
+            // routinely different, and only the second one is the question.
             if (++agentTick % 2 == 0) {
                 runCatching {
-                    val snap = AgentRepository.snapshot(this@SessionService, 12)
-                    if (snap.state != lastAgentState) {
-                        if (snap.state == AgentRepository.State.AwaitingInput) {
-                            notifyAgent(
-                                "Agent needs you",
-                                snap.tail.lastOrNull { it.isNotBlank() }?.trim()?.take(120)
-                                    ?: "Waiting for input",
-                            )
-                        }
-                        lastAgentState = snap.state
+                    val screen = TerminalSessions.agentScreen()
+                    val awaiting = screen != null && TerminalSessions.agentAwaitingInput(screen)
+                    if (awaiting && !wasAwaiting) {
+                        notifyAgent(
+                            "Agent needs you",
+                            screen!!.lines().lastOrNull { it.isNotBlank() }?.trim()?.take(120)
+                                ?: "Waiting for input",
+                        )
                     }
+                    wasAwaiting = awaiting
                 }
             }
 

@@ -326,6 +326,7 @@ private fun TopBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ActionChip("files") { WorkbenchWebView.Commands.toggleSidebar() }
+            ActionChip("git") { WorkbenchWebView.Commands.toggleSourceControl() }
             ActionChip("project", onClick = onOpenProjects)
             if (mode != DisplayMode.Tabletop) {
                 ActionChip(

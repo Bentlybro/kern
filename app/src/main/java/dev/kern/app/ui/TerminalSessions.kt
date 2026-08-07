@@ -110,6 +110,30 @@ object TerminalSessions {
         publish()
     }
 
+    /**
+     * What the agent's screen currently says, read straight from the emulator.
+     *
+     * Backs the "agent needs you" notification. Reading the rendered screen rather than a
+     * stream of bytes is the only thing that works for a TUI: it repaints in place, so
+     * the last thing *written* and the last thing *shown* are frequently different.
+     */
+    fun agentScreen(): String? = agent()?.let { entry ->
+        runCatching { entry.session.emulator?.screen?.transcriptText }.getOrNull()
+    }
+
+    /**
+     * Guess whether the agent is waiting on the user. Heuristic by necessity, since
+     * agents do not announce it, but it only drives a notification so a wrong guess is
+     * cheap.
+     */
+    fun agentAwaitingInput(screen: String): Boolean {
+        val last = screen.lines().lastOrNull { it.isNotBlank() }?.trim() ?: return false
+        return Regex(
+            "(\\?\\s*$)|(\\[y/n\\])|(\\(y/N\\))|(yes/no)|(continue\\??)|(approve)|(permission)",
+            RegexOption.IGNORE_CASE,
+        ).containsMatchIn(last)
+    }
+
     // ---- lifecycle ----------------------------------------------------------
 
     private fun create(

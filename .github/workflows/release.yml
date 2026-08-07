@@ -71,6 +71,31 @@ jobs:
           fi
           echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
 
+      # Checked before the build, because a wrong key password does not surface until
+      # packageRelease and then reports "Get Key failed: Tag number over 30 at 0" - the
+      # ASN.1 parser choking on a badly decrypted key, with nothing in the message about
+      # passwords. Three minutes of build to learn that is three minutes wasted.
+      - name: Check the key opens
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if ! keytool -list -keystore "$RUNNER_TEMP/release.jks" \
+                       -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null 2>&1; then
+            echo "::error::Cannot open the keystore. KEYSTORE_PASSWORD or KEY_ALIAS is wrong."
+            exit 1
+          fi
+          if ! keytool -certreq -keystore "$RUNNER_TEMP/release.jks" \
+                       -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" \
+                       -keypass "$KEY_PASSWORD" >/dev/null 2>&1; then
+            echo "::error::Keystore opens but the key does not. PKCS12 keeps store and key"
+            echo "::error::under one password - set KEY_PASSWORD to the same value as"
+            echo "::error::KEYSTORE_PASSWORD. See docs/17-releases.md."
+            exit 1
+          fi
+          echo "Keystore and key both open."
+
       - name: Assemble release
         env:
           KEYSTORE_FILE: ${{ runner.temp }}/release.jks

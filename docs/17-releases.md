@@ -79,9 +79,22 @@ repository directory — `.gitignore` stops it being committed, but not being de
 | Secret | Value |
 |---|---|
 | `KEYSTORE_BASE64` | base64 of `release.jks`, no trailing newline |
-| `KEYSTORE_PASSWORD` | Keystore password |
+| `KEYSTORE_PASSWORD` | The password |
 | `KEY_ALIAS` | `kern` |
-| `KEY_PASSWORD` | Key password |
+| `KEY_PASSWORD` | **The same password again** |
+
+`KEY_PASSWORD` is not a second password. PKCS12 cannot store the key under a different
+one from the store, and keytool does not refuse — it warns and silently ignores:
+
+    Warning: Different store and key passwords not supported for PKCS12 KeyStores.
+             Ignoring user-specified -keypass value.
+
+Set them to different values and everything appears to work until the build fails with
+
+    Get Key failed: Tag number over 30 at 0 is not supported
+
+which is what a wrong key password looks like once the encrypted key is parsed as ASN.1.
+Nothing in that message mentions passwords.
 
 ## Why the workflows are shaped the way they are
 

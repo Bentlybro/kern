@@ -45,6 +45,12 @@ import kotlin.math.abs
  * Typing is unaffected: the key row and hardware keys are dispatched as key events and
  * never travel through an input connection.
  */
+/**
+ * The app background (`Theme.kt`, and `android:windowBackground`), as an ARGB int.
+ * Kept in step with those by hand: a WebView cannot read the Compose theme.
+ */
+private const val WORKBENCH_BACKGROUND = 0xFF0A0B0D.toInt()
+
 private class WorkbenchWeb(context: Context) : WebView(context) {
 
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
@@ -141,6 +147,13 @@ object WorkbenchWebView {
             settings.mediaPlaybackRequiresUserGesture = true
             settings.setSupportZoom(false)
             isFocusableInTouchMode = true
+
+            // A WebView paints white until it has rasterised, and it re-rasterises every
+            // time the window resizes — which is what opening and closing the keyboard
+            // does. Left at the default that showed as a white box flashing over a dark
+            // UI. Matching the theme means a frame we have not drawn yet is simply the
+            // background colour, and the seam stops being visible.
+            setBackgroundColor(WORKBENCH_BACKGROUND)
 
             val debuggable =
                 (activityContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0

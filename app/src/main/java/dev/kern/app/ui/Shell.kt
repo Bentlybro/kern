@@ -13,7 +13,8 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
@@ -58,6 +59,7 @@ import dev.kern.app.session.SessionState
  * key row, and the posture-specific layout around it — is native Compose. IME insets are
  * owned here, so opening the keyboard resizes panes instead of glitching the web layout.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun Shell(state: SessionState) {
     val fold = rememberFoldState()
@@ -139,7 +141,12 @@ fun Shell(state: SessionState) {
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.systemBars)
-            .imePadding(),
+            // imeAnimationTarget rather than imePadding: the animated version resizes on
+            // every frame of the keyboard animation, and each resize makes the WebView
+            // re-lay out the entire workbench, which is what made opening and closing the
+            // keyboard feel like it was struggling. This takes the final size at once and
+            // lets the keyboard animate over a layout that has already settled.
+            .windowInsetsPadding(WindowInsets.imeAnimationTarget),
     ) {
         TopBar(
             state = state,

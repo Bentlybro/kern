@@ -56,6 +56,29 @@ Verified by experiment, not assumption:
 
   This also applies to **extraction**, so the rootfs tarball is unpacked *through* PRoot
   (using Android's own `/system/bin/tar`) rather than by a Java tar implementation.
+- **`PROOT_L2S_DIR` must live inside the rootfs, and be bound onto itself.** This is two
+  separate requirements and both are load-bearing.
+
+  PRoot implements `-l` by moving the real file into the l2s directory and pointing a
+  symlink at it — and it writes that symlink's target as the **host** path. So the
+  directory has to be somewhere the guest can also reach, at *the same path*. Putting it
+  outside the rootfs breaks it; putting it inside is not enough on its own, because the
+  guest's root is the rootfs and `/data/user/0/…` still means nothing there. Hence the
+  self-bind:
+
+      -b /data/user/0/dev.foldcode.app/files/linux/.l2s:/data/user/0/…/.l2s
+
+  Get either half wrong and the failures are wildly misleading:
+
+      wrong directory →  dpkg: error setting ownership of '/usr/bin/perl5.38.2.dpkg-new':
+                         No such file or directory   (about a file that is plainly there —
+                         chown follows the dangling symlink)
+      no self-bind    →  ls: command not found
+
+  The second is the nastier one, and Ubuntu 26.04 makes it fatal: its coreutils is a
+  single multi-call binary sitting behind ~115 hard links, so one dangling link removes
+  every core utility simultaneously. The guest boots, `bash` works (its builtins are
+  compiled in), and nothing else does.
 - `-0` fake root, `-r <rootfs>` new root, `-w` working directory.
 - `PROOT_TMP_DIR` must be set: the Termux build has Termux's prefix compiled in as its
   default temp path and warns `can't canonicalize /data/data/com.termux/...` without it.

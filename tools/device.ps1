@@ -187,7 +187,9 @@ switch ($Command) {
         Connect-Device
         if (-not $Args) { throw "Usage: device.ps1 guest '<command>'" }
         $lib   = Get-NativeLibDir
-        $data  = "/data/data/$Pkg/files"
+        # /data/user/0 rather than /data/data: the same directory, but this is the form
+        # the app resolves, and the hard-link symlinks below record it literally.
+        $data  = "/data/user/0/$Pkg/files"
         # Optional override so a candidate rootfs can be exercised side by side with the
         # installed one, e.g. $env:FOLDCODE_ROOTFS = 'linux26' before a distro upgrade.
         $guestDir = if ($env:FOLDCODE_ROOTFS) { $env:FOLDCODE_ROOTFS } else { 'linux' }
@@ -202,6 +204,9 @@ switch ($Command) {
         $remote = "mkdir -p $data/tmp $data/$guestDir/.l2s $data/$guestDir/tmp; " +
                   "echo $b64 | base64 -d > $data/$guestDir/tmp/fc-guest.sh; " +
                   "$vars exec $lib/libproot.so -0 -l -r $data/$guestDir " +
+                  # The hard-link farm bound onto itself, exactly as the app does it:
+                  # without it the guest's coreutils symlinks dangle and even ls is gone.
+                  "-b $data/$guestDir/.l2s`:$data/$guestDir/.l2s " +
                   "-b /proc -b /sys -b /dev -b /dev/pts -w /root " +
                   "/bin/bash /tmp/fc-guest.sh"
         Invoke-Adb shell "run-as $Pkg sh -c '$remote'"

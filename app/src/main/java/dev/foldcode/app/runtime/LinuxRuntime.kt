@@ -131,7 +131,19 @@ object LinuxRuntime {
             "-l",
             "-r", rootfsDir(context).absolutePath,
         )
+        val l2s = l2sDir(context).absolutePath
         listOf(
+            // The hard-link farm, bound onto itself.
+            //
+            // PRoot replaces a hard link with a symlink and writes the *host* path of the
+            // real file as its target — so that path must also resolve from inside the
+            // guest, where the root is the rootfs and /data/user/0/... otherwise means
+            // nothing. Binding the directory at its own path is what makes it resolve.
+            //
+            // Ubuntu 26.04 makes this fatal rather than cosmetic: its coreutils is a
+            // single multi-call binary sitting behind ~115 hard links, so one dangling
+            // link takes out every core utility at once — `ls`, `cat`, `head`, the lot.
+            "$l2s:$l2s",
             "/proc", "/sys", "/dev", "/dev/pts",
             "/proc/self/fd:/dev/fd",
             "/proc/self/fd/0:/dev/stdin",

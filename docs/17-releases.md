@@ -10,6 +10,29 @@
 Merging to `main` does not release anything. It prepares a draft; publishing it is a
 separate, deliberate act — and until it is published, the in-app updater cannot see it.
 
+## Verifying a download
+
+Every release is signed with the same key. Anyone can check that an APK really came from
+this project:
+
+```
+apksigner verify --print-certs kern-0.1.0.apk
+```
+
+```
+Signer #1 certificate DN: CN=Kern, O=Kern, C=GB
+Signer #1 certificate SHA-256 digest:
+  9f27b62ed2e3fee3fe27e8c2f260a9e0a41bfa23dab9fa6f5acdf4045af83308
+```
+
+A different fingerprint means a different key, and Android will refuse to install it over
+an existing Kern regardless — that refusal is what makes in-app updates safe:
+
+```
+INSTALL_FAILED_UPDATE_INCOMPATIBLE:
+  Existing package dev.kern.app signatures do not match newer version
+```
+
 ## The signing key is the whole security model
 
 Android refuses to install an update signed with a different key than the installed app.

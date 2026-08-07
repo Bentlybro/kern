@@ -178,6 +178,11 @@ object HealthCheck {
      */
     private suspend fun githubItem(context: Context): Item =
         when (val account = GitHubAuth.account(context)) {
+            is GitHubAuth.Account.Unavailable -> Item(
+                "GitHub",
+                Level.Warn,
+                "Could not reach the guest.",
+            )
             is GitHubAuth.Account.ToolsMissing -> Item(
                 "GitHub",
                 Level.Warn,

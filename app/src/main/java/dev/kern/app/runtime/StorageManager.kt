@@ -95,7 +95,9 @@ object StorageManager {
             apt-get clean 2>/dev/null
             rm -rf /var/lib/apt/lists/* 2>/dev/null
             rm -rf /root/.cache/* 2>/dev/null
-            rm -rf /tmp/* 2>/dev/null
+            # Not `rm -rf /tmp/*`: fc-* is another guest command's scratch and kern-gh* a
+            # sign-in in progress; deleting either makes its caller time out and misreport.
+            find /tmp -mindepth 1 -maxdepth 1 ! -name 'fc-*' ! -name 'kern-gh*' -exec rm -rf {} + 2>/dev/null
             : > /root/.kern/server.log 2>/dev/null
             """.trimIndent(),
             timeoutMs = 180_000,

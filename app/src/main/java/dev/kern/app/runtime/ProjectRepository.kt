@@ -25,8 +25,8 @@ object ProjectRepository {
     suspend fun list(context: Context, path: String = PROJECTS_DIR): List<Entry> {
         // One shell round-trip for the whole listing: "name<TAB>isRepo".
         val script = """
-            mkdir -p '$PROJECTS_DIR' 2>/dev/null
-            cd '$path' 2>/dev/null || exit 1
+            mkdir -p ${sq(PROJECTS_DIR)} 2>/dev/null
+            cd ${sq(path)} 2>/dev/null || exit 1
             for d in */ ; do
               [ -d "${'$'}d" ] || continue
               n=${'$'}{d%/}
@@ -59,11 +59,16 @@ object ProjectRepository {
         if (safe.isBlank()) return Outcome.Failure("Give the project a name")
 
         val target = "$PROJECTS_DIR/$safe"
+        // The git check comes before the folder is made, and a failed init takes the folder
+        // back out with it: otherwise the retry lands on the EXISTS branch and the user is
+        // told the folder already exists, which is a dead end. rmdir, not rm -rf — the
+        // folder was created empty moments earlier and nothing of the user's is in it.
         val script = """
-            mkdir -p '$PROJECTS_DIR'
-            if [ -e '$target' ]; then echo EXISTS >&2; exit 2; fi
-            mkdir -p '$target' || exit 1
-            ${if (initGit) "cd '$target' && git init -q 2>&1" else ""}
+            mkdir -p ${sq(PROJECTS_DIR)}
+            if [ -e ${sq(target)} ]; then echo EXISTS >&2; exit 2; fi
+            ${if (initGit) "command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }" else ""}
+            mkdir -p ${sq(target)} || exit 1
+            ${if (initGit) "cd ${sq(target)} && git init -q 2>&1 || { rmdir ${sq(target)} 2>/dev/null; exit 4; }" else ""}
         """.trimIndent()
 
         val result = LinuxRuntime.run(context, script, timeoutMs = 60_000)
@@ -71,6 +76,10 @@ object ProjectRepository {
 
         return when {
             result.exitCode == 2 -> Outcome.Failure("A folder named \"$safe\" already exists")
+            result.exitCode == 3 -> Outcome.Failure(
+                "git is not installed yet — check Status, it may still be setting up.",
+            )
+            result.exitCode == 4 -> Outcome.Failure("Created the folder, but git init failed")
             result.ok -> Outcome.Success(target, safe)
             else -> Outcome.Failure(lastLine(result) ?: "Could not create the folder")
         }
@@ -83,10 +92,10 @@ object ProjectRepository {
 
         val target = "$PROJECTS_DIR/$name"
         val script = """
-            mkdir -p '$PROJECTS_DIR'
-            if [ -e '$target' ]; then echo "EXISTS" >&2; exit 2; fi
+            mkdir -p ${sq(PROJECTS_DIR)}
+            if [ -e ${sq(target)} ]; then echo "EXISTS" >&2; exit 2; fi
             command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }
-            git clone --depth 1 '$url' '$target' 2>&1
+            git clone --depth 1 ${sq(url)} ${sq(target)} 2>&1
         """.trimIndent()
 
         // Clones can be slow on mobile networks; give them room.

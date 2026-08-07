@@ -80,6 +80,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
     var reply by remember { mutableStateOf("") }
     var commitMsg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf<String?>(null) }
+    var result by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
 
     val project = remember(refresh) { ProjectRepository.currentFolder(context) }
@@ -220,7 +221,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
             }
         }
 
-        busy?.let {
+        (busy ?: result)?.let {
             Text(
                 it,
                 fontSize = 12.sp,
@@ -237,7 +238,8 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 onCommit = {
                     busy = "Committing..."
                     scope.launch {
-                        busy = AgentRepository.gitCommitAll(context, project, commitMsg)
+                        result = AgentRepository.gitCommitAll(context, project, commitMsg)
+                        busy = null
                         commitMsg = ""
                         refresh++
                     }
@@ -245,7 +247,8 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 onPush = {
                     busy = "Pushing..."
                     scope.launch {
-                        busy = AgentRepository.gitPush(context, project)
+                        result = AgentRepository.gitPush(context, project)
+                        busy = null
                         refresh++
                     }
                 },

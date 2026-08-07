@@ -49,6 +49,12 @@ object GitHubAuth {
     private const val SCRIPT_NAME = "kern-ghlogin.sh"
 
     sealed interface Account {
+        /**
+         * The guest did not answer — still starting, busy under `apt`, or timed out. It
+         * says nothing about what is installed, so it must never be reported as tools
+         * missing: that offers a long re-install of packages that are already there.
+         */
+        data object Unavailable : Account
         /** git, gh or tmux are not installed yet. */
         data class ToolsMissing(val missing: List<String>) : Account
         data object SignedOut : Account
@@ -98,7 +104,7 @@ object GitHubAuth {
             fi
             """.trimIndent(),
             timeoutMs = 30_000,
-        ) ?: return Account.ToolsMissing(REQUIRED_TOOLS)
+        ) ?: return Account.Unavailable
 
         val missing = result.lines
             .filter { it.startsWith("MISSING=") }

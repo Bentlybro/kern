@@ -205,7 +205,7 @@ object Updates {
         _state.value = State.Downloading(0)
         val target = File(context.cacheDir, "kern-${release.version}.apk")
         try {
-            LinuxRuntime.download(release.apkUrl, target) { got, total ->
+            download(release.apkUrl, target) { got, total ->
                 val percent = if (total > 0) (got * 100 / total).toInt() else 0
                 _state.value = State.Downloading(percent)
             }

@@ -3,8 +3,6 @@ package dev.kern.app.runtime
 import android.content.Context
 import android.util.Log
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -13,6 +11,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * Wrap [value] as a single-quoted shell word bash cannot re-interpret.
+ *
+ * The quotes are PART OF THE RESULT. Call sites read `cd ${sq(path)}` — never
+ * `cd '${sq(path)}'`. A bare `'$x'` in a guest script template is then visibly
+ * wrong and greppable.
+ */
+internal fun sq(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
 /**
  * The app's Linux backend: an Ubuntu filesystem inside app-private storage, entered
@@ -285,6 +292,7 @@ object LinuxRuntime {
         command = prootBinary(context).absolutePath,
         argv = prootArgs(
             context,
+            // not sq(): the user's own agent command line must stay a command, not a word.
             listOf("/bin/bash", "-lc", "exec $command"),
             workingDir,
         ),
@@ -319,7 +327,7 @@ object LinuxRuntime {
             listOf(
                 "/bin/bash",
                 "-lc",
-                "tmux new-session -A -s '$sessionName' -c '$workingDir' || exec bash -l",
+                "tmux new-session -A -s ${sq(sessionName)} -c ${sq(workingDir)} || exec bash -l",
             ),
             workingDir,
         ),
@@ -360,7 +368,7 @@ object LinuxRuntime {
 
         val script = """
             mkdir -p /root/.kern /root/.local/share/code-server/User
-            export PASSWORD='$token'
+            export PASSWORD=${sq(token)}
             exec code-server --auth password --bind-addr 127.0.0.1:$CODE_SERVER_PORT \
               --disable-telemetry --disable-update-check \
               >> /root/.kern/server.log 2>&1
@@ -474,38 +482,5 @@ object LinuxRuntime {
             // EIO here means the child exited; whatever we collected is the output.
         }
         return out.toString().trim()
-    }
-
-    /** Shared helper for downloading into app storage with progress. */
-    internal fun download(url: String, dest: File, onProgress: (Long, Long) -> Unit) {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 20_000
-            readTimeout = 60_000
-            instanceFollowRedirects = true
-        }
-        try {
-            connection.inputStream.use { input ->
-                val total = connection.contentLengthLong
-                dest.parentFile?.mkdirs()
-                dest.outputStream().use { output ->
-                    val buffer = ByteArray(128 * 1024)
-                    var written = 0L
-                    var lastReport = 0L
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        written += read
-                        if (written - lastReport > 512 * 1024) {
-                            onProgress(written, total)
-                            lastReport = written
-                        }
-                    }
-                    onProgress(written, total)
-                }
-            }
-        } finally {
-            connection.disconnect()
-        }
     }
 }

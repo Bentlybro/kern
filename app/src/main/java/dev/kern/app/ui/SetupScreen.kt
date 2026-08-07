@@ -41,6 +41,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.kern.app.runtime.LinuxRuntime
 import dev.kern.app.runtime.RootfsInstaller
@@ -69,13 +71,18 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
         stage is RootfsInstaller.Stage.Downloading ||
         stage is RootfsInstaller.Stage.Working
 
-    val installed = remember(stage) { LinuxRuntime.isInstalled(context) }
+    // Deleting the guest signals through here rather than through the installer's stage,
+    // so without this key the screen goes on offering to finish setting up — and to
+    // delete — an environment that is already gone.
+    val installChanges by LinuxRuntime.installChanges.collectAsStateWithLifecycle()
+
+    val installed = remember(stage, installChanges) { LinuxRuntime.isInstalled(context) }
 
     // code-server is installed *before* the toolchain step, so "is code-server present?"
     // turns true partway through setup. Gating on `installing` too is what stops the
     // screen offering to open the IDE while apt is still working — starting the session
     // then races dpkg for its lock, and the session fails and bounces back here.
-    val ready = !installing && remember(stage) {
+    val ready = !installing && remember(stage, installChanges) {
         LinuxRuntime.isInstalled(context) && LinuxRuntime.isCodeServerInstalled(context)
     }
 
@@ -285,7 +292,14 @@ private fun StageView(stage: RootfsInstaller.Stage) {
 @Composable
 private fun BatteryHint(context: Context) {
     val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-    val exempt = remember { pm.isIgnoringBatteryOptimizations(context.packageName) }
+    // The user grants this in Settings, outside the app, so the answer is only ever
+    // stale here — re-read it on the way back rather than leaving the hint up forever.
+    var exempt by remember {
+        mutableStateOf(pm.isIgnoringBatteryOptimizations(context.packageName))
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        exempt = pm.isIgnoringBatteryOptimizations(context.packageName)
+    }
     if (exempt) return
 
     Row(

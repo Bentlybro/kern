@@ -57,7 +57,10 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
 
     var usage by remember { mutableStateOf<StorageManager.Usage?>(null) }
     var measuring by remember { mutableStateOf(true) }
+    // Two separate facts: `busy` is an operation still running and gates the buttons,
+    // `result` is what the last one said and outlives it.
     var busy by remember { mutableStateOf<String?>(null) }
+    var result by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
     var guestOs by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
@@ -202,7 +205,7 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
             )
 
             SectionTitle("Maintenance")
-            busy?.let {
+            (busy ?: result)?.let {
                 Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -211,7 +214,8 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
                     onClick = {
                         busy = "Cleaning up..."
                         scope.launch {
-                            busy = StorageManager.cleanUp(context)
+                            result = StorageManager.cleanUp(context)
+                            busy = null
                             refresh++
                         }
                     },

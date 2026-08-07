@@ -73,6 +73,12 @@ fun GitHubSection() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            is GitHubAuth.Account.Unavailable -> Text(
+                "Could not reach Linux — try again",
+                fontSize = 12.5.sp,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+
             is GitHubAuth.Account.ToolsMissing -> {
                 Text(
                     "Not installed: ${current.missing.joinToString(", ")}.",

@@ -59,7 +59,7 @@ object AgentRepository {
 
     suspend fun gitStatus(context: Context, projectPath: String): GitStatus {
         val script = """
-            cd '$projectPath' 2>/dev/null || exit 1
+            cd ${sq(projectPath)} 2>/dev/null || exit 1
             git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 2
             echo "BRANCH:${'$'}(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
             git status --porcelain 2>/dev/null
@@ -83,7 +83,7 @@ object AgentRepository {
     /** Unified diff of the working tree — the format that reads well at phone width. */
     suspend fun gitDiff(context: Context, projectPath: String, maxLines: Int = 400): List<String> {
         val script = """
-            cd '$projectPath' 2>/dev/null || exit 1
+            cd ${sq(projectPath)} 2>/dev/null || exit 1
             git --no-pager diff --no-color -U2
             git --no-pager diff --no-color -U2 --cached
         """.trimIndent()
@@ -94,24 +94,29 @@ object AgentRepository {
     }
 
     suspend fun gitCommitAll(context: Context, projectPath: String, message: String): String {
-        val msg = message.replace("'", "'\\''")
         val script = """
-            cd '$projectPath' 2>/dev/null || exit 1
+            cd ${sq(projectPath)} 2>/dev/null || exit 1
+            command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }
             git add -A 2>&1
-            git commit -m '$msg' 2>&1 | tail -n 3
+            git commit -m ${sq(message)} 2>&1 | tail -n 3
         """.trimIndent()
         val r = LinuxRuntime.run(context, script, timeoutMs = 60_000)
             ?: return "Timed out"
+        // Without this the cockpit's status text becomes "bash: line 3: git: command not found".
+        if (r.exitCode == 3) return "git is not installed yet — check Status."
         return r.stdout.split('\n').lastOrNull { it.isNotBlank() }?.trim()
             ?: r.stderr.take(140).ifBlank { "Committed" }
     }
 
     suspend fun gitPush(context: Context, projectPath: String): String {
-        val r = LinuxRuntime.run(
-            context,
-            "cd '$projectPath' 2>/dev/null && git push 2>&1 | tail -n 3",
-            timeoutMs = 120_000,
-        ) ?: return "Timed out"
+        val script = """
+            cd ${sq(projectPath)} 2>/dev/null || exit 1
+            command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }
+            git push 2>&1 | tail -n 3
+        """.trimIndent()
+        val r = LinuxRuntime.run(context, script, timeoutMs = 120_000)
+            ?: return "Timed out"
+        if (r.exitCode == 3) return "git is not installed yet — check Status."
         return (r.stdout + r.stderr).split('\n').lastOrNull { it.isNotBlank() }?.trim()
             ?: "Pushed"
     }

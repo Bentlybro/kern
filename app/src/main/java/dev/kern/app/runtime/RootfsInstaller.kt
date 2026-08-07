@@ -152,7 +152,7 @@ object RootfsInstaller {
                     if (!archive.exists() || archive.length() < 20L * 1024 * 1024) {
                         _stage.value = Stage.Downloading("Ubuntu base", 0, 0)
                         logLine("Downloading Ubuntu $UBUNTU_RELEASE base image")
-                        LinuxRuntime.download(ROOTFS_URL, archive) { got, total ->
+                        download(ROOTFS_URL, archive) { got, total ->
                             _stage.value = Stage.Downloading("Ubuntu base", got, total)
                         }
                     }
@@ -251,7 +251,7 @@ object RootfsInstaller {
         if (target.exists() && target.length() > 100L * 1024 * 1024) return true
         var reported = -1
         return runCatching {
-            LinuxRuntime.download(CODE_SERVER_URL, target) { got, total ->
+            download(CODE_SERVER_URL, target) { got, total ->
                 if (total > 0) {
                     val percent = (got * 100 / total).toInt()
                     // Every 10%: often enough to look alive, rarely enough to read.

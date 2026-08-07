@@ -172,7 +172,7 @@ object AgentRepository {
     }
 
     private fun addLine(raw: String) {
-        val clean = ANSI.replace(raw, "").trimEnd()
+        val clean = strip(raw).trimEnd()
         if (clean.isBlank() && buffer.lastOrNull()?.isBlank() == true) return
         buffer.addLast(clean)
         while (buffer.size > BUFFER_LINES) buffer.removeFirst()
@@ -182,30 +182,45 @@ object AgentRepository {
         synchronized(lock) { addLine(line) }
     }
 
+    // ---- turning terminal output into readable text -------------------------
+
     /**
-     * Colour and cursor control, which read as noise once the pane is native.
+     * ESC and BEL, built from their code points rather than written into the source.
      *
-     * Every branch is anchored on ESC, and ESC is written as `` rather than typed
-     * literally so the source stays greppable and free of invisible bytes.
+     * Typed literally they are invisible bytes: impossible to see when reading the file,
+     * easy to lose when editing it, and they make the whole declaration awkward to patch.
+     * Constructing them here keeps this file plain ASCII while the pattern below still
+     * matches the real control characters at runtime.
+     */
+    private val ESC = 27.toChar()
+    private val BEL = 7.toChar()
+
+    /**
+     * Escape sequences, which read as noise once the pane is native.
      *
-     * An earlier version matched `[…m` *without* requiring the escape in front of it.
-     * That stripped the visible half of each sequence and left every bare ESC in place,
-     * which is why Python's `>>>` prompt arrived as `=>>>`: the stray was the ESC of a
-     * two-character `ESC =` keypad-mode sequence, which has no `[` to match on at all.
+     * Every branch is anchored on ESC. An earlier version matched only CSI — `ESC [ …` —
+     * which is why Python's `>>>` prompt arrived as `=>>>`: readline also emits `ESC =`
+     * to switch the keypad into application mode, a two-character sequence with no
+     * bracket to match on, so the escape passed through invisibly and left its `=` behind.
      */
     private val ANSI = Regex(
         // CSI: ESC [ … final byte. ESC[0m, ESC[?2004h, ESC[2K and friends.
-        "\\[[0-9;?:<>=!]*[@-~]" +
+        "${ESC}\\[[0-9;?:<>=!]*[@-~]" +
             // OSC: ESC ] … BEL, used for window titles.
-            "|\\][^]*" +
+            "|${ESC}\\][^${BEL}]*${BEL}" +
             // Character set selection, e.g. ESC ( B.
-            "|[()][AB0-2]" +
+            "|${ESC}[()][AB0-2]" +
             // Two-character sequences: ESC =, ESC >, ESC M, ESC 7 …
-            "|[=><78MNOcDEHZ]" +
-            // Anything left over, including a lone ESC. Tab, newline and carriage return
-            // are deliberately excluded — they carry meaning.
-            "|[ --]",
+            "|${ESC}[=><78MNOcDEHZ]",
     )
+
+    /**
+     * Drop escape sequences, then anything else unprintable that survived — including a
+     * lone ESC from a sequence this does not know. Tab is kept because it carries layout,
+     * and newline and carriage return never reach here: [absorb] has already split on them.
+     */
+    private fun strip(raw: String): String =
+        ANSI.replace(raw, "").filter { it >= ' ' || it == '\t' }
 
     // ---- what the cockpit reads ---------------------------------------------
 
@@ -229,8 +244,8 @@ object AgentRepository {
 
     /** The agent's recent output. */
     fun capture(lines: Int = 40): List<String> = synchronized(lock) {
-        val extra = pending.toString().let { if (it.isBlank()) null else ANSI.replace(it, "") }
-        val all = if (extra == null) buffer.toList() else buffer.toList() + extra
+        val partial = pending.toString().let { if (it.isBlank()) null else strip(it) }
+        val all = if (partial == null) buffer.toList() else buffer.toList() + partial
         all.takeLast(lines)
     }
 

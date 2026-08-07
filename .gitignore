@@ -8,3 +8,6 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+
+# Device screenshots - debugging output, not source
+tools/shots/

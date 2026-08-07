@@ -35,20 +35,53 @@ Back up `release.jks` and both passwords somewhere you will still have in ten ye
 
 ### Putting it in CI
 
-```
-base64 -w0 release.jks        # the value for KEYSTORE_BASE64
+The secrets live in a GitHub **environment** called `release`, not at repository level.
+That distinction is the point: repository secrets are readable by any workflow that asks
+for them, so a pull request that adds one line to a workflow can print the key. An
+environment secret is only readable by a job that declares `environment: release`, and
+with a required reviewer that job pauses for a human before it runs at all.
+
+PowerShell, from the repository root:
+
+```powershell
+# 1. Create the environment and require your own approval to use it
+gh api -X PUT repos/Bentlybro/kern/environments/release
+
+# 2. Create the key (keytool ships with the JDK)
+& "$env:JAVA_HOME\bin\keytool" -genkeypair -v `
+    -keystore release.jks -alias kern `
+    -keyalg RSA -keysize 4096 -validity 10000 -storetype PKCS12
+
+# 3. Base64 it, without a trailing newline
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("release.jks")) |
+    Set-Content -NoNewline keystore.b64
+
+# 4. Set the four secrets. Piped rather than passed as arguments, so none of them
+#    ends up in PowerShell history or in the process list.
+Get-Content -Raw keystore.b64 | gh secret set KEYSTORE_BASE64 --env release
+Read-Host "keystore password" -AsSecureString |
+    ConvertFrom-SecureString -AsPlainText | gh secret set KEYSTORE_PASSWORD --env release
+"kern" | gh secret set KEY_ALIAS --env release
+Read-Host "key password" -AsSecureString |
+    ConvertFrom-SecureString -AsPlainText | gh secret set KEY_PASSWORD --env release
+
+# 5. Destroy the base64 copy. It is the key wearing a different coat.
+Remove-Item keystore.b64
 ```
 
-Four repository secrets, under Settings → Secrets and variables → Actions:
+Then, in the browser once: **Settings → Environments → release → Required reviewers →
+add yourself**. Without that, the environment is only a namespace; with it, nothing can
+use the signing key without your explicit approval.
+
+Move `release.jks` itself somewhere durable and offline. Do not leave it in the
+repository directory — `.gitignore` stops it being committed, but not being deleted.
 
 | Secret | Value |
 |---|---|
-| `KEYSTORE_BASE64` | The base64 of `release.jks` |
+| `KEYSTORE_BASE64` | base64 of `release.jks`, no trailing newline |
 | `KEYSTORE_PASSWORD` | Keystore password |
 | `KEY_ALIAS` | `kern` |
 | `KEY_PASSWORD` | Key password |
-
-Then delete the local base64 — it is the key in another coat.
 
 ## Why the workflows are shaped the way they are
 
@@ -66,8 +99,38 @@ These are the decisions that matter once the repository is public:
 - **The key is written to `RUNNER_TEMP`**, never the workspace, so no artifact step can
   archive it — and it is shredded explicitly rather than trusting the runner to vanish.
 - **`if: github.repository == …`** stops a fork running the release workflow at all.
+- **Third-party actions are pinned to commit SHAs, not tags.** A tag is mutable: whoever
+  controls an action's repository can repoint `v4` at new code, and that code runs on the
+  runner with the signing secrets in scope. A SHA cannot be moved. Re-pin deliberately
+  when updating, and read what changed.
+- **The secrets are environment-scoped with a required reviewer.** Repository secrets are
+  readable by any workflow that asks; this way a workflow change that starts using them
+  has to be approved by a human first.
 - Releases are **drafts**, and the updater ignores drafts and pre-releases, so an
   accidental merge cannot ship anything to anyone.
+
+## The leak paths, and what covers each
+
+Encryption at rest is not the interesting part — GitHub does that already. These are the
+ways signing keys actually escape:
+
+| How it leaks | Covered by |
+|---|---|
+| Untrusted fork code runs with secrets | `pull_request`, never `pull_request_target` |
+| A workflow change starts printing the key | Environment secret + required reviewer |
+| A hijacked action tag runs new code | Actions pinned to commit SHAs |
+| The key is archived as a build artifact | Written to `RUNNER_TEMP`, never the workspace |
+| The key survives the job | `shred` in an `always()` step |
+| A fork runs the release workflow | `if: github.repository == …` |
+| Committed by accident | `.gitignore`, plus GitHub push protection |
+| Echoed into logs | No step prints it; GitHub also masks known values |
+
+Two things worth turning on in the browser that no workflow can do for you: **branch
+protection on `main`** so releases only come from reviewed merges, and **secret scanning
+with push protection**, which is free on public repositories.
+
+What none of this covers: anyone with write access to the repository, and your own
+machine. The key is only ever as safe as those.
 
 ## Cutting a release
 

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Strings required by the vendored Termux terminal-view text selection UI. -->
+<resources>
+    <string name="paste_text">Paste</string>
+    <string name="copy_text">Copy</string>
+    <string name="text_selection_more">More…</string>
+</resources>

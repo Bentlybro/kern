@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FoldCode</string>
+    <string name="notif_channel_session">IDE session</string>
+    <string name="notif_session_title">FoldCode session</string>
+    <string name="notif_action_stop">Stop session</string>
+</resources>

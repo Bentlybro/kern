@@ -1,0 +1,94 @@
+package dev.foldcode.app.runtime
+
+import android.os.ParcelFileDescriptor
+import java.io.FileInputStream
+import java.io.FileOutputStream
+
+/** JNI bindings for the app's own pseudo-terminal (see cpp/pty.c). */
+object Pty {
+    init {
+        System.loadLibrary("foldcode_pty")
+    }
+
+    /** @return the pty master fd, or -1 on failure. Writes the child pid into [pidOut]. */
+    @JvmStatic
+    external fun createSubprocess(
+        command: String,
+        argv: Array<String>,
+        envp: Array<String>,
+        cwd: String?,
+        columns: Int,
+        rows: Int,
+        pidOut: IntArray,
+    ): Int
+
+    @JvmStatic
+    external fun setWindowSize(fd: Int, columns: Int, rows: Int)
+
+    /** Blocks until the child exits; returns its exit code, or -signal if killed. */
+    @JvmStatic
+    external fun waitFor(pid: Int): Int
+
+    /** SIGHUP+SIGKILL the child's process group (it is its own session leader). */
+    @JvmStatic
+    external fun killProcessGroup(pid: Int)
+
+    @JvmStatic
+    external fun closeFd(fd: Int)
+}
+
+/**
+ * A running child on a pty. Owns the fd; [close] tears down both the process and the fd.
+ */
+class PtyProcess private constructor(
+    val fd: Int,
+    val pid: Int,
+) {
+    private val parcel: ParcelFileDescriptor = ParcelFileDescriptor.adoptFd(fd)
+    val input: FileInputStream = FileInputStream(parcel.fileDescriptor)
+    val output: FileOutputStream = FileOutputStream(parcel.fileDescriptor)
+
+    // Kotlin already exposes getInput()/getOutput()/getPid() to Java from the properties
+    // above, which is what the vendored terminal code calls.
+
+    fun resize(columns: Int, rows: Int) {
+        if (fd >= 0) Pty.setWindowSize(fd, columns, rows)
+    }
+
+    fun waitFor(): Int = Pty.waitFor(pid)
+
+    fun close() {
+        // Kill the group, not just proot: otherwise the guest's children survive.
+        runCatching { Pty.killProcessGroup(pid) }
+        runCatching { parcel.close() }
+    }
+
+    companion object {
+        /**
+         * Spawn [command] on a fresh pty.
+         *
+         * @param env environment as a map; converted to the `KEY=value` form execve wants.
+         */
+        fun spawn(
+            command: String,
+            argv: List<String>,
+            env: Map<String, String>,
+            cwd: String? = null,
+            columns: Int = 80,
+            rows: Int = 24,
+        ): PtyProcess? {
+            val pidOut = IntArray(1)
+            val fd = Pty.createSubprocess(
+                command,
+                argv.toTypedArray(),
+                env.map { "${it.key}=${it.value}" }.toTypedArray(),
+                cwd,
+                columns,
+                rows,
+                pidOut,
+            )
+            if (fd < 0) return null
+            return PtyProcess(fd, pidOut[0])
+        }
+    }
+}

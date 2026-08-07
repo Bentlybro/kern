@@ -36,7 +36,7 @@ object RootfsInstaller {
      * sources.list, and the two drifting apart produces a rootfs that cannot install
      * anything.
      */
-    private const val UBUNTU_RELEASE = "26.04"
+    const val UBUNTU_RELEASE = "26.04"
     private const val UBUNTU_CODENAME = "resolute"
     private const val ROOTFS_URL =
         "https://cdimage.ubuntu.com/ubuntu-base/releases/$UBUNTU_RELEASE/release/" +

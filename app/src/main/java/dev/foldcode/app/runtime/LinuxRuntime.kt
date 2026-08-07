@@ -65,6 +65,14 @@ object LinuxRuntime {
     fun isCodeServerInstalled(context: Context): Boolean =
         File(rootfsDir(context), "usr/bin/code-server").exists()
 
+    /** How the guest describes itself, e.g. "Ubuntu 26.04 LTS". */
+    suspend fun osPrettyName(context: Context): String? =
+        run(
+            context,
+            ". /etc/os-release 2>/dev/null; echo \"\$PRETTY_NAME\"",
+            timeoutMs = 25_000,
+        )?.stdout?.trim()?.takeIf { it.isNotBlank() }
+
     fun prootEnv(context: Context): Map<String, String> {
         val nativeLib = nativeLibDir(context)
         return mapOf(

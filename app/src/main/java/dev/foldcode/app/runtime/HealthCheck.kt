@@ -16,9 +16,17 @@ object HealthCheck {
 
     /**
      * A one-tap remedy. Anything the app can do itself belongs here rather than in
-     * [Item.fix] — a command to copy is not a fix on a device with no keyboard.
+     * [Item.fix] — a command to copy is not a fix on a device with no keyboard, and
+     * neither is a button that only takes you somewhere else.
      */
-    enum class Remedy { OpenSettings, BatterySettings }
+    sealed interface Remedy {
+        /** Install these packages in the guest, in place, then re-run the checks. */
+        data class Install(val packages: List<String>) : Remedy
+        /** Hand off to settings, for anything needing more than one decision. */
+        data object OpenSettings : Remedy
+        /** Android's own battery settings, which only the user can change. */
+        data object BatterySettings : Remedy
+    }
 
     data class Item(
         val name: String,
@@ -111,23 +119,57 @@ object HealthCheck {
         val missingRequired = missing.filter { it in required }
 
         return when {
-            missingRequired.isNotEmpty() -> Item(
+            // code-server does not come from apt — it is a .deb the app downloads — so a
+            // missing one means the install itself is broken, and Repair is the answer.
+            "code-server" in missingRequired -> Item(
                 "Toolchain",
                 Level.Fail,
                 "Missing: ${missingRequired.joinToString(", ")}.",
                 remedy = Remedy.OpenSettings,
+                remedyLabel = "Repair",
+            )
+            missingRequired.isNotEmpty() -> Item(
+                "Toolchain",
+                Level.Fail,
+                "Missing: ${missingRequired.joinToString(", ")}.",
+                remedy = Remedy.Install(packagesFor(missingRequired)),
                 remedyLabel = "Install",
             )
             missing.isNotEmpty() -> Item(
                 "Toolchain",
                 Level.Ok,
                 "Core tools present. Not installed: ${missing.joinToString(", ")}.",
-                remedy = Remedy.OpenSettings,
+                remedy = Remedy.Install(packagesFor(missing)),
                 remedyLabel = "Install",
             )
             else -> Item("Toolchain", Level.Ok, "All tools present.")
         }
     }
+
+    /**
+     * The checks look for binaries, but apt wants package names, and for two of them
+     * those differ — `node` lives in `nodejs`, `rg` in `ripgrep`. Installing by binary
+     * name would simply fail to find the package.
+     */
+    private fun packagesFor(binaries: List<String>): List<String> =
+        binaries.map { PACKAGE_FOR[it] ?: it }
+
+    private val PACKAGE_FOR = mapOf(
+        "node" to "nodejs",
+        "rg" to "ripgrep",
+    )
+
+    /** Run an [Remedy.Install]. Returns true when every requested binary is present. */
+    suspend fun install(context: Context, packages: List<String>): Boolean =
+        withContext(Dispatchers.IO) {
+            LinuxRuntime.run(context, "apt-get update -qq", timeoutMs = 300_000)
+            val result = LinuxRuntime.run(
+                context,
+                "apt-get install -y ${packages.joinToString(" ")}",
+                timeoutMs = 1_200_000,
+            )
+            result?.ok == true
+        }
 
     /**
      * Whether the guest can actually reach GitHub. Cloning a public repository works
@@ -140,8 +182,10 @@ object HealthCheck {
                 "GitHub",
                 Level.Warn,
                 "Needs ${account.missing.joinToString(", ")}.",
-                remedy = Remedy.OpenSettings,
-                remedyLabel = "Set up",
+                // Install here; signing in is a separate decision and gets its own
+                // button once the tools are actually present.
+                remedy = Remedy.Install(packagesFor(account.missing)),
+                remedyLabel = "Install",
             )
             is GitHubAuth.Account.SignedOut -> Item(
                 "GitHub",

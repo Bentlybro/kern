@@ -31,7 +31,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,9 +52,12 @@ import dev.foldcode.app.runtime.UsageTracker
 @Composable
 fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<HealthCheck.Item>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var refresh by remember { mutableIntStateOf(0) }
+    /** Packages currently being installed, or null when idle. */
+    var installing by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(refresh) {
         loading = true
@@ -100,6 +105,29 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
             }
         }
 
+        // apt can run for minutes, so say what is happening rather than leaving a
+        // disabled button and no explanation.
+        installing?.let { what ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "Installing $what... this can take a few minutes.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+
         LazyColumn(Modifier.fillMaxSize()) {
             items(items) { item ->
                 Row(
@@ -144,8 +172,17 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                         // a phone keyboard, which is not a fix.
                         item.remedy?.let { remedy ->
                             TextButton(
+                                enabled = installing == null,
                                 onClick = {
                                     when (remedy) {
+                                        is HealthCheck.Remedy.Install -> {
+                                            installing = remedy.packages.joinToString(", ")
+                                            scope.launch {
+                                                HealthCheck.install(context, remedy.packages)
+                                                installing = null
+                                                refresh++
+                                            }
+                                        }
                                         HealthCheck.Remedy.OpenSettings -> onOpenSettings()
                                         HealthCheck.Remedy.BatterySettings -> runCatching {
                                             context.startActivity(

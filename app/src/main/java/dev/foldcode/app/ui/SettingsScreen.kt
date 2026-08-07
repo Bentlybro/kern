@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.foldcode.app.runtime.LinuxRuntime
 import dev.foldcode.app.runtime.RootfsInstaller
 import dev.foldcode.app.runtime.StorageManager
 import kotlinx.coroutines.launch
@@ -58,6 +59,7 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
     var measuring by remember { mutableStateOf(true) }
     var busy by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var guestOs by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
     val installerStage by RootfsInstaller.stage.collectAsStateWithLifecycle()
 
@@ -66,6 +68,8 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
         usage = StorageManager.measure(context)
         measuring = false
     }
+
+    LaunchedEffect(refresh) { guestOs = LinuxRuntime.osPrettyName(context) }
 
     Column(
         modifier = Modifier
@@ -104,6 +108,35 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
         ) {
             SectionTitle("GitHub")
             GitHubSection()
+
+            SectionTitle("Linux")
+            when (val name = guestOs) {
+                null -> Text(
+                    "Checking...",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                else -> {
+                    Text(
+                        name,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    // An environment set up by an older build stays on the release it
+                    // was built from; say so, rather than leaving the version looking
+                    // like a bug.
+                    if (!name.contains(RootfsInstaller.UBUNTU_RELEASE)) {
+                        Text(
+                            "New setups now use Ubuntu ${RootfsInstaller.UBUNTU_RELEASE}. " +
+                                "Existing environments are left alone, so this one stays " +
+                                "as it is - delete it below and run setup again to move " +
+                                "over. Push anything in ~/projects first.",
+                            fontSize = 11.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
 
             SectionTitle("Storage")
 

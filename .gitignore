@@ -18,3 +18,8 @@ tools/shots/
 keystore.properties
 key.properties
 release-key*
+
+# One-time signing setup, deliberately not committed. It holds no secrets, but a script
+# that walks the key material has no business being a permanent fixture - and its absence
+# is a reminder that this is a once-ever operation. See docs/17-releases.md.
+tools/setup-signing.ps1

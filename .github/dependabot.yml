@@ -8,17 +8,33 @@ updates:
   # only thing that keeps pinning from quietly rotting.
   - package-ecosystem: github-actions
     directory: /
+    # Onto dev, not main. main is protected and releases from it, so it should only ever
+    # receive reviewed merges through the normal flow rather than a robot opening ten
+    # pull requests directly against it.
+    target-branch: dev
     schedule:
       interval: weekly
     commit-message:
       prefix: ci
     labels:
       - dependencies
+    # One pull request for all of them. Ungrouped, the first run opened ten at once,
+    # which is the fastest way to make dependency updates something you close unread.
+    # It also keeps actions that must move together — codeql-action/init and
+    # codeql-action/analyze — in the same change, where splitting them just fails.
+    groups:
+      actions:
+        patterns:
+          - '*'
 
   # Monthly rather than weekly: this project has a handful of dependencies, and a stream
   # of patch bumps on an Android project is mostly noise that trains you to ignore it.
   - package-ecosystem: gradle
     directory: /
+    # Onto dev, not main. main is protected and releases from it, so it should only ever
+    # receive reviewed merges through the normal flow rather than a robot opening ten
+    # pull requests directly against it.
+    target-branch: dev
     schedule:
       interval: monthly
     commit-message:
@@ -26,3 +42,11 @@ updates:
     labels:
       - dependencies
     open-pull-requests-limit: 5
+    groups:
+      # Minor and patch bumps arrive together and are usually safe to take as a batch.
+      # Majors stay separate on purpose: AGP 9 and Gradle 9 are migrations, not updates,
+      # and burying them in a group of twelve is how they get merged without being read.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch

@@ -54,6 +54,13 @@ jobs:
         with:
           languages: java-kotlin
           build-mode: manual
+          config: |
+            paths-ignore:
+              # Termux's terminal emulator and view, carried verbatim and deliberately
+              # not modified so it stays mergeable with upstream. Findings here are
+              # theirs to fix, and every one we cannot act on trains us to ignore the
+              # list — which is how a scanner stops being useful.
+              - app/src/main/java/com/termux
 
       # Built explicitly rather than by autobuild: this is an Android project with an NDK
       # step, and assembleDebug is the build we actually care about.

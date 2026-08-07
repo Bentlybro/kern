@@ -35,7 +35,18 @@ object LinuxRuntime {
 
     fun tmpDir(context: Context): File = File(context.filesDir, "tmp").apply { mkdirs() }
 
-    private fun l2sDir(context: Context): File = File(context.filesDir, "l2s").apply { mkdirs() }
+    /**
+     * Where PRoot parks the real file behind each translated hard link.
+     *
+     * This must live *inside* the rootfs. PRoot replaces a hard link with a symlink
+     * pointing here, and that target is later resolved from inside the guest — so a
+     * directory outside the rootfs produces a dangling link. It fails in a thoroughly
+     * misleading way: `dpkg` unpacks perl-base, chowns `perl5.38.2.dpkg-new` (a hard
+     * link to `perl`), and chown follows the broken symlink to report
+     * "No such file or directory" about a file that is plainly there.
+     */
+    private fun l2sDir(context: Context): File =
+        File(rootfsDir(context), ".l2s").apply { mkdirs() }
 
     private fun nativeLibDir(context: Context): File = File(context.applicationInfo.nativeLibraryDir)
 

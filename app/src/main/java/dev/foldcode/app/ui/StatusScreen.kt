@@ -1,7 +1,10 @@
 package dev.foldcode.app.ui
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -132,10 +135,37 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                             Text(
                                 it,
                                 fontSize = 11.5.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 2.dp),
                             )
+                        }
+                        // Anything the app can fix itself gets a button. Printing the
+                        // shell command instead would be asking the user to type it on
+                        // a phone keyboard, which is not a fix.
+                        item.remedy?.let { remedy ->
+                            TextButton(
+                                onClick = {
+                                    when (remedy) {
+                                        HealthCheck.Remedy.OpenSettings -> onOpenSettings()
+                                        HealthCheck.Remedy.BatterySettings -> runCatching {
+                                            context.startActivity(
+                                                Intent(
+                                                    Settings
+                                                        .ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
+                                                ),
+                                            )
+                                        }
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                modifier = Modifier.height(30.dp),
+                            ) {
+                                Text(
+                                    item.remedyLabel ?: "Fix",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.5.sp,
+                                )
+                            }
                         }
                     }
                 }

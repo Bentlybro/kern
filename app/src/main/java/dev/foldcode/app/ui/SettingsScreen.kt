@@ -102,6 +102,9 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            SectionTitle("GitHub")
+            GitHubSection()
+
             SectionTitle("Storage")
 
             if (measuring) {

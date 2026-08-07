@@ -59,7 +59,8 @@ function Connect-Device {
 
 function Invoke-Adb {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$AdbArgs)
-    & $Adb -s $Device @AdbArgs
+    $all = @('-s', $Device) + $AdbArgs
+    & $Adb @all
 }
 
 <#
@@ -135,9 +136,11 @@ switch ($Command) {
         $name = if ($Args -and $Args[0]) { $Args[0] } else { 'shot' }
         New-Item -ItemType Directory -Force $ShotDir | Out-Null
         $dest = Join-Path $ShotDir "$name.png"
-        Invoke-Adb shell screencap -p /sdcard/_fc_shot.png
+        # Quoted as one string on purpose: passed as separate tokens, PowerShell claims
+        # the leading -p as one of its own parameters and screencap writes nothing.
+        Invoke-Adb shell "screencap -p /sdcard/_fc_shot.png"
         Invoke-Adb pull /sdcard/_fc_shot.png $dest | Out-Null
-        Invoke-Adb shell rm -f /sdcard/_fc_shot.png
+        Invoke-Adb shell "rm -f /sdcard/_fc_shot.png"
         $dest
     }
 
@@ -168,21 +171,34 @@ switch ($Command) {
         } | Format-List
     }
 
-    # Run a command INSIDE the Linux guest, using the app's own PRoot.
-    # Only works while the app is installed; runs as the shell user, so it is for
-    # inspection rather than for driving the app's own session.
+    # Run a command INSIDE the Linux guest, using the app's own PRoot and rootfs.
+    #
+    # The rootfs lives in app-private storage, so this goes through `run-as` to borrow
+    # the app's uid. The command travels as base64 and is decoded into the guest's own
+    # /tmp on the device: written literally it would cross five levels of quoting
+    # (PowerShell, adb, sh, run-as, bash) and any quote or $ would be mangled on the way.
+    #
+    # -l is --link2symlink and is mandatory: SELinux forbids hard links in app storage,
+    # and dpkg depends on them.
     'guest' {
         Connect-Device
         if (-not $Args) { throw "Usage: device.ps1 guest '<command>'" }
-        $lib = Get-NativeLibDir
-        $inner = ($Args -join ' ').Replace("'", "'\''")
-        $env = "LD_LIBRARY_PATH=$lib PROOT_LOADER=$lib/libproot_loader.so " +
-               "PROOT_TMP_DIR=/data/local/tmp " +
-               "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin " +
-               "HOME=/root TERM=xterm-256color LANG=C.UTF-8"
-        # -l is --link2symlink and is mandatory: SELinux forbids hard links in app
-        # storage, and dpkg depends on them.
-        Invoke-Adb shell "$env $lib/libproot.so -0 -l -r /data/local/tmp/guest -b /proc -b /dev -w /root /bin/bash -c '$inner'"
+        $lib   = Get-NativeLibDir
+        $data  = "/data/data/$Pkg/files"
+        $b64   = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($Args -join ' ')))
+        $vars  = "LD_LIBRARY_PATH=$lib PROOT_LOADER=$lib/libproot_loader.so " +
+                 "PROOT_LOADER32=$lib/libproot_loader32.so " +
+                 "PROOT_TMP_DIR=$data/tmp PROOT_L2S_DIR=$data/linux/.l2s " +
+                 "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin " +
+                 "HOME=/root USER=root TERM=xterm-256color LANG=C.UTF-8 TMPDIR=/tmp"
+        # Only base64 and fixed paths end up in this string, so it never contains a
+        # quote of its own and can be single-quoted for the device shell safely.
+        $remote = "mkdir -p $data/tmp $data/l2s $data/linux/tmp; " +
+                  "echo $b64 | base64 -d > $data/linux/tmp/fc-guest.sh; " +
+                  "$vars exec $lib/libproot.so -0 -l -r $data/linux " +
+                  "-b /proc -b /sys -b /dev -b /dev/pts -w /root " +
+                  "/bin/bash /tmp/fc-guest.sh"
+        Invoke-Adb shell "run-as $Pkg sh -c '$remote'"
     }
 
     'proot' {

@@ -14,11 +14,20 @@ object HealthCheck {
 
     enum class Level { Ok, Warn, Fail }
 
+    /**
+     * A one-tap remedy. Anything the app can do itself belongs here rather than in
+     * [Item.fix] — a command to copy is not a fix on a device with no keyboard.
+     */
+    enum class Remedy { OpenSettings, BatterySettings }
+
     data class Item(
         val name: String,
         val level: Level,
         val detail: String,
+        /** Explanatory text for things only the user can resolve. */
         val fix: String? = null,
+        val remedy: Remedy? = null,
+        val remedyLabel: String? = null,
     )
 
     suspend fun runAll(context: Context): List<Item> = withContext(Dispatchers.IO) {
@@ -41,6 +50,7 @@ object HealthCheck {
 
         items += guestItem(context)
         items += toolchainItem(context)
+        items += githubItem(context)
 
         items += Item(
             "Background processes",
@@ -105,17 +115,47 @@ object HealthCheck {
                 "Toolchain",
                 Level.Fail,
                 "Missing: ${missingRequired.joinToString(", ")}.",
-                "apt install ${missingRequired.joinToString(" ")}",
+                remedy = Remedy.OpenSettings,
+                remedyLabel = "Install",
             )
             missing.isNotEmpty() -> Item(
                 "Toolchain",
                 Level.Ok,
                 "Core tools present. Not installed: ${missing.joinToString(", ")}.",
-                "apt install ${missing.joinToString(" ")}",
+                remedy = Remedy.OpenSettings,
+                remedyLabel = "Install",
             )
             else -> Item("Toolchain", Level.Ok, "All tools present.")
         }
     }
+
+    /**
+     * Whether the guest can actually reach GitHub. Cloning a public repository works
+     * without this; pushing anything does not, so it is worth saying out loud rather
+     * than letting the first `git push` of a session be the thing that discovers it.
+     */
+    private suspend fun githubItem(context: Context): Item =
+        when (val account = GitHubAuth.account(context)) {
+            is GitHubAuth.Account.ToolsMissing -> Item(
+                "GitHub",
+                Level.Warn,
+                "Needs ${account.missing.joinToString(", ")}.",
+                remedy = Remedy.OpenSettings,
+                remedyLabel = "Set up",
+            )
+            is GitHubAuth.Account.SignedOut -> Item(
+                "GitHub",
+                Level.Warn,
+                "Not signed in - you can clone public repositories but not push.",
+                remedy = Remedy.OpenSettings,
+                remedyLabel = "Sign in",
+            )
+            is GitHubAuth.Account.SignedIn -> Item(
+                "GitHub",
+                Level.Ok,
+                "Signed in as ${account.login}.",
+            )
+        }
 
     /**
      * 16 KB-page kernels break some prebuilt binaries; read it from the platform because
@@ -141,7 +181,8 @@ object HealthCheck {
                 "Battery",
                 Level.Warn,
                 "Android may suspend the session when the screen is off.",
-                "Allow unrestricted battery use in app settings.",
+                remedy = Remedy.BatterySettings,
+                remedyLabel = "Allow",
             )
         }
     }

@@ -98,12 +98,15 @@ object RootfsInstaller {
             }
 
             _stage.value = Stage.Working("Installing tools")
-            // git and tmux are load-bearing (clone flow, session persistence); the rest
-            // just make the IDE useful straight away. Idempotent, so it is safe to
-            // re-run when setup is resumed.
+            // git, gh and tmux are load-bearing: cloning and pushing, signing in to
+            // GitHub, and session persistence. ca-certificates is too — without a trust
+            // store, anything speaking TLS from Go (gh) or curl fails with
+            // "certificate signed by unknown authority". The rest just make the IDE
+            // useful straight away. Idempotent, so re-running repairs a partial setup.
             LinuxRuntime.run(
                 context,
-                "apt-get install -y git tmux curl ca-certificates ripgrep python3 python3-pip",
+                "apt-get install -y ca-certificates git gh tmux curl ripgrep " +
+                    "python3 python3-pip && update-ca-certificates",
                 timeoutMs = 1_200_000,
             )
 
@@ -201,6 +204,10 @@ object RootfsInstaller {
                 "deb http://ports.ubuntu.com/ubuntu-ports $it main universe restricted multiverse"
             } + "\n",
         )
+        // 24.04 also ships the same repositories in deb822 form. Leaving both in place
+        // makes apt warn about every target being configured twice, so the one we do
+        // not control goes; the list written above covers the same components.
+        runCatching { File(root, "etc/apt/sources.list.d/ubuntu.sources").delete() }
         write(
             File(root, "etc/apt/apt.conf.d/99foldcode"),
             buildString {

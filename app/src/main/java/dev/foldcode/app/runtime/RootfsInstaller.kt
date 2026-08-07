@@ -3,7 +3,11 @@ package dev.foldcode.app.runtime
 import android.content.Context
 import android.util.Log
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -57,6 +61,32 @@ object RootfsInstaller {
 
     private val _stage = MutableStateFlow<Stage>(Stage.Idle)
     val stage: StateFlow<Stage> = _stage.asStateFlow()
+
+    /**
+     * Setup runs in this scope rather than a caller's.
+     *
+     * A composable's scope dies with the composable, and the setup screen is replaced as
+     * soon as the environment starts to look usable — code-server is installed before the
+     * toolchain, so that happens *during* setup. Running the install in the screen's own
+     * scope therefore cancelled it partway and left a guest with code-server and none of
+     * the tools, which is exactly what a half-finished setup looks like.
+     */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    @Volatile
+    private var job: Job? = null
+
+    val isRunning: Boolean get() = job?.isActive == true
+
+    /**
+     * Begin setup unless it is already running. Safe to call repeatedly — [install] is
+     * idempotent, so this doubles as the resume path for a setup that was interrupted.
+     */
+    fun start(context: Context) {
+        if (isRunning) return
+        val app = context.applicationContext
+        job = scope.launch { install(app) }
+    }
 
     /**
      * Roughly how much this will cost the user, shown before they commit. Measured on

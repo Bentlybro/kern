@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.foldcode.app.runtime.LinuxRuntime
 import dev.foldcode.app.runtime.RootfsInstaller
+import dev.foldcode.app.runtime.StorageManager
 import dev.foldcode.app.session.SessionState
 import kotlinx.coroutines.launch
 
@@ -51,12 +52,26 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val stage by RootfsInstaller.stage.collectAsStateWithLifecycle()
+    var confirmReset by remember { mutableStateOf(false) }
+
+    /**
+     * Whether setup is still running. Read from the installer itself, not from local
+     * state: setup outlives this screen, and a flag held here would be lost the moment
+     * the screen was recomposed — offering to start a second install over the first.
+     */
+    val installing = RootfsInstaller.isRunning ||
+        stage is RootfsInstaller.Stage.Downloading ||
+        stage is RootfsInstaller.Stage.Working
 
     val installed = remember(stage) { LinuxRuntime.isInstalled(context) }
-    val ready = remember(stage) {
+
+    // code-server is installed *before* the toolchain step, so "is code-server present?"
+    // turns true partway through setup. Gating on `installing` too is what stops the
+    // screen offering to open the IDE while apt is still working — starting the session
+    // then races dpkg for its lock, and the session fails and bounces back here.
+    val ready = !installing && remember(stage) {
         LinuxRuntime.isInstalled(context) && LinuxRuntime.isCodeServerInstalled(context)
     }
-    var busy by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -113,20 +128,14 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
             }
         } else {
             Button(
-                onClick = {
-                    busy = true
-                    scope.launch {
-                        RootfsInstaller.install(context)
-                        busy = false
-                    }
-                },
-                enabled = !busy && stage !is RootfsInstaller.Stage.Done,
+                onClick = { RootfsInstaller.start(context) },
+                enabled = !installing && stage !is RootfsInstaller.Stage.Done,
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth().height(54.dp),
             ) {
                 Text(
                     when {
-                        busy -> "Setting up…"
+                        installing -> "Setting up…"
                         installed -> "Finish setup"
                         else -> "Set up Linux"
                     },
@@ -136,13 +145,35 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
         }
 
         (stage as? RootfsInstaller.Stage.Failed)?.let {
-            TextButton(onClick = {
-                busy = true
-                scope.launch {
-                    RootfsInstaller.install(context)
-                    busy = false
+            TextButton(onClick = { RootfsInstaller.start(context) }) { Text("Retry") }
+        }
+
+        // Settings lives inside the IDE, so a guest too broken to start one leaves the
+        // user with no way to throw it away. An environment can be damaged beyond what
+        // re-running setup fixes — an interrupted apt can take coreutils with it, and
+        // then even `ls` is gone — so starting over has to be reachable from here.
+        if (installed && !installing) {
+            if (!confirmReset) {
+                TextButton(onClick = { confirmReset = true }) {
+                    Text("Delete and start over", color = MaterialTheme.colorScheme.error)
                 }
-            }) { Text("Retry") }
+            } else {
+                Text(
+                    "This deletes the Linux environment, including anything in " +
+                        "~/projects you have not pushed.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
+                        confirmReset = false
+                        scope.launch { StorageManager.deleteGuest(context) }
+                    }) {
+                        Text("Delete everything", color = MaterialTheme.colorScheme.error)
+                    }
+                    TextButton(onClick = { confirmReset = false }) { Text("Cancel") }
+                }
+            }
         }
     }
 }

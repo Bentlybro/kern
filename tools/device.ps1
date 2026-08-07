@@ -147,12 +147,15 @@ switch ($Command) {
     'logs' {
         Connect-Device
         $n = if ($Args -and $Args[0]) { [int]$Args[0] } else { 20 }
-        Invoke-Adb logcat -d -s 'FoldCode:*' 'FoldCodePty:*' | Select-Object -Last $n
+        # Built as an array: passed as loose tokens, PowerShell claims -d as one of its
+        # own parameters, logcat never gets it, and the command tails forever.
+        & $Adb @('-s', $Device, 'logcat', '-d', '-s', 'FoldCode:*', 'FoldCodePty:*') |
+            Select-Object -Last $n
     }
 
     'crash' {
         Connect-Device
-        Invoke-Adb logcat -d -b crash | Select-Object -Last 40
+        & $Adb @('-s', $Device, 'logcat', '-d', '-b', 'crash') | Select-Object -Last 40
     }
 
     'status' {

@@ -71,6 +71,11 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
 
     LaunchedEffect(refresh) { guestOs = LinuxRuntime.osPrettyName(context) }
 
+    // A repair now runs outside this screen's scope, so pick up its result when it lands.
+    LaunchedEffect(installerStage) {
+        if (installerStage is RootfsInstaller.Stage.Done) refresh++
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -207,17 +212,12 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
                 ) { Text("Free up space") }
 
                 TextButton(
-                    enabled = busy == null,
+                    enabled = busy == null && !RootfsInstaller.isRunning,
                     onClick = {
-                        busy = "Reinstalling missing tools..."
-                        scope.launch {
-                            // install() is idempotent: it skips what is already there and
-                            // re-runs the package step, which is what fixes a setup that
-                            // was interrupted partway.
-                            RootfsInstaller.install(context)
-                            busy = "Done"
-                            refresh++
-                        }
+                        // Started on the installer's own scope, not this screen's:
+                        // closing settings must not cancel a repair mid-package. It is
+                        // idempotent, skipping whatever is already in place.
+                        RootfsInstaller.start(context)
                     },
                 ) { Text("Repair") }
             }

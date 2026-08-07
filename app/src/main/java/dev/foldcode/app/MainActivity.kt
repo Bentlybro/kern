@@ -14,6 +14,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -82,6 +83,17 @@ private fun AppRoot() {
     val installChanges by LinuxRuntime.installChanges.collectAsStateWithLifecycle()
     val ready = remember(installChanges) {
         LinuxRuntime.isInstalled(context) && LinuxRuntime.isCodeServerInstalled(context)
+    }
+
+    // An environment with no session running should start one. This is what carries the
+    // app from setup finishing straight into the IDE, without the user pressing a second
+    // button — and it is what stops the loading screen ever being shown with nothing
+    // actually loading behind it. Starting twice is harmless: the runtime returns early
+    // when a server is already up.
+    LaunchedEffect(ready) {
+        if (ready && SessionService.state.value is SessionState.Idle) {
+            SessionService.start(context)
+        }
     }
 
     when {

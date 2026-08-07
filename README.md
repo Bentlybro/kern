@@ -17,6 +17,15 @@ in a datacentre.
 has been verified end to end on device — the numbers in this README are measured, not
 estimated.
 
+<p align="center">
+  <img src="docs/images/editor.png" width="24%" alt="The VS Code workbench with a Python file open, syntax highlighted, file tree beside it">
+  <img src="docs/images/terminal.png" width="24%" alt="A native terminal running python3 inside the Ubuntu guest">
+  <img src="docs/images/projects.png" width="24%" alt="Creating a new project or cloning a repository">
+  <img src="docs/images/status.png" width="24%" alt="Environment health checks with one-tap fixes">
+</p>
+
+<p align="center"><sub>Editor · terminal · projects · health — all on the phone, nothing remote.</sub></p>
+
 ---
 
 ## What it does

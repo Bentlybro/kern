@@ -1,4 +1,4 @@
-package dev.foldcode.app.runtime
+package dev.kern.app.runtime
 
 import android.content.Context
 import android.os.StatFs
@@ -18,7 +18,7 @@ import kotlinx.coroutines.withContext
  */
 object StorageManager {
 
-    private const val PREFS = "foldcode"
+    private const val PREFS = "kern"
     private const val KEY_LIMIT_MB = "storage_limit_mb"
     private const val DEFAULT_LIMIT_MB = 4096
 
@@ -96,7 +96,7 @@ object StorageManager {
             rm -rf /var/lib/apt/lists/* 2>/dev/null
             rm -rf /root/.cache/* 2>/dev/null
             rm -rf /tmp/* 2>/dev/null
-            : > /root/.foldcode/server.log 2>/dev/null
+            : > /root/.kern/server.log 2>/dev/null
             """.trimIndent(),
             timeoutMs = 180_000,
         )

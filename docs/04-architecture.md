@@ -22,7 +22,7 @@ v1 scope.
 ## System overview
 
 ```
-┌────────────────────────── FoldCode.apk (Kotlin / Jetpack Compose) ──────────────────────────┐
+┌────────────────────────── Kern.apk (Kotlin / Jetpack Compose) ──────────────────────────┐
 │                                                                                             │
 │  ┌── Fold-aware Shell ─────────────────────────────────────────────────────────────────┐    │
 │  │  posture/window-size engine (Jetpack WindowManager 1.5+, M3 Adaptive 1.2+)          │    │
@@ -104,7 +104,7 @@ Native Kotlin ⇄ workbench JS bridge carrying:
   dark/light + AMOLED-black theme), **notifications** (forward workbench toasts to
   Android notifications when backgrounded).
 - Implemented as: Android `WebMessageChannel`/`addJavascriptInterface` + a small
-  bundled VS Code extension ("foldcode-bridge") that exposes workbench commands to the
+  bundled VS Code extension ("kern-bridge") that exposes workbench commands to the
   native side. This extension is also where fold-aware workbench behaviors live —
   written once, in TypeScript, updateable without app releases.
 
@@ -128,7 +128,7 @@ Native Kotlin ⇄ workbench JS bridge carrying:
 | termux-packages binaries | various OSS | ✅ redistributable bootstrap (as Termux does) |
 | sora-editor (if satellite editor later) | LGPL-2.1 | 🔶 dynamic-link obligations |
 
-Product name must not contain "VS Code"/"Visual Studio" or use its marks. "FoldCode" is
+Product name must not contain "VS Code"/"Visual Studio" or use its marks. "Kern" is
 a working codename — trademark-check before any public release (D8).
 
 ## What we explicitly do NOT build

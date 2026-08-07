@@ -1,4 +1,4 @@
-package dev.foldcode.app.ui
+package dev.kern.app.ui
 
 import android.content.Intent
 import android.provider.Settings
@@ -42,8 +42,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.foldcode.app.runtime.HealthCheck
-import dev.foldcode.app.runtime.UsageTracker
+import dev.kern.app.runtime.HealthCheck
+import dev.kern.app.runtime.UsageTracker
 
 /**
  * Environment health and usage stats (M6 + M5a). This is where the app tells the truth

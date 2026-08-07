@@ -13,7 +13,7 @@ import android.view.ViewParent;
 import android.view.WindowManager;
 import android.widget.PopupWindow;
 
-import dev.foldcode.app.R;
+import dev.kern.app.R;
 import com.termux.view.TerminalView;
 import com.termux.view.support.PopupWindowCompatGingerbread;
 

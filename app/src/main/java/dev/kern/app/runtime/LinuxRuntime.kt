@@ -1,4 +1,4 @@
-package dev.foldcode.app.runtime
+package dev.kern.app.runtime
 
 import android.content.Context
 import android.util.Log
@@ -28,7 +28,7 @@ import kotlinx.coroutines.withTimeoutOrNull
  */
 object LinuxRuntime {
 
-    private const val TAG = "FoldCode"
+    private const val TAG = "Kern"
 
     const val CODE_SERVER_PORT = 13337
 
@@ -278,7 +278,7 @@ object LinuxRuntime {
         argv = prootArgs(
             context,
             // tmux keeps the session alive across terminal detach/reattach.
-            listOf("/bin/bash", "-lc", "tmux new-session -A -s foldcode || exec bash -l"),
+            listOf("/bin/bash", "-lc", "tmux new-session -A -s kern || exec bash -l"),
             workingDir,
         ),
         env = prootEnv(context),
@@ -317,11 +317,11 @@ object LinuxRuntime {
         if (serverProcess != null) return true
 
         val script = """
-            mkdir -p /root/.foldcode /root/.local/share/code-server/User
+            mkdir -p /root/.kern /root/.local/share/code-server/User
             export PASSWORD='$token'
             exec code-server --auth password --bind-addr 127.0.0.1:$CODE_SERVER_PORT \
               --disable-telemetry --disable-update-check \
-              >> /root/.foldcode/server.log 2>&1
+              >> /root/.kern/server.log 2>&1
         """.trimIndent()
 
         val process = PtyProcess.spawn(
@@ -341,7 +341,7 @@ object LinuxRuntime {
                 val buffer = ByteArray(4096)
                 while (process.input.read(buffer) >= 0) { /* discard */ }
             }
-        }, "FoldCodeServerDrain").apply { isDaemon = true }.start()
+        }, "KernServerDrain").apply { isDaemon = true }.start()
 
         return true
     }

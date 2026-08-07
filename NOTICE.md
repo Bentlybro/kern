@@ -1,6 +1,6 @@
 # Third-party notices
 
-FoldCode is licensed under the **GNU General Public License v3.0 or later** (see
+Kern is licensed under the **GNU General Public License v3.0 or later** (see
 `LICENSE`). It is GPL because it vendors GPLv3 source from Termux; that obligation is
 inherited deliberately and the full corresponding source of this app is published
 alongside every release.
@@ -24,7 +24,7 @@ strings.
     backed by a TCP connection to a pty bridge hosted inside Termux.
   - `JNI.java` was **deleted** — the app contains no native terminal code.
   - `textselection/*.java` had their `import com.termux.view.R` changed to
-    `import dev.foldcode.app.R`, because the modules are compiled into this app rather
+    `import dev.kern.app.R`, because the modules are compiled into this app rather
     than as separate library modules.
 
 Every other vendored file is unmodified upstream code.

@@ -390,9 +390,9 @@ port cannot serve N concurrent sessions.
 Main listener (unchanged from what you have):
 
   socat TCP-LISTEN:13338,bind=127.0.0.1,reuseaddr,fork \
-        EXEC:"$HOME/.foldcode/shell.sh",pty,setsid,ctty,stderr,echo=0
+        EXEC:"$HOME/.kern/shell.sh",pty,setsid,ctty,stderr,echo=0
 
-$HOME/.foldcode/shell.sh:
+$HOME/.kern/shell.sh:
 
   #!/data/data/com.termux/files/usr/bin/bash
   # fd 0/1 are the pts slave (socat's EXEC:...,pty)
@@ -414,7 +414,7 @@ $HOME/.foldcode/shell.sh:
       # fd 0/1/2 == the pts slave and the session can never reach EOF.
       socat -u -T 5 \
         TCP-LISTEN:"$ctlport",bind=127.0.0.1,reuseaddr,fork \
-        EXEC:"$HOME/.foldcode/resize.sh $PTY" \
+        EXEC:"$HOME/.kern/resize.sh $PTY" \
         </dev/null >/dev/null 2>&1 &
       CTL=$!
       ;;
@@ -423,7 +423,7 @@ $HOME/.foldcode/shell.sh:
   stty echo
   bash -li            # deliberately NOT `exec`, so the EXIT trap can reap $CTL
 
-$HOME/.foldcode/resize.sh  (chmod 700):
+$HOME/.kern/resize.sh  (chmod 700):
 
   #!/data/data/com.termux/files/usr/bin/bash
   PTY=$1
@@ -457,7 +457,7 @@ so this is fine — but do not put a space in the script path.
 
 and in shell.sh:
 
-  CTLFIFO="$HOME/.foldcode/ctl.$$"
+  CTLFIFO="$HOME/.kern/ctl.$$"
   rm -f "$CTLFIFO"; mkfifo -m 600 "$CTLFIFO"
   exec 8<>"$CTLFIFO"          # O_RDWR: never EOFs, never blocks (fifo(7))
   MAIN=$$

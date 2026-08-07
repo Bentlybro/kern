@@ -63,7 +63,7 @@ supervision is the mobile-native input method; it also halves the importance of 
 keyboard problem. Cockpit reads generic pty/git state — no hard dependency on any one
 agent vendor (R15).
 
-## D8 — Name: "FoldCode" is a codename only — **Open**
+## D8 — Name: "Kern" is a codename only — **Open**
 
 Must not contain/evoke "VS Code"/"Visual Studio". Trademark + Play/Store/collision check
 before first public release (M6). Candidates welcome; pick late, it's cheap to rename

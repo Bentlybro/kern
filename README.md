@@ -1,4 +1,4 @@
-# FoldCode — a real IDE that runs on the Galaxy Z Fold8
+# Kern — a real IDE that runs on the Galaxy Z Fold8
 
 A VS Code-class development environment that runs **entirely on the phone** — real
 editor, real terminal, real compilers and language servers, real extensions — wrapped in
@@ -25,7 +25,7 @@ device.
 
 ## How it works
 
-    ┌─ FoldCode (Kotlin / Compose) ────────────────────────────┐
+    ┌─ Kern (Kotlin / Compose) ────────────────────────────┐
     │  native shell: postures · panes · IME insets · key row   │
     │  ├─ editor pane  → WebView → localhost:13337 (workbench) │
     │  ├─ terminal     → native emulator → localhost:13338     │
@@ -41,7 +41,7 @@ device.
 The key constraint that shapes everything: an Android app **cannot execute Termux's
 binaries** — they live in Termux's private data directory under a different UID, and
 Android's W^X rules block exec from app-writable storage. So Termux hosts the toolchain
-and FoldCode drives it over `RUN_COMMAND` and localhost, gated by a per-install token.
+and Kern drives it over `RUN_COMMAND` and localhost, gated by a per-install token.
 
 Why the editor is still a web view — and why that is not a cop-out — is argued from
 evidence in [docs/08-decisions.md](docs/08-decisions.md) (decision **D12**). Short
@@ -51,8 +51,8 @@ a phone (layout, keyboard, terminal) are host problems, not Monaco problems.
 ## Setup
 
 1. Install **Termux** (F-Droid or GitHub releases — not the Play build unless you know why).
-2. Install FoldCode's APK.
-3. Open FoldCode and follow the setup screen: copy one command into Termux, grant the
+2. Install Kern's APK.
+3. Open Kern and follow the setup screen: copy one command into Termux, grant the
    Termux permission, allow unrestricted battery.
 4. Recommended once: Developer options → **Disable child process restrictions** (Android
    kills child processes above 32; this is why long builds die).

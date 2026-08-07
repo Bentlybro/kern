@@ -1,4 +1,4 @@
-package dev.foldcode.app.ui
+package dev.kern.app.ui
 
 import android.content.Intent
 import android.net.Uri
@@ -35,7 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.foldcode.app.runtime.GitHubAuth
+import dev.kern.app.runtime.GitHubAuth
 import kotlinx.coroutines.launch
 
 /**

@@ -1,4 +1,4 @@
-package dev.foldcode.app.ui
+package dev.kern.app.ui
 
 import android.webkit.JavascriptInterface
 
@@ -48,7 +48,7 @@ class WorkbenchBridge(
     }
 
     companion object {
-        const val NAME = "FoldCodeNative"
+        const val NAME = "KernNative"
 
         /**
          * Injected after every page load. Reports taps (so the host can decide whether to
@@ -58,8 +58,8 @@ class WorkbenchBridge(
          */
         val SCRIPT = """
         (function () {
-          if (window.__foldcodeBridge) return;
-          window.__foldcodeBridge = true;
+          if (window.__kernBridge) return;
+          window.__kernBridge = true;
 
           function inEditor(el) {
             try { return !!(el && el.closest && el.closest('.monaco-editor')); }

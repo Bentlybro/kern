@@ -1,4 +1,4 @@
-package dev.foldcode.app.runtime
+package dev.kern.app.runtime
 
 import android.content.Context
 
@@ -14,7 +14,7 @@ object ProjectRepository {
     const val HOME = "/root"
     const val PROJECTS_DIR = "$HOME/projects"
 
-    private const val PREFS = "foldcode"
+    private const val PREFS = "kern"
     private const val KEY_RECENTS = "recent_projects"
     private const val KEY_CURRENT = "current_folder"
     private const val MAX_RECENTS = 8

@@ -1,4 +1,4 @@
-package dev.foldcode.app.runtime
+package dev.kern.app.runtime
 
 import android.content.Context
 import java.security.SecureRandom
@@ -12,7 +12,7 @@ import java.security.SecureRandom
  */
 object Secrets {
 
-    private const val PREFS = "foldcode"
+    private const val PREFS = "kern"
     private const val KEY = "session_token"
 
     fun token(context: Context): String {

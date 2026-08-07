@@ -1,4 +1,4 @@
-package dev.foldcode.app.runtime
+package dev.kern.app.runtime
 
 import android.content.Context
 import android.util.Log
@@ -37,7 +37,7 @@ import kotlinx.coroutines.withContext
  */
 object GitHubAuth {
 
-    private const val TAG = "FoldCode"
+    private const val TAG = "Kern"
 
     /** Where the one-time code is entered. */
     const val DEVICE_URL = "https://github.com/login/device"
@@ -45,8 +45,8 @@ object GitHubAuth {
     /** gh keeps the token and the account name here, inside the guest. */
     private const val HOSTS = "/root/.config/gh/hosts.yml"
 
-    private const val WORK_DIR = "foldcode-gh"
-    private const val SCRIPT_NAME = "foldcode-ghlogin.sh"
+    private const val WORK_DIR = "kern-gh"
+    private const val SCRIPT_NAME = "kern-ghlogin.sh"
 
     sealed interface Account {
         /** git, gh or tmux are not installed yet. */
@@ -249,7 +249,7 @@ object GitHubAuth {
     /**
      * Hand the credentials to git itself, and replace the placeholder identity that
      * setup leaves behind — otherwise every commit made on the phone is authored by
-     * "FoldCode <foldcode@localhost>".
+     * "Kern <kern@localhost>".
      */
     private suspend fun configureGit(context: Context): String? {
         val result = LinuxRuntime.run(
@@ -327,7 +327,7 @@ object GitHubAuth {
         rm -rf "${'$'}DIR"; mkdir -p "${'$'}DIR"
         export BROWSER=true NO_COLOR=1 GH_NO_UPDATE_NOTIFIER=1
 
-        SESSION=foldcode-ghauth
+        SESSION=kern-ghauth
         tmux kill-session -t "${'$'}SESSION" 2>/dev/null
         tmux new-session -d -s "${'$'}SESSION" -x 120 -y 40 bash -c \
           'gh auth login --hostname github.com --git-protocol https --web; echo "EXIT=${'$'}?" > /tmp/$WORK_DIR/rc'

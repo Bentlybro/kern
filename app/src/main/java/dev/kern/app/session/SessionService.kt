@@ -1,4 +1,4 @@
-package dev.foldcode.app.session
+package dev.kern.app.session
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -12,11 +12,11 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
-import dev.foldcode.app.MainActivity
-import dev.foldcode.app.R
-import dev.foldcode.app.runtime.AgentRepository
-import dev.foldcode.app.runtime.LinuxRuntime
-import dev.foldcode.app.runtime.Secrets
+import dev.kern.app.MainActivity
+import dev.kern.app.R
+import dev.kern.app.runtime.AgentRepository
+import dev.kern.app.runtime.LinuxRuntime
+import dev.kern.app.runtime.Secrets
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.CoroutineScope
@@ -51,9 +51,9 @@ class SessionService : Service() {
         private const val NOTIF_AGENT_ID = 2
         private const val CHANNEL_ID = "session"
         private const val AGENT_CHANNEL_ID = "agent"
-        private const val TAG = "FoldCode"
-        const val ACTION_START = "dev.foldcode.app.action.START"
-        const val ACTION_STOP = "dev.foldcode.app.action.STOP"
+        private const val TAG = "Kern"
+        const val ACTION_START = "dev.kern.app.action.START"
+        const val ACTION_STOP = "dev.kern.app.action.STOP"
 
         private val _state = MutableStateFlow<SessionState>(SessionState.Idle)
         val state: StateFlow<SessionState> = _state.asStateFlow()
@@ -110,7 +110,7 @@ class SessionService : Service() {
             LinuxRuntime.applyWorkbenchSettings(this)
             LinuxRuntime.startCodeServer(this, Secrets.token(this))
             if (!awaitHealthy(90_000)) {
-                val why = "code-server did not start. See /root/.foldcode/server.log " +
+                val why = "code-server did not start. See /root/.kern/server.log " +
                     "in the terminal."
                 Log.e(TAG, "supervise: $why")
                 _state.value = SessionState.Failed(why)
@@ -204,7 +204,7 @@ class SessionService : Service() {
     private fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
         val pm = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "foldcode:session").apply {
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "kern:session").apply {
             setReferenceCounted(false)
             acquire()
         }

@@ -67,9 +67,9 @@ installer moves to the embedded-runtime stage (M4+).
    `pgrep -f 'code-server.*:13337'` matched *the bash process running the script*, because
    that script's own command line contains the server's command line. It therefore always
    concluded "already running" and never started the server. Replaced with a pidfile
-   (`~/.foldcode/server.pid` + `kill -0`). **Never use `pgrep -f` for a pattern that
+   (`~/.kern/server.pid` + `kill -0`). **Never use `pgrep -f` for a pattern that
    appears in the checking script itself.**
-3. **No logging**: the first failure was undiagnosable. Added `Log`/`FoldCode` tag
+3. **No logging**: the first failure was undiagnosable. Added `Log`/`Kern` tag
    throughout the runtime and session layers, plus `TermuxRuntime.lastError` surfaced in
    the UI.
 4. **Adopt-existing-server**: if a server is already listening (started by hand in
@@ -162,10 +162,10 @@ app can neither read nor exec them (and W^X blocks exec from our own writable st
 anyway — docs/03). The shell must therefore be hosted by Termux and attached to over a
 transport.
 
-    FoldCode (native TerminalView + emulator)
+    Kern (native TerminalView + emulator)
         │  TCP 127.0.0.1:13338
         ▼
-    socat TCP-LISTEN,fork  →  ~/.foldcode/shell.sh  →  pty  →  bash -li   [inside Termux]
+    socat TCP-LISTEN,fork  →  ~/.kern/shell.sh  →  pty  →  bash -li   [inside Termux]
 
 - Vendored **22 upstream Java files** from termux-app (`terminal-emulator` +
   `terminal-view`, GPLv3) unmodified — emulator, buffer, renderer, view, text selection.
@@ -173,7 +173,7 @@ transport.
   public API, so `TerminalView` needed no changes. `JNI.java` deleted — the app now
   contains no native terminal code at all.
 - Bridge started automatically by `SessionService` once the server is healthy; `socat` is
-  auto-installed if missing; idempotent via `~/.foldcode/bridge.pid`.
+  auto-installed if missing; idempotent via `~/.kern/bridge.pid`.
 - Size handshake: the client sends `SIZE rows cols` as the first line; the wrapper applies
   it with `stty` and turns echo on *before* exec'ing the shell, so the handshake is never
   visible.
@@ -181,7 +181,7 @@ transport.
 ### Landed
 
 - ✅ Native terminal renders and executes real Termux commands (verified
-  `echo FOLDCODE_NATIVE_TERM_OK` round-trip and `ls`).
+  `echo KERN_NATIVE_TERM_OK` round-trip and `ls`).
 - ✅ **Tapping the terminal raises the soft keyboard** — the exact thing the WebView
   terminal (and Monaco) fails at.
 - ✅ Key row routes to whichever surface has focus (terminal vs workbench) and shares
@@ -197,7 +197,7 @@ transport.
   use). Root cause: raw TCP has no window-resize channel, so the size was sent as terminal
   *input* and the shell echoed it; every keyboard show/hide produced a line.
   **Fix: an out-of-band control port.** The shell wrapper publishes its pty path
-  (`tty > ~/.foldcode/tty`); a second socat listener on **13339** runs
+  (`tty > ~/.kern/tty`); a second socat listener on **13339** runs
   `stty -F <pty> rows R cols C`; the app opens a short-lived connection per resize.
   Nothing touches the shell's stdin, so nothing echoes. Verified against Linux
   `pty_resize()` (drivers/tty/pty.c): TIOCSWINSZ on the slave updates both ends **and**
@@ -205,8 +205,8 @@ transport.
   also idempotent, so an unchanged size is a no-op. Confirmed on device: repeated keyboard
   toggles produce zero output, and `stty size` reports the live pane size.
 - ~~Single session only; no reattach~~ — **SESSION PERSISTENCE LANDED 2026-08-07.** The
-  bridge wrapper now ends with `exec tmux -f ~/.foldcode/tmux.conf new-session -A -s
-  foldcode` instead of `exec bash -li`. Closing the app detaches the client; the tmux
+  bridge wrapper now ends with `exec tmux -f ~/.kern/tmux.conf new-session -A -s
+  kern` instead of `exec bash -li`. Closing the app detaches the client; the tmux
   server keeps the shell running inside Termux, and the next connection reattaches and
   redraws. tmux is auto-installed alongside socat. Config: status bar off (rows are
   scarce and we supply chrome natively), `escape-time 10` so ESC in vim is not laggy,
@@ -214,7 +214,7 @@ transport.
   `aggressive-resize on`. **Verified: wrote a marker, force-stopped the app, relaunched —
   the session came back with its scrollback intact.** Resize still works because tmux
   reacts to SIGWINCH on the client pty, which the control port triggers.
-- Multiple named sessions/tabs are still not exposed in the UI (one shared `foldcode`
+- Multiple named sessions/tabs are still not exposed in the UI (one shared `kern`
   session).
 - Requires `socat` (auto-installed on first bridge start).
 - Terminal is *not* yet the target of the M5 agent cockpit — that reads the same session.
@@ -375,7 +375,7 @@ be settled with data after a couple of weeks of real use instead of a hunch.
   with `--auth password` using it (the WebView logs in silently, so no login screen is
   ever shown), and the terminal bridge and resize port require an `AUTH <token>` line
   before doing anything. **Verified adversarially:** a connection from another process
-  without the token receives `FoldCode: unauthorized` and gets no shell.
+  without the token receives `Kern: unauthorized` and gets no shell.
 - ✅ **Health checks** (`status` screen): battery exemption, free storage and RAM, Termux
   presence and permission, `allow-external-apps`, kernel page size (read natively via
   `Os.sysconf` — a minimal Termux has no `getconf`), core vs optional toolchain, and a

@@ -1,4 +1,4 @@
-package dev.foldcode.app.runtime
+package dev.kern.app.runtime
 
 import android.content.Context
 import android.os.SystemClock
@@ -18,7 +18,7 @@ object UsageTracker {
 
     enum class Surface { Editor, Terminal, Cockpit, Projects }
 
-    private const val PREFS = "foldcode_usage"
+    private const val PREFS = "kern_usage"
 
     private var current: Surface? = null
     private var since: Long = 0L

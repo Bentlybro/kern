@@ -1,4 +1,4 @@
-package dev.foldcode.app.ui
+package dev.kern.app.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -16,7 +16,7 @@ import com.termux.terminal.TerminalSession
 import com.termux.terminal.TerminalSessionClient
 import com.termux.view.TerminalView
 import com.termux.view.TerminalViewClient
-import dev.foldcode.app.runtime.LinuxRuntime
+import dev.kern.app.runtime.LinuxRuntime
 
 /**
  * Native terminal surface (M3). Renders Termux's real terminal emulator/view over a
@@ -40,14 +40,14 @@ object TerminalHost {
             keepScreenOn = true
             isFocusableInTouchMode = true
         }
-        terminalView.setTerminalViewClient(FoldCodeTerminalViewClient(terminalView))
+        terminalView.setTerminalViewClient(KernTerminalViewClient(terminalView))
 
         // Local pty into the Linux guest — no bridge, no sockets, no token.
         val appContext = context.applicationContext
         val newSession = TerminalSession(
             { columns, rows -> LinuxRuntime.spawnShell(appContext, columns, rows) },
             2000,
-            FoldCodeTerminalSessionClient(appContext, terminalView),
+            KernTerminalSessionClient(appContext, terminalView),
         )
         terminalView.attachSession(newSession)
 
@@ -113,9 +113,9 @@ fun TerminalPane(modifier: Modifier = Modifier) {
     )
 }
 
-private const val TAG = "FoldCode"
+private const val TAG = "Kern"
 
-private class FoldCodeTerminalViewClient(
+private class KernTerminalViewClient(
     private val view: TerminalView,
 ) : TerminalViewClient {
 
@@ -183,7 +183,7 @@ private class FoldCodeTerminalViewClient(
     }
 }
 
-private class FoldCodeTerminalSessionClient(
+private class KernTerminalSessionClient(
     private val appContext: Context,
     private val view: TerminalView,
 ) : TerminalSessionClient {

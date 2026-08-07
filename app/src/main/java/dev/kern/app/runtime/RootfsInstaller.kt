@@ -1,4 +1,4 @@
-package dev.foldcode.app.runtime
+package dev.kern.app.runtime
 
 import android.content.Context
 import android.util.Log
@@ -30,7 +30,7 @@ import kotlinx.coroutines.withContext
  */
 object RootfsInstaller {
 
-    private const val TAG = "FoldCode"
+    private const val TAG = "Kern"
 
     /**
      * Ubuntu 26.04 LTS, verified on-device against this PRoot build: fake root, apt,
@@ -337,9 +337,9 @@ object RootfsInstaller {
             git config --global --get init.defaultBranch >/dev/null 2>&1 || \
               git config --global init.defaultBranch main
             git config --global --get user.name >/dev/null 2>&1 || \
-              git config --global user.name FoldCode
+              git config --global user.name Kern
             git config --global --get user.email >/dev/null 2>&1 || \
-              git config --global user.email foldcode@localhost
+              git config --global user.email kern@localhost
             """.trimIndent(),
             timeoutMs = 60_000,
         )
@@ -369,7 +369,7 @@ object RootfsInstaller {
         // not control goes; the list written above covers the same components.
         runCatching { File(root, "etc/apt/sources.list.d/ubuntu.sources").delete() }
         write(
-            File(root, "etc/apt/apt.conf.d/99foldcode"),
+            File(root, "etc/apt/apt.conf.d/99kern"),
             buildString {
                 // apt drops privileges to _apt by default, which cannot work under PRoot.
                 appendLine("APT::Sandbox::User \"root\";")
@@ -384,7 +384,7 @@ object RootfsInstaller {
             },
         )
         write(
-            File(root, "etc/dpkg/dpkg.cfg.d/01-foldcode"),
+            File(root, "etc/dpkg/dpkg.cfg.d/01-kern"),
             buildString {
                 // dpkg fsyncs after every extracted file, which on phone storage is the
                 // single largest cost of installing anything. Container images disable it

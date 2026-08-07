@@ -5,7 +5,7 @@ Viable, and easier than you think — but the ranking is not what the question i
 
 MOVE 1 (today, ~1 hour): out-of-band `stty -F` control port. Keeps your entire socat setup. Kills the echoed "stty rows 47 cols 54" lines immediately. Verified against Linux kernel source.
 
-MOVE 2 (this sprint, ~1 day): switch the transport to SSH (openssh in Termux + sshj 0.40.0 in Kotlin), and make the remote command `tmux new-session -A -s foldcode`. This gets you: native resize (RFC 4254 window-change), authentication (fixing a real security hole in the current design), and session persistence — all three roadmap items — from one choice.
+MOVE 2 (this sprint, ~1 day): switch the transport to SSH (openssh in Termux + sshj 0.40.0 in Kotlin), and make the remote command `tmux new-session -A -s kern`. This gets you: native resize (RFC 4254 window-change), authentication (fixing a real security hole in the current design), and session persistence — all three roadmap items — from one choice.
 
 Do NOT hand-roll a dtach client (fragile framing over TCP). Do NOT write a Python bridge (you'd own a server AND a protocol for zero benefit). tmux control mode (-CC) is technically capable but is strictly more Kotlin work than SSH for less benefit.
 
@@ -54,23 +54,23 @@ So TIOCSWINSZ on the SLAVE (from any same-UID process) signals the shell. It is 
 GNU coreutils stty implements `rows`/`cols` via TIOCSWINSZ (src/stty.c: `set_window_size()`), and `-F` does:
     fd_reopen (STDIN_FILENO, device_name, O_RDONLY | O_NONBLOCK, 0)
 
-Server side. In ~/.foldcode/shell.sh, before `exec bash -li`, add:
+Server side. In ~/.kern/shell.sh, before `exec bash -li`, add:
 
-    mkdir -p "$HOME/.foldcode"
-    tty > "$HOME/.foldcode/tty"
+    mkdir -p "$HOME/.kern"
+    tty > "$HOME/.kern/tty"
 
-New file ~/.foldcode/resize.sh (chmod 700):
+New file ~/.kern/resize.sh (chmod 700):
 
     #!/data/data/com.termux/files/usr/bin/sh
     read -r R C || exit 0
     case "$R$C" in ''|*[!0-9\ ]*) exit 1;; esac
-    P=$(cat "$HOME/.foldcode/tty" 2>/dev/null) || exit 1
+    P=$(cat "$HOME/.kern/tty" 2>/dev/null) || exit 1
     [ -c "$P" ] || exit 1
     exec stty -F "$P" rows "$R" cols "$C"
 
 Second listener (EXEC, not SYSTEM — socat's SYSTEM forbids ',' and '!!' and re-parses shell metachars):
 
-    socat TCP-LISTEN:13339,bind=127.0.0.1,reuseaddr,fork EXEC:"$HOME/.foldcode/resize.sh"
+    socat TCP-LISTEN:13339,bind=127.0.0.1,reuseaddr,fork EXEC:"$HOME/.kern/resize.sh"
 
 Kotlin side:
 
@@ -119,7 +119,7 @@ Setup (three commands):
 The ListenAddress line is NOT optional — packages/openssh/sshd_config.patch leaves `#ListenAddress 0.0.0.0` commented, so stock Termux sshd listens on every interface.
 
 Key-auth bootstrap without a chicken-and-egg problem: you already have the socat channel. Use it once to run
-  `mkdir -p ~/.ssh && printf '%s\n' 'ssh-ed25519 AAAA... foldcode' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`
+  `mkdir -p ~/.ssh && printf '%s\n' 'ssh-ed25519 AAAA... kern' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys`
 then tear the socat listener down permanently.
 
 === MOVE 2b: KOTLIN CLIENT (sshj 0.40.0) ===
@@ -180,7 +180,7 @@ Gradle (BC is not transitive in 0.40.0, add only if you need algorithms Android'
 Make the SSH remote command (or shell.sh's final exec):
 
     export TERM=xterm-256color
-    exec tmux new-session -A -s foldcode
+    exec tmux new-session -A -s kern
 
 Verified from cmd-new-session.c: `.args = { "Ac:dDe:EF:f:n:Ps:t:x:Xy:", 0, -1, NULL }` — `-A` "makes new-session behave like attach-session if session-name already exists". Verified from client.c: `case SIGWINCH: proc_send(client_peer, MSG_RESIZE, -1, NULL, 0);` — the tmux client forwards pty resizes to the server, so both Move 1 and SSH window-change reach tmux correctly. On app restart the new client reattaches and tmux repaints from its own screen state.
 
@@ -191,7 +191,7 @@ dtach 0.9 (packages/dtach/build.sh, upstream active — commits June 2025). Prot
     REDRAW_UNSPEC=0, REDRAW_NONE=1, REDRAW_CTRL_L=2, REDRAW_WINCH=3
     struct packet { unsigned char type; unsigned char len;
                     union { unsigned char buf[sizeof(struct winsize)]; struct winsize ws; } u; };
-Socket is PF_UNIX/SOCK_STREAM, so you'd bridge with `socat TCP-LISTEN:...,fork UNIX-CONNECT:$HOME/.foldcode/sess.sock`. Master applies `ioctl(the_pty.fd, TIOCSWINSZ, &the_pty.ws)` on MSG_WINCH and MSG_REDRAW; master→client is undelimited raw bytes. Killer, from master.c client_activity():
+Socket is PF_UNIX/SOCK_STREAM, so you'd bridge with `socat TCP-LISTEN:...,fork UNIX-CONNECT:$HOME/.kern/sess.sock`. Master applies `ioctl(the_pty.fd, TIOCSWINSZ, &the_pty.ws)` on MSG_WINCH and MSG_REDRAW; master→client is undelimited raw bytes. Killer, from master.c client_activity():
     len = read(p->fd, &pkt, sizeof(struct packet));
     if (len < 0 && (errno == EAGAIN || errno == EINTR)) return;
     /* Close the client on an error. */
@@ -232,7 +232,7 @@ mosh 1.4.0 is packaged and SSP carries window size natively, but there is no Jav
 - dtach's master closes the connection on any read that isn't exactly sizeof(struct packet): `if (len != sizeof(struct packet)) { close(p->fd); ... }`. Bridged over TCP through socat this will drop sessions under burst input (large pastes). I did not compile-verify sizeof(struct packet); by C layout rules it should be 10 bytes (uchar, uchar, then a 2-aligned 8-byte union) but confirm before relying on it.
 - `stty -F DEV rows R cols C` issues TWO separate TIOCSWINSZ ioctls (coreutils src/stty.c calls set_window_size() once per keyword), so the pty briefly holds (new rows, old cols) and the shell gets two SIGWINCHes. Harmless for bash/tmux but can cause a visible double-repaint. A 10-line C or Python helper doing one ioctl avoids it.
 - GNU stty's `-F` opens the device WITHOUT O_NOCTTY: `fd_reopen (STDIN_FILENO, device_name, O_RDONLY | O_NONBLOCK, 0)`. Do not run the resize helper under `setsid` — a session leader with no controlling terminal could otherwise interact badly with ctty acquisition. Plain `socat ... EXEC:resize.sh` (no setsid option) is fine.
-- With socat's `fork` option every connection gets its OWN pty, so a single `$HOME/.foldcode/tty` file is last-writer-wins. Fine for a single-session app; if you ever allow two panes you need a per-connection token in the path, and the resize port needs to carry that token.
+- With socat's `fork` option every connection gets its OWN pty, so a single `$HOME/.kern/tty` file is last-writer-wins. Fine for a single-session app; if you ever allow two panes you need a per-connection token in the path, and the resize port needs to carry that token.
 - abduco's resize payload is `{uint16 rows; uint16 cols}` — ROWS FIRST — while dtach, ttyd, gotty and SSH all order it columns/width first. If you prototype more than one of these, this asymmetry will bite you.
 
 ## Confidence

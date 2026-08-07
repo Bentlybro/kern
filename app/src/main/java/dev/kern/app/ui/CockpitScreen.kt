@@ -1,4 +1,4 @@
-package dev.foldcode.app.ui
+package dev.kern.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -45,8 +45,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.foldcode.app.runtime.AgentRepository
-import dev.foldcode.app.runtime.ProjectRepository
+import dev.kern.app.runtime.AgentRepository
+import dev.kern.app.runtime.ProjectRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 

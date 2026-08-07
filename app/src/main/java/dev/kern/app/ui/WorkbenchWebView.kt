@@ -1,4 +1,4 @@
-package dev.foldcode.app.ui
+package dev.kern.app.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -16,9 +16,9 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
-import dev.foldcode.app.runtime.LinuxRuntime
-import dev.foldcode.app.runtime.ProjectRepository
-import dev.foldcode.app.runtime.Secrets
+import dev.kern.app.runtime.LinuxRuntime
+import dev.kern.app.runtime.ProjectRepository
+import dev.kern.app.runtime.Secrets
 
 /**
  * Process-scoped WebView so the workbench survives activity recreation (fold/unfold,
@@ -44,7 +44,7 @@ object WorkbenchWebView {
      * deterministic way to make new layout defaults take effect.
      */
     private const val LAYOUT_EPOCH = 3
-    private const val PREFS = "foldcode"
+    private const val PREFS = "kern"
     private const val KEY_LAYOUT_EPOCH = "layout_epoch"
 
     private fun resetLayoutIfStale(context: Context) {

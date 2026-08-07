@@ -1,4 +1,4 @@
-package dev.foldcode.app.ui
+package dev.kern.app.ui
 
 import android.view.KeyCharacterMap
 import android.view.KeyEvent

@@ -1,4 +1,4 @@
-package dev.foldcode.app.runtime
+package dev.kern.app.runtime
 
 import android.os.ParcelFileDescriptor
 import java.io.FileInputStream
@@ -7,7 +7,7 @@ import java.io.FileOutputStream
 /** JNI bindings for the app's own pseudo-terminal (see cpp/pty.c). */
 object Pty {
     init {
-        System.loadLibrary("foldcode_pty")
+        System.loadLibrary("kern_pty")
     }
 
     /** @return the pty master fd, or -1 on failure. Writes the child pid into [pidOut]. */

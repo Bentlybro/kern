@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "dev.foldcode.app"
+    namespace = "dev.kern.app"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "dev.foldcode.app"
+        applicationId = "dev.kern.app"
         minSdk = 29
         targetSdk = 35
         versionCode = 1

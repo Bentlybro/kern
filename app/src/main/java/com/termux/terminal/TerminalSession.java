@@ -10,18 +10,18 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
-import dev.foldcode.app.runtime.PtyProcess;
+import dev.kern.app.runtime.PtyProcess;
 
 /**
  * A terminal session: a shell running on a pseudo-terminal owned by this app.
  *
- * Upstream Termux forks the shell through its own JNI. FoldCode does the same thing with
+ * Upstream Termux forks the shell through its own JNI. Kern does the same thing with
  * its own pty layer (cpp/pty.c), and the command is PRoot entering the bundled Linux
  * filesystem — so the shell is a child of this app, with no second app and no sockets
  * involved. The spawn itself is supplied by the caller through [ShellFactory], which
  * keeps this class free of any knowledge of PRoot.
  *
- * Original file: termux-app (GPLv3). Transport rewritten for FoldCode.
+ * Original file: termux-app (GPLv3). Transport rewritten for Kern.
  */
 public final class TerminalSession extends TerminalOutput {
 
@@ -92,13 +92,13 @@ public final class TerminalSession extends TerminalOutput {
 
         final PtyProcess process = mShellFactory.spawn(columns, rows);
         if (process == null) {
-            appendLocally("\r\n[FoldCode: could not start a shell. Is Linux set up?]\r\n");
+            appendLocally("\r\n[Kern: could not start a shell. Is Linux set up?]\r\n");
             finish(-1);
             return;
         }
         mProcess = process;
 
-        new Thread("FoldCodeTermReader") {
+        new Thread("KernTermReader") {
             @Override
             public void run() {
                 try (InputStream in = process.getInput()) {
@@ -115,7 +115,7 @@ public final class TerminalSession extends TerminalOutput {
             }
         }.start();
 
-        new Thread("FoldCodeTermWriter") {
+        new Thread("KernTermWriter") {
             @Override
             public void run() {
                 byte[] buffer = new byte[4096];
@@ -133,7 +133,7 @@ public final class TerminalSession extends TerminalOutput {
             }
         }.start();
 
-        new Thread("FoldCodeTermWaiter") {
+        new Thread("KernTermWaiter") {
             @Override
             public void run() {
                 int status = process.waitFor();

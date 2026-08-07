@@ -41,7 +41,7 @@ The in-app setup screen walks through this, but for reference:
    Note a fresh Termux ships `allow-external-apps` **commented out**, so the append branch
    is the normal path.
 3. **Grant `com.termux.permission.RUN_COMMAND`** (in-app button; over adb:
-   `adb shell pm grant dev.foldcode.app com.termux.permission.RUN_COMMAND`).
+   `adb shell pm grant dev.kern.app com.termux.permission.RUN_COMMAND`).
 4. **Battery exemption**, plus once in Developer options: *Disable child process
    restrictions*.
 5. **Start IDE.**
@@ -59,13 +59,13 @@ The in-app setup screen walks through this, but for reference:
    `http://127.0.0.1:13337/?folder=/data/data/com.termux/files/home` with the key row
    docked below it.
 
-Server log on the device: `~/.foldcode/server.log` in Termux.
+Server log on the device: `~/.kern/server.log` in Termux.
 
 ## Debugging
 
 ```powershell
 # App logs
-C:\adb\adb.exe logcat -s FoldCode:* AndroidRuntime:E
+C:\adb\adb.exe logcat -s Kern:* AndroidRuntime:E
 
 # Inspect the workbench WebView from desktop Chrome (debug builds only):
 #   chrome://inspect  →  the device appears when the IDE screen is open

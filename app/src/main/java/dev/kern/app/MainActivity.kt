@@ -1,4 +1,4 @@
-package dev.foldcode.app
+package dev.kern.app
 
 import android.os.Bundle
 import android.view.KeyEvent
@@ -24,14 +24,14 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.foldcode.app.runtime.LinuxRuntime
-import dev.foldcode.app.session.SessionService
-import dev.foldcode.app.session.SessionState
-import dev.foldcode.app.ui.FoldCodeTheme
-import dev.foldcode.app.ui.SetupScreen
-import dev.foldcode.app.ui.Shell
-import dev.foldcode.app.ui.TerminalHost
-import dev.foldcode.app.ui.WorkbenchWebView
+import dev.kern.app.runtime.LinuxRuntime
+import dev.kern.app.session.SessionService
+import dev.kern.app.session.SessionState
+import dev.kern.app.ui.KernTheme
+import dev.kern.app.ui.SetupScreen
+import dev.kern.app.ui.Shell
+import dev.kern.app.ui.TerminalHost
+import dev.kern.app.ui.WorkbenchWebView
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -46,7 +46,7 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            FoldCodeTheme {
+            KernTheme {
                 AppRoot()
             }
         }

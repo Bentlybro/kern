@@ -1,4 +1,4 @@
-package dev.foldcode.app.runtime
+package dev.kern.app.runtime
 
 import android.content.Context
 
@@ -12,7 +12,7 @@ import android.content.Context
  */
 object AgentRepository {
 
-    private const val SESSION = "foldcode"
+    private const val SESSION = "kern"
 
     data class Snapshot(
         val tail: List<String>,

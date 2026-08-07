@@ -1,4 +1,4 @@
-package dev.foldcode.app.ui
+package dev.kern.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -41,9 +41,9 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.foldcode.app.runtime.LinuxRuntime
-import dev.foldcode.app.runtime.RootfsInstaller
-import dev.foldcode.app.runtime.StorageManager
+import dev.kern.app.runtime.LinuxRuntime
+import dev.kern.app.runtime.RootfsInstaller
+import dev.kern.app.runtime.StorageManager
 import kotlinx.coroutines.launch
 
 /**

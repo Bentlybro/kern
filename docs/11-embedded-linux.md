@@ -66,7 +66,7 @@ Verified by experiment, not assumption:
   guest's root is the rootfs and `/data/user/0/…` still means nothing there. Hence the
   self-bind:
 
-      -b /data/user/0/dev.foldcode.app/files/linux/.l2s:/data/user/0/…/.l2s
+      -b /data/user/0/dev.kern.app/files/linux/.l2s:/data/user/0/…/.l2s
 
   Get either half wrong and the failures are wildly misleading:
 

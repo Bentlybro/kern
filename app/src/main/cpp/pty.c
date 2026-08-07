@@ -1,5 +1,5 @@
 /*
- * FoldCode native PTY.
+ * Kern native PTY.
  *
  * Allocates a pseudo-terminal and forks a child onto its slave side. This is what lets
  * the app run a shell *in its own process tree* instead of asking another app to do it.
@@ -24,7 +24,7 @@
 #include <errno.h>
 #include <android/log.h>
 
-#define LOG_TAG "FoldCodePty"
+#define LOG_TAG "KernPty"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 static char **to_c_array(JNIEnv *env, jobjectArray array, int *out_count) {
@@ -53,7 +53,7 @@ static void free_c_array(char **array, int count) {
 }
 
 JNIEXPORT jint JNICALL
-Java_dev_foldcode_app_runtime_Pty_createSubprocess(
+Java_dev_kern_app_runtime_Pty_createSubprocess(
         JNIEnv *env, jclass clazz,
         jstring j_cmd, jobjectArray j_argv, jobjectArray j_envp,
         jstring j_cwd, jint columns, jint rows, jintArray j_pid_out) {
@@ -149,7 +149,7 @@ Java_dev_foldcode_app_runtime_Pty_createSubprocess(
 }
 
 JNIEXPORT void JNICALL
-Java_dev_foldcode_app_runtime_Pty_setWindowSize(
+Java_dev_kern_app_runtime_Pty_setWindowSize(
         JNIEnv *env, jclass clazz, jint fd, jint columns, jint rows) {
     (void) env; (void) clazz;
     struct winsize ws;
@@ -160,7 +160,7 @@ Java_dev_foldcode_app_runtime_Pty_setWindowSize(
 }
 
 JNIEXPORT jint JNICALL
-Java_dev_foldcode_app_runtime_Pty_waitFor(
+Java_dev_kern_app_runtime_Pty_waitFor(
         JNIEnv *env, jclass clazz, jint pid) {
     (void) env; (void) clazz;
     int status = 0;
@@ -175,7 +175,7 @@ Java_dev_foldcode_app_runtime_Pty_waitFor(
  * its pid — killing only the pid would orphan everything the shell started.
  */
 JNIEXPORT void JNICALL
-Java_dev_foldcode_app_runtime_Pty_killProcessGroup(
+Java_dev_kern_app_runtime_Pty_killProcessGroup(
         JNIEnv *env, jclass clazz, jint pid) {
     (void) env; (void) clazz;
     if (pid > 0) {
@@ -185,7 +185,7 @@ Java_dev_foldcode_app_runtime_Pty_killProcessGroup(
 }
 
 JNIEXPORT void JNICALL
-Java_dev_foldcode_app_runtime_Pty_closeFd(
+Java_dev_kern_app_runtime_Pty_closeFd(
         JNIEnv *env, jclass clazz, jint fd) {
     (void) env; (void) clazz;
     if (fd >= 0) close(fd);

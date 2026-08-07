@@ -1,4 +1,4 @@
-package dev.foldcode.app.ui
+package dev.kern.app.ui
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -19,6 +19,6 @@ private val AmoledScheme = darkColorScheme(
 )
 
 @Composable
-fun FoldCodeTheme(content: @Composable () -> Unit) {
+fun KernTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = AmoledScheme, content = content)
 }

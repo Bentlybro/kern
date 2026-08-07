@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "FoldCode"
+rootProject.name = "Kern"
 include(":app")

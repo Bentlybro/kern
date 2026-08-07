@@ -1,4 +1,4 @@
-package dev.foldcode.app.ui
+package dev.kern.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -32,8 +32,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
-import dev.foldcode.app.runtime.RootfsInstaller
-import dev.foldcode.app.runtime.UsageTracker
+import dev.kern.app.runtime.RootfsInstaller
+import dev.kern.app.runtime.UsageTracker
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,8 +48,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.foldcode.app.session.SessionService
-import dev.foldcode.app.session.SessionState
+import dev.kern.app.session.SessionService
+import dev.kern.app.session.SessionState
 
 /**
  * The native fold shell (M2, decision D12).

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  FoldCode device harness - one tested entry point for talking to the test phone.
+  Kern device harness - one tested entry point for talking to the test phone.
 
 .DESCRIPTION
   Replaces ad-hoc adb one-liners. Every command here is quoted correctly, resolves the
@@ -37,7 +37,7 @@ $ErrorActionPreference = 'Stop'
 
 $Adb      = 'C:\adb\adb.exe'
 $Device   = '192.168.0.233:5555'
-$Pkg      = 'dev.foldcode.app'
+$Pkg      = 'dev.kern.app'
 $Activity = "$Pkg/.MainActivity"
 $Root     = Split-Path -Parent $PSScriptRoot
 $Apk      = Join-Path $Root 'app\build\outputs\apk\debug\app-debug.apk'
@@ -94,8 +94,18 @@ switch ($Command) {
 
     'build' {
         $env:JAVA_HOME = $JavaHome
-        & (Join-Path $Root 'gradlew.bat') -p $Root assembleDebug 2>&1 |
-            Select-String -Pattern '^e: |error:|BUILD SUCCESSFUL|BUILD FAILED'
+        # Kotlin and javac report errors on stderr, so 2>&1 is needed to see them - but
+        # PowerShell 5.1 wraps every stderr line in an ErrorRecord, and under
+        # ErrorActionPreference Stop a harmless "uses a deprecated API" note aborts the
+        # whole script. Relax it for the build only, and judge by the reported result.
+        $previous = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & (Join-Path $Root 'gradlew.bat') -p $Root assembleDebug 2>&1 |
+                Select-String -Pattern '^e: |error:|BUILD SUCCESSFUL|BUILD FAILED'
+        } finally {
+            $ErrorActionPreference = $previous
+        }
     }
 
     'install' {
@@ -149,7 +159,7 @@ switch ($Command) {
         $n = if ($Args -and $Args[0]) { [int]$Args[0] } else { 20 }
         # Built as an array: passed as loose tokens, PowerShell claims -d as one of its
         # own parameters, logcat never gets it, and the command tails forever.
-        & $Adb @('-s', $Device, 'logcat', '-d', '-s', 'FoldCode:*', 'FoldCodePty:*') |
+        & $Adb @('-s', $Device, 'logcat', '-d', '-s', 'Kern:*', 'KernPty:*') |
             Select-Object -Last $n
     }
 
@@ -191,8 +201,8 @@ switch ($Command) {
         # the app resolves, and the hard-link symlinks below record it literally.
         $data  = "/data/user/0/$Pkg/files"
         # Optional override so a candidate rootfs can be exercised side by side with the
-        # installed one, e.g. $env:FOLDCODE_ROOTFS = 'linux26' before a distro upgrade.
-        $guestDir = if ($env:FOLDCODE_ROOTFS) { $env:FOLDCODE_ROOTFS } else { 'linux' }
+        # installed one, e.g. $env:KERN_ROOTFS = 'linux26' before a distro upgrade.
+        $guestDir = if ($env:KERN_ROOTFS) { $env:KERN_ROOTFS } else { 'linux' }
         $b64   = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($Args -join ' ')))
         $vars  = "LD_LIBRARY_PATH=$lib PROOT_LOADER=$lib/libproot_loader.so " +
                  "PROOT_LOADER32=$lib/libproot_loader32.so " +

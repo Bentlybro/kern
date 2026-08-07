@@ -45,7 +45,7 @@ import dev.foldcode.app.runtime.UsageTracker
  * about its own setup instead of failing silently.
  */
 @Composable
-fun StatusScreen(onDismiss: () -> Unit) {
+fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
     val context = LocalContext.current
     var items by remember { mutableStateOf<List<HealthCheck.Item>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -80,6 +80,9 @@ fun StatusScreen(onDismiss: () -> Unit) {
                 color = MaterialTheme.colorScheme.primary,
             )
             Spacer(Modifier.weight(1f))
+            TextButton(onClick = onOpenSettings) {
+                Text("settings", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+            }
             TextButton(onClick = { refresh++ }) {
                 Text("recheck", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
             }

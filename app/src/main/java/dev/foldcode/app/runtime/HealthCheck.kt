@@ -59,14 +59,13 @@ object HealthCheck {
      */
     private suspend fun prootItem(context: Context): Item {
         val probe = LinuxRuntime.probe(context)
-        return if (probe.contains("proot", ignoreCase = true)) {
-            Item(
-                "PRoot",
-                Level.Ok,
-                probe.lineSequence().firstOrNull { it.isNotBlank() }?.take(80).orEmpty(),
-            )
-        } else {
-            Item("PRoot", Level.Fail, "Did not run: ${probe.take(120)}")
+        // `proot --version` leads with ASCII art, so pick out the version number rather
+        // than the first non-blank line.
+        val version = Regex("""\d+\.\d+\.\d+[\d.]*""").find(probe)?.value
+        return when {
+            version != null -> Item("PRoot", Level.Ok, "version $version")
+            probe.contains("proot", ignoreCase = true) -> Item("PRoot", Level.Ok, "running")
+            else -> Item("PRoot", Level.Fail, "Did not run: ${probe.take(120)}")
         }
     }
 

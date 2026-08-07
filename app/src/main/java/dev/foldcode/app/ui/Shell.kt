@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import dev.foldcode.app.session.SessionService
 import dev.foldcode.app.session.SessionState
 
 /**
@@ -57,11 +58,14 @@ fun Shell(state: SessionState) {
     val fold = rememberFoldState()
     var showTerminal by remember { mutableStateOf(false) }
     var showProjects by remember { mutableStateOf(false) }
-    // Folded, the cockpit is the right default surface: the phone is good at reviewing
-    // and approving, not at editing (docs/05).
-    var showCockpit by remember { mutableStateOf(fold.mode == DisplayMode.Cover) }
+    // Always open on the IDE. The cockpit is a place you choose to go (the "agent" chip),
+    // not something that greets you.
+    var showCockpit by remember { mutableStateOf(false) }
     var showStatus by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
 
+    BackHandler(enabled = showSettings) { showSettings = false }
+    BackHandler(enabled = showStatus && !showSettings) { showStatus = false }
     BackHandler(enabled = showProjects) { showProjects = false }
     BackHandler(enabled = showCockpit && !showProjects) { showCockpit = false }
     BackHandler(enabled = !showProjects && !showCockpit) { WorkbenchWebView.Commands.escape() }
@@ -82,8 +86,23 @@ fun Shell(state: SessionState) {
     }
     DisposableEffect(Unit) { onDispose { UsageTracker.flush(context) } }
 
+    if (showSettings) {
+        SettingsScreen(
+            onDismiss = { showSettings = false },
+            // Deleting the guest invalidates the whole session; drop back to setup.
+            onGuestDeleted = {
+                showSettings = false
+                SessionService.stop(context)
+            },
+        )
+        return
+    }
+
     if (showStatus) {
-        StatusScreen(onDismiss = { showStatus = false })
+        StatusScreen(
+            onDismiss = { showStatus = false },
+            onOpenSettings = { showStatus = false; showSettings = true },
+        )
         return
     }
 

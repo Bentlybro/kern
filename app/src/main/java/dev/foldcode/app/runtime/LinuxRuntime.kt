@@ -322,15 +322,33 @@ object LinuxRuntime {
                 cwd = context.filesDir.absolutePath,
             ) ?: return@withTimeoutOrNull "spawn failed"
             try {
-                // Reading a pty master after its child exits raises EIO rather than
-                // returning EOF. That is normal, not a failure — but left unguarded it
-                // propagates out of the coroutine and takes the app down.
-                runCatching { process.input.readBytes().toString(Charsets.UTF_8).trim() }
-                    .getOrDefault("")
+                readUntilClosed(process)
             } finally {
                 process.close()
             }
         } ?: "timed out"
+    }
+
+    /**
+     * Drain a pty until the child goes away, keeping whatever it printed.
+     *
+     * Reading a pty master after its child exits raises EIO rather than returning EOF, so
+     * a plain `readBytes()` both throws *and* discards everything already read. Accumulate
+     * chunk by chunk and treat the error as end-of-stream.
+     */
+    private fun readUntilClosed(process: PtyProcess): String {
+        val out = StringBuilder()
+        val buffer = ByteArray(4096)
+        try {
+            while (true) {
+                val read = process.input.read(buffer)
+                if (read < 0) break
+                out.append(String(buffer, 0, read, Charsets.UTF_8))
+            }
+        } catch (e: Exception) {
+            // EIO here means the child exited; whatever we collected is the output.
+        }
+        return out.toString().trim()
     }
 
     /** Shared helper for downloading into app storage with progress. */

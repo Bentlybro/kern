@@ -50,7 +50,7 @@ jobs:
       # would mean driving the NDK build under CodeQL — slow, fragile, and less useful
       # than reading it. Revisit if that file grows.
       - name: Initialise CodeQL
-        uses: github/codeql-action/init@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3
+        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           languages: java-kotlin
           build-mode: manual

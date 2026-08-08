@@ -43,6 +43,18 @@
             </intent-filter>
         </receiver>
 
+        <!--
+          Reopens Kern after a self-update. MY_PACKAGE_REPLACED is a protected system
+          broadcast, so exported=false still receives it while keeping everyone else out.
+        -->
+        <receiver
+            android:name=".runtime.UpdateRelaunchReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <service
             android:name=".session.SessionService"
             android:exported="false"

@@ -1,6 +1,7 @@
 package dev.kern.app.runtime
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import java.io.File
 import org.json.JSONObject
@@ -75,9 +76,24 @@ object CodeServer {
         // the handle when the drain ends is what stops a dead server being reported as
         // running for the life of the process — `start` returns early on a non-null handle,
         // so without this one death meant no restart would ever be attempted again.
-        process.drainInBackground("KernServerDrain") {
+        val startedAt = SystemClock.elapsedRealtime()
+        process.drainInBackground("KernServerDrain") { output ->
             if (serverProcess === process) {
-                Log.w(TAG, "code-server exited")
+                val alive = SystemClock.elapsedRealtime() - startedAt
+                // The server redirects its own output to a log file, so anything that
+                // reaches the pty came from before that redirect took effect: PRoot itself,
+                // or bash failing to get as far as the first line of the script. That is
+                // exactly the case worth reporting, and it is the case where the log file
+                // the failure message points at does not exist yet.
+                // waitFor also reaps the child. Nothing used to, which is where the zombies
+                // in the guest's process list came from. A negative value is the signal
+                // that killed it, and 127 means the exec never happened at all.
+                val status = runCatching { process.waitFor() }.getOrDefault(0)
+                Log.w(
+                    TAG,
+                    "code-server exited after ${alive}ms, status $status; " +
+                        "pty said: ${output.ifBlank { "(nothing)" }}",
+                )
                 serverProcess = null
             }
         }

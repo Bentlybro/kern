@@ -94,19 +94,34 @@ class PtyProcess private constructor(
         }
     }
 
-    /** [drain] on a daemon thread called [name], for a child that outlives this call. */
     /**
-     * Drain on a daemon thread, calling [onClosed] once the pty reaches EIO.
+     * Drain on a daemon thread called [name], calling [onClosed] once the pty reaches EIO,
+     * with the first [keep] bytes the child printed.
      *
      * The drain ending is the one honest signal that the child is gone: a pty master raises
      * EIO instead of EOF when its last slave closes. A caller holding a long-lived process
      * has no other way to notice it died, and treating a dead handle as a live one is worse
      * than having no handle at all.
+     *
+     * The prefix is kept because a process that dies on startup says why on its way out,
+     * and a drain that discards everything throws that away. It is bounded: a server that
+     * runs for hours must not accumulate its whole output in memory, and the interesting
+     * part of a failure is always at the beginning.
      */
-    fun drainInBackground(name: String, onClosed: (() -> Unit)? = null) {
+    fun drainInBackground(name: String, keep: Int = 4096, onClosed: ((String) -> Unit)? = null) {
         Thread({
-            drain()
-            onClosed?.invoke()
+            val head = StringBuilder()
+            runCatching {
+                val buffer = ByteArray(4096)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    if (head.length < keep) {
+                        head.append(String(buffer, 0, read, Charsets.UTF_8))
+                    }
+                }
+            }
+            onClosed?.invoke(head.take(keep).toString().trim())
         }, name).apply { isDaemon = true }.start()
     }
 

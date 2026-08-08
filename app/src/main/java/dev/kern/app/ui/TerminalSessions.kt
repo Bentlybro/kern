@@ -114,6 +114,18 @@ object TerminalSessions {
     private val _shellStuck = MutableStateFlow(false)
     val shellStuck: StateFlow<Boolean> = _shellStuck.asStateFlow()
 
+    /**
+     * Whether any terminal view holds focus, as a flow rather than only [hasFocus].
+     *
+     * Compose cannot observe a View's focus, and the shell layout needs to: with the
+     * keyboard up, which pane deserves the remaining space is decided by which pane the
+     * keyboard is typing into. Recomputed over every entry instead of set from one view's
+     * flag, because focus moving between two terminals fires "lost" on one and "gained"
+     * on the other in an order Android does not promise.
+     */
+    private val _focused = MutableStateFlow(false)
+    val focused: StateFlow<Boolean> = _focused.asStateFlow()
+
     private fun publish() {
         _sessions.value = entries.toList()
     }
@@ -226,6 +238,9 @@ object TerminalSessions {
             isFocusableInTouchMode = true
         }
         view.setTerminalViewClient(KernTerminalViewClient(view))
+        view.setOnFocusChangeListener { _, _ ->
+            _focused.value = entries.any { it.view.hasFocus() }
+        }
 
         val id = nextId++
         appContexts[id] = appContext
@@ -256,6 +271,9 @@ object TerminalSessions {
         runCatching { entry.session.finishIfRunning() }
         entries.remove(entry)
         appContexts.remove(entry.id)
+        // A destroyed view fires no focus-change; recompute or the flow reports a
+        // terminal that no longer exists as still holding the keyboard's attention.
+        _focused.value = entries.any { it.view.hasFocus() }
     }
 
     /**

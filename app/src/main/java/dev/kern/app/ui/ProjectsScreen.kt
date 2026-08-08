@@ -7,16 +7,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -30,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -39,13 +36,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.kern.app.runtime.AppScope
 import dev.kern.app.runtime.ProjectRepository
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -58,22 +58,31 @@ fun ProjectsScreen(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
+    val app = context.applicationContext
     val scope = rememberCoroutineScope()
 
     var entries by remember { mutableStateOf<List<ProjectRepository.Entry>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var cloneUrl by remember { mutableStateOf("") }
     var cloning by remember { mutableStateOf(false) }
+    var cloneJob by remember { mutableStateOf<Job?>(null) }
+    // git's progress lines arrive on the runtime's IO thread, so they land in a flow rather
+    // than straight into Compose state.
+    val cloneProgress = remember { MutableStateFlow<String?>(null) }
+    val progressLine by cloneProgress.collectAsState()
     var newName by remember { mutableStateOf("") }
     var creating by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+    // Which row has had its delete tapped once; a second tap on the same row does it.
+    var pendingDelete by remember { mutableStateOf<String?>(null) }
     // On by default: nearly every project wants one eventually, and starting a repo at
     // creation is the difference between having history and wishing you had.
     var initGit by remember { mutableStateOf(true) }
     var message by remember { mutableStateOf<String?>(null) }
     var reloadToken by remember { mutableIntStateOf(0) }
 
-    /** One guest command at a time; both actions write to the same directory. */
-    val busy = cloning || creating
+    /** One guest command at a time; every action writes to the same directory. */
+    val busy = cloning || creating || deleting
 
     val recents = remember(reloadToken) { ProjectRepository.recents(context) }
 
@@ -88,30 +97,29 @@ fun ProjectsScreen(
         onOpenFolder(path)
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .windowInsetsPadding(WindowInsets.systemBars)
-            .imePadding(),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "projects",
-                fontFamily = FontFamily.Monospace,
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = onDismiss) {
-                Text("close", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+    fun remove(name: String) {
+        pendingDelete = null
+        deleting = true
+        message = "Deleting $name..."
+        // App scope like the other two: an rm -rf of a big repository takes long enough
+        // that leaving the screen would kill it partway through the tree.
+        val work = AppScope.start { ProjectRepository.delete(app, name) }
+        scope.launch {
+            val outcome = work.await()
+            deleting = false
+            when (outcome) {
+                is ProjectRepository.Outcome.Success -> {
+                    message = "Deleted ${outcome.name}"
+                    reloadToken++
+                }
+                is ProjectRepository.Outcome.Failure -> message = outcome.message
             }
+        }
+    }
+
+    ScreenSurface {
+        ScreenHeader("projects") {
+            HeaderAction("close", onDismiss)
         }
 
         Column(
@@ -138,11 +146,18 @@ fun ProjectsScreen(
                 Button(
                     enabled = newName.isNotBlank() && !busy,
                     onClick = {
+                        val name = newName.trim()
                         creating = true
                         message = "Creating..."
+                        // The guest work goes on the app scope, not this screen's: leaving
+                        // Projects mid-create killed git init and left the folder behind,
+                        // and the retry then reported the name as taken. Only the reporting
+                        // below dies with the screen.
+                        val work = AppScope.start {
+                            ProjectRepository.create(app, name, initGit)
+                        }
                         scope.launch {
-                            val outcome =
-                                ProjectRepository.create(context, newName.trim(), initGit)
+                            val outcome = work.await()
                             creating = false
                             when (outcome) {
                                 is ProjectRepository.Outcome.Success -> {
@@ -192,12 +207,28 @@ fun ProjectsScreen(
                 Button(
                     enabled = cloneUrl.isNotBlank() && !busy,
                     onClick = {
+                        val url = cloneUrl.trim()
                         cloning = true
                         message = "Cloning..."
+                        cloneProgress.value = null
+                        val work = AppScope.start {
+                            ProjectRepository.clone(
+                                app,
+                                url,
+                                onProgress = { cloneProgress.value = it },
+                            )
+                        }
+                        cloneJob = work
                         scope.launch {
-                            val outcome = ProjectRepository.clone(context, cloneUrl.trim())
+                            // join, not await: cancelling the clone must not take this
+                            // reporting coroutine down with it.
+                            work.join()
                             cloning = false
-                            when (outcome) {
+                            cloneJob = null
+                            cloneProgress.value = null
+                            if (work.isCancelled) {
+                                message = "Clone cancelled"
+                            } else when (val outcome = work.await()) {
                                 is ProjectRepository.Outcome.Success -> {
                                     cloneUrl = ""
                                     message = "Cloned ${outcome.name}"
@@ -211,6 +242,17 @@ fun ProjectsScreen(
                     },
                 ) { Text(if (cloning) "Cloning..." else "Clone") }
 
+                if (cloning) {
+                    TextButton(
+                        onClick = {
+                            // the repository takes the half-cloned folder back out, which
+                            // is what makes the retry work rather than say it exists.
+                            message = "Cancelling..."
+                            cloneJob?.cancel()
+                        },
+                    ) { Text("Cancel") }
+                }
+
                 if (busy) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(18.dp),
@@ -220,14 +262,28 @@ fun ProjectsScreen(
                 }
             }
             message?.let {
+                val done = it.startsWith("Cloned") ||
+                    it.startsWith("Created") ||
+                    it.startsWith("Deleted")
                 Text(
                     it,
                     fontSize = 12.sp,
-                    color = if (it.startsWith("Cloned") || it.startsWith("Created")) {
+                    color = if (done) {
                         MaterialTheme.colorScheme.primary
                     } else {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
+                )
+            }
+            // git's own counters, so a clone that takes four minutes does not look stuck.
+            progressLine?.let {
+                Text(
+                    it,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -275,6 +331,37 @@ fun ProjectsScreen(
                     subtitle = entry.path,
                     isRepo = entry.isRepo,
                     onClick = { open(entry.path) },
+                    trailing = {
+                        if (pendingDelete == entry.name) {
+                            // Ordered so that arming shifts the delete left and puts
+                            // "cancel" under the finger that just tapped: a reflex second
+                            // tap in the same spot backs out rather than deleting.
+                            TextButton(
+                                enabled = !busy,
+                                onClick = { remove(entry.name) },
+                            ) {
+                                Text(
+                                    "delete",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                            TextButton(onClick = { pendingDelete = null }) {
+                                Text("cancel", fontSize = 12.sp)
+                            }
+                        } else {
+                            TextButton(
+                                enabled = !busy,
+                                onClick = { pendingDelete = entry.name },
+                            ) {
+                                Text(
+                                    "delete",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    },
                 )
             }
 
@@ -309,6 +396,7 @@ private fun FolderRow(
     subtitle: String,
     isRepo: Boolean,
     onClick: () -> Unit,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
@@ -322,11 +410,12 @@ private fun FolderRow(
                 .size(6.dp)
                 .clip(CircleShape)
                 .background(
-                    if (isRepo) Color(0xFF6FAE7F) else MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (isRepo) KernColors.Ok else MaterialTheme.colorScheme.onSurfaceVariant,
                 ),
         )
         Spacer(Modifier.width(12.dp))
-        Column {
+        // Weighted so a long path cannot squeeze [trailing] out of the row entirely.
+        Column(Modifier.weight(1f)) {
             Text(name, fontSize = 15.sp, color = MaterialTheme.colorScheme.onBackground)
             Text(
                 subtitle.removePrefix(ProjectRepository.HOME).ifEmpty { "~" },
@@ -335,5 +424,6 @@ private fun FolderRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        trailing?.invoke()
     }
 }

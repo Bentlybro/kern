@@ -14,8 +14,10 @@ import android.os.PowerManager
 import android.util.Log
 import dev.kern.app.MainActivity
 import dev.kern.app.R
+import dev.kern.app.runtime.AgentPrompt
 import dev.kern.app.runtime.AgentRepository
-import dev.kern.app.runtime.LinuxRuntime
+import dev.kern.app.runtime.CodeServer
+import dev.kern.app.ui.TerminalSessions
 import dev.kern.app.runtime.Secrets
 import java.net.HttpURLConnection
 import java.net.URL
@@ -52,6 +54,10 @@ class SessionService : Service() {
         private const val CHANNEL_ID = "session"
         private const val AGENT_CHANNEL_ID = "agent"
         private const val TAG = "Kern"
+
+        /** Enough to outlast the toolchain install racing the first start, no more. */
+        private const val START_ATTEMPTS = 3
+        private const val START_TIMEOUT_MS = 60_000L
         const val ACTION_START = "dev.kern.app.action.START"
         const val ACTION_STOP = "dev.kern.app.action.STOP"
 
@@ -107,22 +113,14 @@ class SessionService : Service() {
         if (isHealthy()) {
             Log.i(TAG, "supervise: adopted an already-running server")
         } else {
-            LinuxRuntime.applyWorkbenchSettings(this)
-            LinuxRuntime.startCodeServer(this, Secrets.token(this))
-            if (!awaitHealthy(90_000)) {
-                val why = "code-server did not start. See /root/.kern/server.log " +
-                    "in the terminal."
-                Log.e(TAG, "supervise: $why")
-                _state.value = SessionState.Failed(why)
-                updateNotification("Failed to start - open the app for details")
-                return
-            }
+            CodeServer.applyWorkbenchSettings(this)
+            if (!launchWithRetries()) return
         }
         _state.value = SessionState.Healthy
-        updateNotification("Running on 127.0.0.1:${LinuxRuntime.CODE_SERVER_PORT}")
+        updateNotification("Running on 127.0.0.1:${CodeServer.PORT}")
 
         var misses = 0
-        var lastAgentState: AgentRepository.State? = null
+        var wasAwaiting = false
         var agentTick = 0
         while (scope.isActive) {
             delay(15_000)
@@ -130,25 +128,27 @@ class SessionService : Service() {
             // Pocket workflow (M5): while a session is running, watch for the agent
             // stopping to ask something and raise a notification so the phone can be in
             // a pocket. Polled every other health tick - cheap, and tool-agnostic.
+            //
+            // Reads the rendered screen rather than a byte stream, because a TUI agent
+            // repaints in place: the last thing written and the last thing shown are
+            // routinely different, and only the second one is the question.
             if (++agentTick % 2 == 0) {
                 runCatching {
-                    val snap = AgentRepository.snapshot(this@SessionService, 12)
-                    if (snap.state != lastAgentState) {
-                        if (snap.state == AgentRepository.State.AwaitingInput) {
-                            notifyAgent(
-                                "Agent needs you",
-                                snap.tail.lastOrNull { it.isNotBlank() }?.trim()?.take(120)
-                                    ?: "Waiting for input",
-                            )
-                        }
-                        lastAgentState = snap.state
+                    val screen = TerminalSessions.agentScreen()
+                    val awaiting = screen != null && AgentPrompt.awaitingInput(screen)
+                    if (awaiting && !wasAwaiting) {
+                        notifyAgent(
+                            "Agent needs you",
+                            AgentPrompt.lastLine(screen!!)?.take(120) ?: "Waiting for input",
+                        )
                     }
+                    wasAwaiting = awaiting
                 }
             }
 
             if (isHealthy()) {
                 if (misses > 0) {
-                    updateNotification("Running on 127.0.0.1:${LinuxRuntime.CODE_SERVER_PORT}")
+                    updateNotification("Running on 127.0.0.1:${CodeServer.PORT}")
                 }
                 misses = 0
                 _state.value = SessionState.Healthy
@@ -157,13 +157,13 @@ class SessionService : Service() {
                 if (misses >= 2) {
                     _state.value = SessionState.Reconnecting
                     updateNotification("Server died - restarting...")
-                    LinuxRuntime.stopCodeServer()
-                    LinuxRuntime.startCodeServer(this, Secrets.token(this))
+                    CodeServer.stop()
+                    CodeServer.start(this, Secrets.token(this))
                     if (awaitHealthy(45_000)) {
                         misses = 0
                         _state.value = SessionState.Healthy
                         updateNotification(
-                            "Running on 127.0.0.1:${LinuxRuntime.CODE_SERVER_PORT}",
+                            "Running on 127.0.0.1:${CodeServer.PORT}",
                         )
                     }
                 }
@@ -171,10 +171,54 @@ class SessionService : Service() {
         }
     }
 
+    /**
+     * Start the server, and try again if it dies on the way up.
+     *
+     * The first start after a fresh setup fails reproducibly on device: the toolchain apt
+     * runs on in the same guest behind the opening editor, and code-server's bash exits
+     * within about a hundred milliseconds without creating so much as its log directory.
+     * The same start succeeds every time once that has finished, so it is transient rather
+     * than broken. What made it fatal was the response, not the fault - one attempt, then
+     * ninety seconds spent polling a process we had already been told was dead, then a
+     * failure blaming a log file that was never created.
+     *
+     * Returns false only after every attempt has failed, having already reported why.
+     */
+    private suspend fun launchWithRetries(): Boolean {
+        repeat(START_ATTEMPTS) { attempt ->
+            if (attempt > 0) {
+                Log.i(TAG, "supervise: retrying code-server (attempt ${attempt + 1})")
+                CodeServer.stop()
+                delay(3_000)
+            }
+            if (!CodeServer.start(this, Secrets.token(this))) {
+                // A refused spawn is known immediately. Retrying it is still worth a turn,
+                // since fd and process pressure during setup is exactly what causes it.
+                return@repeat
+            }
+            if (awaitHealthy(START_TIMEOUT_MS)) return true
+        }
+
+        val why = "code-server did not start after $START_ATTEMPTS attempts. " +
+            "See /root/.kern/server.log in the terminal, or try Repair in settings."
+        Log.e(TAG, "supervise: $why")
+        _state.value = SessionState.Failed(why)
+        updateNotification("Failed to start - open the app for details")
+        return false
+    }
+
+    /**
+     * Poll until the server answers, or until it is gone.
+     *
+     * Stopping early when the process has died is the point: without it a server that
+     * exited in a tenth of a second still cost the full timeout before anyone noticed,
+     * which is most of what made this look like a hang rather than a crash.
+     */
     private suspend fun awaitHealthy(timeoutMs: Long): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             if (isHealthy()) return true
+            if (!CodeServer.isRunning()) return false
             // Poll briskly: this delay is most of the perceived startup time.
             delay(300)
         }
@@ -182,7 +226,7 @@ class SessionService : Service() {
     }
 
     private fun isHealthy(): Boolean = try {
-        val conn = URL(LinuxRuntime.HEALTH_URL).openConnection() as HttpURLConnection
+        val conn = URL(CodeServer.HEALTH_URL).openConnection() as HttpURLConnection
         conn.connectTimeout = 2_000
         conn.readTimeout = 2_000
         val ok = conn.responseCode in 200..299
@@ -194,7 +238,7 @@ class SessionService : Service() {
 
     private fun shutdown() {
         superviseJob?.cancel()
-        LinuxRuntime.stopCodeServer()
+        CodeServer.stop()
         _state.value = SessionState.Idle
         wakeLock?.let { if (it.isHeld) it.release() }
         stopForeground(STOP_FOREGROUND_REMOVE)

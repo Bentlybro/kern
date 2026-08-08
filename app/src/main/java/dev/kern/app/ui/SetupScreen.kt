@@ -1,10 +1,6 @@
 package dev.kern.app.ui
 
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import android.os.PowerManager
-import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +27,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -41,7 +38,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.kern.app.runtime.BatteryOptimization
 import dev.kern.app.runtime.LinuxRuntime
 import dev.kern.app.runtime.RootfsInstaller
 import dev.kern.app.runtime.StorageManager
@@ -69,15 +69,44 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
         stage is RootfsInstaller.Stage.Downloading ||
         stage is RootfsInstaller.Stage.Working
 
-    val installed = remember(stage) { LinuxRuntime.isInstalled(context) }
+    // Deleting the guest signals through here rather than through the installer's stage,
+    // so without this key the screen goes on offering to finish setting up — and to
+    // delete — an environment that is already gone.
+    val installChanges by LinuxRuntime.installChanges.collectAsStateWithLifecycle()
+
+    val installed = remember(stage, installChanges) { LinuxRuntime.isInstalled(context) }
+
+    // Not `installed`: a download that died before the filesystem was unpacked leaves
+    // nothing installed and most of the payload in the cache, and gating the delete on the
+    // guest hid the one control that clears it in exactly the state that needs it.
+    val removable = remember(stage, installChanges) {
+        installed || RootfsInstaller.hasCachedDownloads(context)
+    }
 
     // code-server is installed *before* the toolchain step, so "is code-server present?"
     // turns true partway through setup. Gating on `installing` too is what stops the
     // screen offering to open the IDE while apt is still working — starting the session
     // then races dpkg for its lock, and the session fails and bounces back here.
-    val ready = !installing && remember(stage) {
-        LinuxRuntime.isInstalled(context) && LinuxRuntime.isCodeServerInstalled(context)
+    val ready = !installing && remember(stage, installChanges) { LinuxRuntime.isReady(context) }
+
+    // Free space moves while the app is in the background - the user leaves to clear
+    // photos and comes back - so it is re-read on the way in rather than once, and again
+    // whenever an install starts or stops.
+    var freeBytes by remember { mutableLongStateOf(Diagnostics.freeBytes(context)) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { freeBytes = Diagnostics.freeBytes(context) }
+    LaunchedEffect(installing) { freeBytes = Diagnostics.freeBytes(context) }
+
+    // Setup used to be offered whatever the disk said, and then died deep inside tar with
+    // a message about the filesystem that named nothing anyone could act on. An unpacked
+    // guest only needs what is left to download and install, so the floor drops once the
+    // filesystem is there rather than refusing a Retry that would have worked.
+    val requiredMb = if (installed) {
+        RootfsInstaller.ESTIMATED_DOWNLOAD_MB
+    } else {
+        RootfsInstaller.ESTIMATED_DISK_MB
     }
+    val freeMb = Diagnostics.megabytes(freeBytes)
+    val enoughSpace = freeMb >= requiredMb
 
     Column(
         modifier = Modifier
@@ -121,6 +150,17 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
 
         BatteryHint(context)
 
+        // The service knows exactly why the server never came up, and this was the only
+        // screen that never said. Without it a dead server reads as "Linux is installed"
+        // over a button that walks into the same 90-second wait every time.
+        (state as? SessionState.Failed)?.let {
+            Text(
+                it.message,
+                fontSize = 12.5.sp,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+
         if (ready) {
             Button(
                 onClick = onStart,
@@ -133,6 +173,14 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
                     fontSize = 16.sp,
                 )
             }
+        } else if (!enoughSpace && !installing) {
+            Text(
+                "Not enough storage. Setup needs about $requiredMb MB free and this device " +
+                    "has $freeMb MB - free up about ${requiredMb - freeMb} MB more and " +
+                    "come back.",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.error,
+            )
         } else {
             Button(
                 onClick = { RootfsInstaller.start(context) },
@@ -152,14 +200,24 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
         }
 
         (stage as? RootfsInstaller.Stage.Failed)?.let {
-            TextButton(onClick = { RootfsInstaller.start(context) }) { Text("Retry") }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Retry walks into the same wall when the disk is what stopped it, so it
+                // goes with the button above. Copying the failure never does.
+                if (enoughSpace) {
+                    TextButton(onClick = { RootfsInstaller.start(context) }) { Text("Retry") }
+                }
+                CopyDiagnosticsButton()
+            }
         }
 
         // Settings lives inside the IDE, so a guest too broken to start one leaves the
         // user with no way to throw it away. An environment can be damaged beyond what
         // re-running setup fixes — an interrupted apt can take coreutils with it, and
         // then even `ls` is gone — so starting over has to be reachable from here.
-        if (installed && !installing) {
+        if (removable && !installing) {
             if (!confirmReset) {
                 TextButton(onClick = { confirmReset = true }) {
                     Text("Delete and start over", color = MaterialTheme.colorScheme.error)
@@ -274,7 +332,7 @@ private fun StageView(stage: RootfsInstaller.Stage) {
         )
 
         is RootfsInstaller.Stage.Failed -> Text(
-            stage.message,
+            Diagnostics.explain(LocalContext.current, stage.message),
             fontSize = 12.5.sp,
             color = MaterialTheme.colorScheme.error,
         )
@@ -284,8 +342,12 @@ private fun StageView(stage: RootfsInstaller.Stage) {
 /** Android suspends background work aggressively; this is the one thing worth asking for. */
 @Composable
 private fun BatteryHint(context: Context) {
-    val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-    val exempt = remember { pm.isIgnoringBatteryOptimizations(context.packageName) }
+    // The user grants this in Settings, outside the app, so the answer is only ever
+    // stale here — re-read it on the way back rather than leaving the hint up forever.
+    var exempt by remember { mutableStateOf(BatteryOptimization.isExempt(context)) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        exempt = BatteryOptimization.isExempt(context)
+    }
     if (exempt) return
 
     Row(
@@ -300,13 +362,8 @@ private fun BatteryHint(context: Context) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        TextButton(onClick = {
-            context.startActivity(
-                Intent(
-                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                    Uri.parse("package:" + context.packageName),
-                ),
-            )
-        }) { Text("Allow") }
+        TextButton(onClick = { BatteryOptimization.requestExemption(context) }) {
+            Text("Allow")
+        }
     }
 }

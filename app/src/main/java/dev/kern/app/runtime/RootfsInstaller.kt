@@ -32,25 +32,45 @@ object RootfsInstaller {
 
     private const val TAG = "Kern"
 
+    private const val CDIMAGE_BASE =
+        "https://cdimage.ubuntu.com/ubuntu-base/releases/${GuestConfig.UBUNTU_RELEASE}/release/"
+
     /**
-     * Ubuntu 26.04 LTS, verified on-device against this PRoot build: fake root, apt,
-     * dpkg's hard-link handling, and code-server all behave. Worth knowing that 26.04
-     * ships uutils (Rust) coreutils rather than GNU — it caused no trouble in testing,
-     * but it is the newest moving part if something odd ever turns up in a package's
-     * install scripts.
+     * The name cdimage serves today, used only when SHA256SUMS cannot be read.
      *
-     * The codename lives next to the version because [configure] writes it into
-     * sources.list, and the two drifting apart produces a rootfs that cannot install
-     * anything.
+     * Canonical prunes this plain name once point releases ship: 24.04's is already a 404
+     * and its SHA256SUMS lists only 24.04.3 and 24.04.4. 26.04 will follow, and a URL
+     * built from the release alone is therefore a bomb with Canonical's finger on the
+     * timer - every new install dying at step one, fixable only by shipping an app.
      */
-    const val UBUNTU_RELEASE = "26.04"
-    private const val UBUNTU_CODENAME = "resolute"
-    private const val ROOTFS_URL =
-        "https://cdimage.ubuntu.com/ubuntu-base/releases/$UBUNTU_RELEASE/release/" +
-            "ubuntu-base-$UBUNTU_RELEASE-base-arm64.tar.gz"
+    private const val ROOTFS_FALLBACK_NAME =
+        "ubuntu-base-${GuestConfig.UBUNTU_RELEASE}-base-arm64.tar.gz"
+
     private const val CODE_SERVER_VERSION = "4.131.0"
     private const val CODE_SERVER_URL =
         "https://github.com/coder/code-server/releases/download/v$CODE_SERVER_VERSION/code-server_${CODE_SERVER_VERSION}_arm64.deb"
+
+    /**
+     * Pinned, unlike the base image's - and correct here for the reason it is wrong there.
+     * This URL names an immutable GitHub release asset, so the bytes behind it cannot
+     * change unless the version does. Taken from the release API's own `digest` for
+     * code-server_4.131.0_arm64.deb, 228,520,934 bytes. Change it in the same commit as
+     * [CODE_SERVER_VERSION], or setup will refuse a package that is perfectly good.
+     */
+    private const val CODE_SERVER_SHA256 =
+        "b0758c3692f3fc2a7311d6ab58c4f91efc4bc277938cff4a4164f7f9683542cf"
+
+    private const val ARCHIVE_NAME = "ubuntu-base.tar.gz"
+
+    /**
+     * The version is in the name because a file at the final name is trusted on sight.
+     * Without it, the 218 MB package left by an older Kern would be handed to apt as if
+     * it were this one, and its `.part` would be resumed against a different URL.
+     */
+    private const val DEB_NAME = "code-server-$CODE_SERVER_VERSION.deb"
+
+    /** Both staged names, and the `.part` of either, matched by prefix. */
+    private val DOWNLOAD_PREFIXES = listOf("ubuntu-base", "code-server")
 
     sealed interface Stage {
         data object Idle : Stage
@@ -127,8 +147,9 @@ object RootfsInstaller {
      * speaking TLS from Go (gh) or curl fails with "certificate signed by unknown
      * authority". The rest just make the IDE useful straight away.
      */
-    private const val TOOLS =
-        "ca-certificates git gh tmux curl ripgrep python3 python3-pip"
+    private val TOOLS = listOf(
+        "ca-certificates", "git", "gh", "tmux", "curl", "ripgrep", "python3", "python3-pip",
+    )
 
     /**
      * Setup, in two halves.
@@ -144,15 +165,28 @@ object RootfsInstaller {
     suspend fun install(context: Context): Boolean = withContext(Dispatchers.IO) {
         try {
             val essential = coroutineScope {
-                val deb = File(context.cacheDir, "code-server.deb")
-                var fetch: Deferred<Boolean>? = null
+                val deb = File(downloadDir(context), DEB_NAME)
+                var fetch: Deferred<String?>? = null
 
                 if (!LinuxRuntime.isInstalled(context)) {
-                    val archive = File(context.cacheDir, "ubuntu-base.tar.gz")
-                    if (!archive.exists() || archive.length() < 20L * 1024 * 1024) {
+                    val archive = File(downloadDir(context), ARCHIVE_NAME)
+                    // Existence alone: download renames only a transfer that arrived whole
+                    // and matched its checksum into this name, so anything here is
+                    // complete. The size guess this replaces took 25 MB of the 34 MB image
+                    // for a finished one.
+                    if (!archive.exists()) {
                         _stage.value = Stage.Downloading("Ubuntu base", 0, 0)
-                        logLine("Downloading Ubuntu $UBUNTU_RELEASE base image")
-                        LinuxRuntime.download(ROOTFS_URL, archive) { got, total ->
+                        logLine("Downloading Ubuntu ${GuestConfig.UBUNTU_RELEASE} base image")
+                        val source = resolveRootfs()
+                        logLine(
+                            if (source.sha256 != null) {
+                                "${source.name}, checked against SHA256SUMS"
+                            } else {
+                                "${source.name} - SHA256SUMS was unreachable, so this one " +
+                                    "cannot be checked"
+                            },
+                        )
+                        download(source.url, archive, source.sha256) { got, total ->
                             _stage.value = Stage.Downloading("Ubuntu base", got, total)
                         }
                     }
@@ -161,7 +195,7 @@ object RootfsInstaller {
                     // against the base image's 34, and unpacking is CPU bound, so fetching
                     // it here costs almost nothing on the clock instead of minutes of its
                     // own once unpacking has finished.
-                    if (!LinuxRuntime.isCodeServerInstalled(context)) {
+                    if (!CodeServer.isInstalled(context)) {
                         fetch = async { fetchServer(deb) }
                     }
 
@@ -172,13 +206,17 @@ object RootfsInstaller {
                         return@coroutineScope fail("Could not unpack the filesystem")
                     }
                     archive.delete()
-
-                    _stage.value = Stage.Working("Configuring")
-                    configure(context)
-                    logLine("Configured apt, DNS and dpkg")
                 }
 
-                if (!LinuxRuntime.isCodeServerInstalled(context)) {
+                // Outside the branch above on purpose: this is the Repair path too, and an
+                // apt upgrade that puts Ubuntu's own sources.list.d back, or a lost 99kern
+                // that re-enables the _apt sandbox, leaves a guest that cannot install
+                // anything and no way to fix it from the UI. Applying it is idempotent.
+                _stage.value = Stage.Working("Configuring")
+                GuestConfig.apply(context)
+                logLine("Configured apt, DNS and dpkg")
+
+                if (!CodeServer.isInstalled(context)) {
                     _stage.value = Stage.Working("Updating package lists")
                     LinuxRuntime.run(
                         context,
@@ -189,12 +227,11 @@ object RootfsInstaller {
 
                     if (fetch == null) fetch = async { fetchServer(deb) }
                     _stage.value = Stage.Working("Downloading code-server")
-                    if (fetch.await() != true) {
-                        return@coroutineScope fail("Could not download code-server")
-                    }
+                    val failure = fetch.await()
+                    if (failure != null) return@coroutineScope fail(failure)
 
                     _stage.value = Stage.Working("Installing code-server")
-                    val staged = File(LinuxRuntime.rootfsDir(context), "tmp/code-server.deb")
+                    val staged = File(LinuxRuntime.guestTmpDir(context), "code-server.deb")
                     if (!moveInto(deb, staged)) {
                         return@coroutineScope fail("Could not stage the code-server package")
                     }
@@ -206,7 +243,7 @@ object RootfsInstaller {
                         timeoutMs = 900_000,
                         onLine = ::logLine,
                     )
-                    if (!LinuxRuntime.isCodeServerInstalled(context)) {
+                    if (!CodeServer.isInstalled(context)) {
                         return@coroutineScope fail(
                             result?.stdout?.lines()?.lastOrNull { it.isNotBlank() }
                                 ?: "code-server did not install",
@@ -218,21 +255,24 @@ object RootfsInstaller {
             if (!essential) return@withContext false
 
             // Hand over: from here the editor can open, and the rest happens behind it.
-            LinuxRuntime.applyWorkbenchSettings(context)
+            CodeServer.applyWorkbenchSettings(context)
             LinuxRuntime.run(context, "mkdir -p /root/projects", timeoutMs = 20_000)
             LinuxRuntime.notifyInstallChanged()
             logLine("Editor ready — installing the toolchain in the background")
 
             _stage.value = Stage.Working("Installing tools")
-            LinuxRuntime.run(
-                context,
-                "apt-get install -y $TOOLS 2>&1; update-ca-certificates 2>&1",
-                timeoutMs = 1_200_000,
-                onLine = ::logLine,
-            )
+            // Checked, not fired and forgotten: apt losing the connection partway leaves a
+            // guest with no git, gh or tmux, and reporting Done over that sends the user
+            // hunting for the problem everywhere except where it is.
+            if (!Apt.install(context, TOOLS, ::logLine)) {
+                return@withContext fail(
+                    "The editor is ready, but the toolchain did not finish installing - " +
+                        "git, gh and tmux are missing. Retry, or use Repair in settings.",
+                )
+            }
 
             _stage.value = Stage.Working("Finishing up")
-            polish(context)
+            GuestConfig.polish(context)
             logLine("Setup complete")
 
             _stage.value = Stage.Done
@@ -244,14 +284,86 @@ object RootfsInstaller {
     }
 
     /**
-     * Fetched into the app's cache rather than the rootfs, so it can download while
-     * PRoot is busy unpacking into that same directory tree.
+     * Which base image to fetch, and what it should hash to, asked of cdimage rather than
+     * assumed.
+     *
+     * Deliberately not a compile-time hash constant. Pinning one would turn Canonical's
+     * routine rename into a checksum mismatch - Kern accusing itself of shipping a
+     * tampered mirror, on Canonical's schedule, fixable only by shipping a new app.
+     * SHA256SUMS is one fetch answering both questions at once, and it cannot rot that
+     * way. If it is unreachable, today's literal name still gets a try: a cdimage
+     * restructure should cost verification, not the install.
      */
-    private suspend fun fetchServer(target: File): Boolean {
-        if (target.exists() && target.length() > 100L * 1024 * 1024) return true
+    private fun resolveRootfs(): RootfsSource = selectRootfs(
+        runCatching { fetchText(CDIMAGE_BASE + "SHA256SUMS") }
+            .onFailure { Log.w(TAG, "could not read SHA256SUMS", it) }
+            .getOrNull(),
+    )
+
+    /**
+     * The newest ubuntu-base of our own series named in [sums], with the digest listed
+     * beside it - or today's literal name and no digest when [sums] is unreadable or names
+     * nothing we can use.
+     *
+     * Split from the fetch above, and internal rather than private, so the choice can be
+     * tested against real SHA256SUMS text without reaching cdimage.
+     */
+    internal fun selectRootfs(sums: String?): RootfsSource {
+        val fallback = RootfsSource(
+            ROOTFS_FALLBACK_NAME,
+            CDIMAGE_BASE + ROOTFS_FALLBACK_NAME,
+            null,
+        )
+        if (sums == null) return fallback
+
+        var best: RootfsSource? = null
+        var bestVersion = emptyList<Int>()
+        for (line in sums.lineSequence()) {
+            val match = ROOTFS_LINE.matchEntire(line.trim()) ?: continue
+            val (digest, name, version) = match.destructured
+            // Point releases of our own series only. 26.04.1 supersedes 26.04, but 26.10
+            // is a different Ubuntu and the codename GuestConfig writes into sources.list
+            // would no longer describe it.
+            val ours = version == GuestConfig.UBUNTU_RELEASE ||
+                version.startsWith("${GuestConfig.UBUNTU_RELEASE}.")
+            if (!ours) continue
+            val parts = version.split('.').map { it.toIntOrNull() ?: 0 }
+            if (best == null || newer(parts, bestVersion)) {
+                best = RootfsSource(name, CDIMAGE_BASE + name, digest.lowercase())
+                bestVersion = parts
+            }
+        }
+        return best ?: fallback
+    }
+
+    // internal, not private, only so [selectRootfs] can be read back in a unit test.
+    internal class RootfsSource(val name: String, val url: String, val sha256: String?)
+
+    /** `<digest> *ubuntu-base-26.04-base-arm64.tar.gz`, with the point release captured. */
+    private val ROOTFS_LINE =
+        Regex("""([0-9a-fA-F]{64})\s+\*?(ubuntu-base-([0-9.]+)-base-arm64\.tar\.gz)""")
+
+    /** Number by number, because 26.04.10 is newer than 26.04.9 and sorts before it. */
+    private fun newer(candidate: List<Int>, incumbent: List<Int>): Boolean {
+        for (i in 0 until maxOf(candidate.size, incumbent.size)) {
+            val left = candidate.getOrElse(i) { 0 }
+            val right = incumbent.getOrElse(i) { 0 }
+            if (left != right) return left > right
+        }
+        return false
+    }
+
+    /**
+     * Fetched outside the rootfs, so it can download while PRoot is busy unpacking into
+     * that same directory tree. Returns null when the package is there, otherwise why it
+     * is not: a checksum mismatch and a dead connection ask very different things of the
+     * user, and both used to arrive as "Could not download code-server".
+     */
+    private suspend fun fetchServer(target: File): String? {
+        if (target.exists()) return null
         var reported = -1
         return runCatching {
-            LinuxRuntime.download(CODE_SERVER_URL, target) { got, total ->
+            download(CODE_SERVER_URL, target, CODE_SERVER_SHA256) { got, total ->
                 if (total > 0) {
                     val percent = (got * 100 / total).toInt()
                     // Every 10%: often enough to look alive, rarely enough to read.
@@ -261,14 +373,51 @@ object RootfsInstaller {
                     }
                 }
             }
-            true
+            null
         }.getOrElse {
             Log.w(TAG, "code-server download failed", it)
-            false
+            it.message ?: "Could not download code-server"
         }
     }
 
-    /** Cache and rootfs share a filesystem, so this is a rename, not a 218 MB copy. */
+    /**
+     * Where the two setup downloads are staged.
+     *
+     * Not the cache: Android empties that when the device runs low on space, which is
+     * exactly the device that cannot afford to fetch a quarter of a gigabyte twice, and it
+     * can do it mid-transfer. `noBackupFilesDir` sits on the same filesystem as the rootfs,
+     * so [moveInto] is still a rename rather than a 218 MB copy, and it keeps
+     * re-downloadable bytes out of cloud backup where they have no business being.
+     */
+    private fun downloadDir(context: Context): File = context.noBackupFilesDir
+
+    /**
+     * The setup downloads. They live outside the rootfs so an install that failed can
+     * resume without fetching a quarter of a gigabyte again - which also means anything
+     * clearing up after a failed install has to reach them. Matched by prefix so the
+     * `.part` of a transfer that never finished is caught too, and the cache is still
+     * swept because installs before v0.1.1 staged there.
+     */
+    private fun cachedDownloads(context: Context): List<File> =
+        listOf(downloadDir(context), context.cacheDir).flatMap { dir ->
+            dir.listFiles()
+                ?.filter { file -> DOWNLOAD_PREFIXES.any { file.name.startsWith(it) } }
+                ?: emptyList()
+        }
+
+    /**
+     * Whether a failed setup left bytes behind. The download dies before the rootfs is
+     * unpacked far more often than after, and in that state `isInstalled` is false while
+     * the cache holds most of the payload - so the UI cannot decide from the guest alone
+     * whether there is anything to throw away.
+     */
+    fun hasCachedDownloads(context: Context): Boolean = cachedDownloads(context).isNotEmpty()
+
+    fun clearCachedDownloads(context: Context) {
+        cachedDownloads(context).forEach { runCatching { it.delete() } }
+    }
+
+    /** Staging and rootfs share a filesystem, so this is a rename, not a 218 MB copy. */
     private fun moveInto(source: File, target: File): Boolean {
         target.parentFile?.mkdirs()
         if (target.exists()) target.delete()
@@ -289,6 +438,8 @@ object RootfsInstaller {
         val target = LinuxRuntime.rootfsDir(context).apply { mkdirs() }
         val proot = LinuxRuntime.prootBinary(context)
 
+        // not LinuxRuntime.spawnInGuest(): `-r /` and these two binds on purpose, so
+        // Android's /system/bin/tar is reachable before a rootfs exists.
         val process = PtyProcess.spawn(
             command = proot.absolutePath,
             argv = listOf(
@@ -309,108 +460,17 @@ object RootfsInstaller {
         ) ?: return false
 
         // tar is chatty on the pty; drain it so a full buffer cannot stall extraction.
-        runCatching { process.input.readBytes() }
+        process.drain()
         process.waitFor()
         process.close()
 
-        // toybox tar warns about metadata it cannot apply; judge by the result.
-        return LinuxRuntime.isInstalled(context)
-    }
-
-    /**
-     * Quieten the guest login.
-     *
-     * Android hands its own supplementary group IDs to every process, and they come
-     * through PRoot into the guest, where `/etc/group` has no matching entries — so each
-     * login prints "groups: cannot find name for group ID …". Naming them once fixes it,
-     * and the IDs must be read from inside the guest because they belong to the running
-     * process, not to the filesystem.
-     */
-    private suspend fun polish(context: Context) {
-        LinuxRuntime.run(
-            context,
-            """
-            for g in ${'$'}(awk '/^Groups:/{${'$'}1=""; print}' /proc/self/status 2>/dev/null); do
-              grep -q ":x:${'$'}g:" /etc/group 2>/dev/null || echo "android_${'$'}g:x:${'$'}g:" >> /etc/group
-            done
-            mkdir -p /root/projects
-            git config --global --get init.defaultBranch >/dev/null 2>&1 || \
-              git config --global init.defaultBranch main
-            git config --global --get user.name >/dev/null 2>&1 || \
-              git config --global user.name Kern
-            git config --global --get user.email >/dev/null 2>&1 || \
-              git config --global user.email kern@localhost
-            """.trimIndent(),
-            timeoutMs = 60_000,
-        )
-    }
-
-    private fun configure(context: Context) {
-        val root = LinuxRuntime.rootfsDir(context)
-
-        write(File(root, "etc/resolv.conf"), "nameserver 1.1.1.1\nnameserver 8.8.8.8\n")
-        write(
-            File(root, "etc/hosts"),
-            "127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n",
-        )
-        // arm64 lives on ports.ubuntu.com, not archive.ubuntu.com.
-        write(
-            File(root, "etc/apt/sources.list"),
-            listOf(
-                UBUNTU_CODENAME,
-                "$UBUNTU_CODENAME-updates",
-                "$UBUNTU_CODENAME-security",
-            ).joinToString("\n") {
-                "deb http://ports.ubuntu.com/ubuntu-ports $it main universe restricted multiverse"
-            } + "\n",
-        )
-        // 24.04 also ships the same repositories in deb822 form. Leaving both in place
-        // makes apt warn about every target being configured twice, so the one we do
-        // not control goes; the list written above covers the same components.
-        runCatching { File(root, "etc/apt/sources.list.d/ubuntu.sources").delete() }
-        write(
-            File(root, "etc/apt/apt.conf.d/99kern"),
-            buildString {
-                // apt drops privileges to _apt by default, which cannot work under PRoot.
-                appendLine("APT::Sandbox::User \"root\";")
-                // Pipelining and pdiffs are the classic causes of apt hanging under PRoot.
-                appendLine("Acquire::http::Pipeline-Depth \"0\";")
-                appendLine("Acquire::PDiffs \"false\";")
-                appendLine("Acquire::Retries \"3\";")
-                appendLine("APT::Install-Recommends \"false\";")
-                // Translated descriptions are several MB of download that nothing here
-                // ever reads.
-                appendLine("Acquire::Languages \"none\";")
-            },
-        )
-        write(
-            File(root, "etc/dpkg/dpkg.cfg.d/01-kern"),
-            buildString {
-                // dpkg fsyncs after every extracted file, which on phone storage is the
-                // single largest cost of installing anything. Container images disable it
-                // for exactly this reason. The exposure is a half-written install if the
-                // device loses power mid-apt, and Repair already recovers from that.
-                appendLine("force-unsafe-io")
-                // Nothing on a phone reads man pages or package docs, and skipping them
-                // saves both time and a surprising amount of space.
-                appendLine("path-exclude=/usr/share/doc/*")
-                appendLine("path-exclude=/usr/share/man/*")
-                appendLine("path-exclude=/usr/share/info/*")
-                appendLine("path-exclude=/usr/share/groff/*")
-            },
-        )
-        write(
-            File(root, "etc/environment"),
-            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\nLANG=C.UTF-8\n",
-        )
-        File(root, "root/projects").mkdirs()
-        File(root, "tmp").mkdirs()
-    }
-
-    private fun write(file: File, text: String) {
-        runCatching {
-            file.parentFile?.mkdirs()
-            file.writeText(text)
-        }.onFailure { Log.w(TAG, "could not write ${file.absolutePath}: ${it.message}") }
+        // toybox tar warns about metadata it cannot apply, so its exit status is no use;
+        // judge by the result. Not by asking isInstalled, which now wants the marker this
+        // is about to write - and not by the two files it used to ask for either, because
+        // a tar that ran out of space partway leaves those behind and nothing downstream
+        // could tell the difference.
+        if (!LinuxRuntime.rootfsLooksComplete(context)) return false
+        LinuxRuntime.markInstalled(context)
+        return true
     }
 }

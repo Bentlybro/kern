@@ -2,6 +2,8 @@ package dev.kern.app.runtime
 
 import android.content.Context
 import android.os.StatFs
+import dev.kern.app.ui.TerminalSessions
+import dev.kern.app.ui.WorkbenchWebView
 import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.Dispatchers
@@ -18,8 +20,6 @@ import kotlinx.coroutines.withContext
  */
 object StorageManager {
 
-    private const val PREFS = "kern"
-    private const val KEY_LIMIT_MB = "storage_limit_mb"
     private const val DEFAULT_LIMIT_MB = 4096
 
     data class Usage(
@@ -37,12 +37,10 @@ object StorageManager {
     }
 
     fun limitMb(context: Context): Int =
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getInt(KEY_LIMIT_MB, DEFAULT_LIMIT_MB)
+        Prefs.of(context).getInt(Prefs.KEY_STORAGE_LIMIT_MB, DEFAULT_LIMIT_MB)
 
     fun setLimitMb(context: Context, value: Int) {
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putInt(KEY_LIMIT_MB, value).apply()
+        Prefs.of(context).edit().putInt(Prefs.KEY_STORAGE_LIMIT_MB, value).apply()
     }
 
     /** Options offered in the UI, in MB. */
@@ -95,7 +93,9 @@ object StorageManager {
             apt-get clean 2>/dev/null
             rm -rf /var/lib/apt/lists/* 2>/dev/null
             rm -rf /root/.cache/* 2>/dev/null
-            rm -rf /tmp/* 2>/dev/null
+            # Not `rm -rf /tmp/*`: fc-* is another guest command's scratch and kern-gh* a
+            # sign-in in progress; deleting either makes its caller time out and misreport.
+            find /tmp -mindepth 1 -maxdepth 1 ! -name 'fc-*' ! -name 'kern-gh*' -exec rm -rf {} + 2>/dev/null
             : > /root/.kern/server.log 2>/dev/null
             """.trimIndent(),
             timeoutMs = 180_000,
@@ -110,9 +110,24 @@ object StorageManager {
      * is the recovery path when an install goes wrong.
      */
     suspend fun deleteGuest(context: Context): Boolean = withContext(Dispatchers.IO) {
-        LinuxRuntime.stopCodeServer()
+        CodeServer.stop()
+        // The terminals and the workbench are process scoped, so they used to survive this
+        // and carry on addressing a guest that is gone - a shell whose cwd is an unlinked
+        // directory while its next absolute path lands in the *replacement* rootfs, and a
+        // WebView still showing the old workbench. Before the tree goes, so nothing is
+        // still writing into it, and on the main thread because both own views.
+        withContext(Dispatchers.Main) {
+            TerminalSessions.destroyAll()
+            WorkbenchWebView.destroy()
+        }
+        // The paths the app remembers are inside the guest and outlive it too.
+        ProjectRepository.forgetAll(context)
         val root = LinuxRuntime.rootfsDir(context)
         runCatching { root.deleteRecursively() }.getOrDefault(false)
+        // The setup downloads are staged outside the rootfs, so deleting only the guest
+        // left a failed transfer's bytes on the device with nothing in the app able to
+        // reclaim them, and the next setup resuming into what was left.
+        RootfsInstaller.clearCachedDownloads(context)
         // Tell the UI the world changed, or it keeps routing to a guest that is gone.
         LinuxRuntime.notifyInstallChanged()
         !LinuxRuntime.isInstalled(context)

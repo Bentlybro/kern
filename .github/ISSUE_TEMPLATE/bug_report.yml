@@ -1,0 +1,73 @@
+name: Bug report
+description: Something in Kern does not work
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Kern is one person's project, so a report that answers everything below usually
+        gets diagnosed on the first read. Please fill in the boring parts too: the device,
+        the free storage and the processor are what separate a Kern bug from a phone that
+        was never going to run it.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: setup
+    attributes:
+      label: How far did setup get?
+      description: >-
+        Setup is the one-button install of Ubuntu and code-server on first run. Most of
+        what goes wrong goes wrong there, and it changes what the rest of this means.
+      options:
+        - Setup finished and the editor opens
+        - Setup finished, this broke afterwards
+        - Setup failed partway through
+        - Setup would not start
+        - I have not run setup
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      placeholder: Pixel 8, Android 15
+    validations:
+      required: true
+
+  - type: input
+    id: storage
+    attributes:
+      label: Free storage
+      description: Setup needs roughly 1.4 GB free. Android's own Settings app shows this.
+      placeholder: 3.2 GB free
+    validations:
+      required: true
+
+  - type: input
+    id: abi
+    attributes:
+      label: Processor
+      description: >-
+        Kern is arm64 only. The diagnostics below list this as ABIs. If you cannot get
+        that far, saying whether this is a phone, an emulator or a Chromebook is usually
+        enough.
+      placeholder: arm64-v8a
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: >-
+        Kern writes this for you: press "copy diagnostics" on the Status screen, or on the
+        setup screen when setup has failed. It carries the versions, the state of the
+        Linux guest and the tail of the setup log. Paste it here, or say which screen you
+        could not reach.
+      render: text

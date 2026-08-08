@@ -1,7 +1,6 @@
 package dev.kern.app.runtime
 
 import android.content.Context
-import android.os.PowerManager
 import android.os.StatFs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -88,12 +87,7 @@ object HealthCheck {
     }
 
     private suspend fun guestItem(context: Context): Item {
-        val result = LinuxRuntime.run(
-            context,
-            ". /etc/os-release 2>/dev/null; echo \"\$PRETTY_NAME\"",
-            timeoutMs = 25_000,
-        )
-        val name = result?.stdout?.trim().orEmpty()
+        val name = LinuxRuntime.osPrettyName(context).orEmpty()
         return if (name.isNotBlank()) {
             Item("Linux", Level.Ok, name)
         } else {
@@ -150,26 +144,26 @@ object HealthCheck {
      * The checks look for binaries, but apt wants package names, and for two of them
      * those differ — `node` lives in `nodejs`, `rg` in `ripgrep`. Installing by binary
      * name would simply fail to find the package.
+     *
+     * `gh` maps to two packages because one of them is not optional: without a trust
+     * store its Go TLS stack rejects every connection to github.com, so a gh installed
+     * from here would authenticate fine and then fail on the first push. Sign-in already
+     * asks for both; this is the same knowledge, applied to the other button that
+     * installs gh.
      */
-    private fun packagesFor(binaries: List<String>): List<String> =
-        binaries.map { PACKAGE_FOR[it] ?: it }
+    // internal rather than private so the unit tests can check the mapping directly.
+    internal fun packagesFor(binaries: List<String>): List<String> =
+        binaries.flatMap { PACKAGES_FOR[it] ?: listOf(it) }.distinct()
 
-    private val PACKAGE_FOR = mapOf(
-        "node" to "nodejs",
-        "rg" to "ripgrep",
+    private val PACKAGES_FOR = mapOf(
+        "node" to listOf("nodejs"),
+        "rg" to listOf("ripgrep"),
+        "gh" to listOf("gh", "ca-certificates"),
     )
 
     /** Run an [Remedy.Install]. Returns true when every requested binary is present. */
     suspend fun install(context: Context, packages: List<String>): Boolean =
-        withContext(Dispatchers.IO) {
-            LinuxRuntime.run(context, "apt-get update -qq", timeoutMs = 300_000)
-            val result = LinuxRuntime.run(
-                context,
-                "apt-get install -y ${packages.joinToString(" ")}",
-                timeoutMs = 1_200_000,
-            )
-            result?.ok == true
-        }
+        Apt.install(context, packages)
 
     /**
      * Whether the guest can actually reach GitHub. Cloning a public repository works
@@ -178,6 +172,11 @@ object HealthCheck {
      */
     private suspend fun githubItem(context: Context): Item =
         when (val account = GitHubAuth.account(context)) {
+            is GitHubAuth.Account.Unavailable -> Item(
+                "GitHub",
+                Level.Warn,
+                "Could not reach the guest.",
+            )
             is GitHubAuth.Account.ToolsMissing -> Item(
                 "GitHub",
                 Level.Warn,
@@ -216,9 +215,8 @@ object HealthCheck {
             else -> Item("Kernel page size", Level.Warn, "Unexpected: $size bytes.")
         }
 
-    private fun batteryItem(context: Context): Item {
-        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-        return if (pm.isIgnoringBatteryOptimizations(context.packageName)) {
+    private fun batteryItem(context: Context): Item =
+        if (BatteryOptimization.isExempt(context)) {
             Item("Battery", Level.Ok, "Exempt from battery optimisation.")
         } else {
             Item(
@@ -229,7 +227,6 @@ object HealthCheck {
                 remedyLabel = "Allow",
             )
         }
-    }
 
     private fun storageItem(context: Context): Item {
         // Only free space here: measuring the guest means walking tens of thousands of

@@ -18,9 +18,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import dev.kern.app.runtime.LinuxRuntime
+import dev.kern.app.runtime.CodeServer
+import dev.kern.app.runtime.Prefs
 import dev.kern.app.runtime.ProjectRepository
 import dev.kern.app.runtime.Secrets
 import kotlin.math.abs
@@ -108,17 +107,19 @@ object WorkbenchWebView {
      * VS Code persists its layout (open panels, sidebar visibility) in localStorage,
      * which outlives a settings.json change - so a one-time storage wipe is the only
      * deterministic way to make new layout defaults take effect.
+     *
+     * The settings this pairs with are `CodeServer.WORKBENCH_SETTINGS`, now in another
+     * file: editing a layout key there without bumping this leaves existing installs on
+     * the old layout.
      */
     private const val LAYOUT_EPOCH = 3
-    private const val PREFS = "kern"
-    private const val KEY_LAYOUT_EPOCH = "layout_epoch"
 
     private fun resetLayoutIfStale(context: Context) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        if (prefs.getInt(KEY_LAYOUT_EPOCH, 0) == LAYOUT_EPOCH) return
+        val prefs = Prefs.of(context)
+        if (prefs.getInt(Prefs.KEY_LAYOUT_EPOCH, 0) == LAYOUT_EPOCH) return
         WebStorage.getInstance().deleteAllData()
         CookieManager.getInstance().removeAllCookies(null)
-        prefs.edit().putInt(KEY_LAYOUT_EPOCH, LAYOUT_EPOCH).apply()
+        prefs.edit().putInt(Prefs.KEY_LAYOUT_EPOCH, LAYOUT_EPOCH).apply()
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -217,7 +218,7 @@ object WorkbenchWebView {
                 WorkbenchBridge.NAME,
             )
 
-            loadUrl(LinuxRuntime.codeServerUrl(ProjectRepository.currentFolder(activityContext)))
+            loadUrl(CodeServer.url(ProjectRepository.currentFolder(activityContext)))
         }
         instance = webView
         return webView
@@ -228,11 +229,34 @@ object WorkbenchWebView {
         instance?.let { (it.parent as? ViewGroup)?.removeView(it) }
     }
 
+    /**
+     * Throw the workbench away, for when the guest behind it has been deleted.
+     *
+     * The instance is process scoped, so a delete and reinstall used to come back to this
+     * same WebView still showing the old workbench or the error page it had fallen to, with
+     * nothing telling the user that opening any folder would reload it. The storage goes
+     * too: VS Code keeps its layout and its own recently-opened list in localStorage, and
+     * the login cookie names a token the reinstall has already replaced.
+     *
+     * Main thread only, and detached before destroyed - chromium reports either mistake a
+     * long way from here.
+     */
+    fun destroy() {
+        instance?.let { view ->
+            (view.parent as? ViewGroup)?.removeView(view)
+            view.destroy()
+        }
+        instance = null
+        contextWrapper = null
+        WebStorage.getInstance().deleteAllData()
+        CookieManager.getInstance().removeAllCookies(null)
+    }
+
     fun current(): WebView? = instance
 
     /** Switch the workbench to a different workspace folder. */
     fun openFolder(path: String) {
-        instance?.loadUrl(LinuxRuntime.codeServerUrl(path))
+        instance?.loadUrl(CodeServer.url(path))
     }
 
     /**
@@ -252,25 +276,18 @@ object WorkbenchWebView {
     // (monaco-editor#4946). Since the host app owns the window, we drive the IME
     // directly - which is the whole argument for a native shell.
 
-    fun isKeyboardVisible(): Boolean {
-        val wv = instance ?: return false
-        return ViewCompat.getRootWindowInsets(wv)
-            ?.isVisible(WindowInsetsCompat.Type.ime()) == true
-    }
+    fun isKeyboardVisible(): Boolean = instance?.imeVisible() == true
 
     fun showKeyboard() {
-        val wv = instance ?: return
-        wv.requestFocus()
-        ViewCompat.getWindowInsetsController(wv)?.show(WindowInsetsCompat.Type.ime())
+        instance?.showIme()
     }
 
     fun hideKeyboard() {
-        val wv = instance ?: return
-        ViewCompat.getWindowInsetsController(wv)?.hide(WindowInsetsCompat.Type.ime())
+        instance?.hideIme()
     }
 
     fun toggleKeyboard() {
-        if (isKeyboardVisible()) hideKeyboard() else showKeyboard()
+        instance?.toggleIme()
     }
 
     // ---- selection ----------------------------------------------------------
@@ -326,7 +343,43 @@ object WorkbenchWebView {
 
     /** Workbench commands we drive from native chrome, via their default keybindings. */
     object Commands {
-        fun toggleSidebar() = sendKey(KeyEvent.KEYCODE_B, KeyEvent.META_CTRL_ON)
+        /**
+         * Which sidebar view we last opened, or null when we last closed it.
+         *
+         * Needed because neither shortcut alone gives a toggle. Ctrl+B toggles whether
+         * the sidebar is *visible* without changing which view it holds, so after
+         * switching to source control the files chip only hid and showed source control.
+         * Ctrl+Shift+E and Ctrl+Shift+G select a view, but only collapse the sidebar when
+         * focus is already inside it, and a chip tap leaves focus in the editor, so they
+         * only ever opened. Tracking it here gives both chips the behaviour people
+         * expect: tap to show, tap the same one again to hide.
+         *
+         * It can drift if the sidebar is changed some other way. Tapping twice recovers,
+         * which is a fair price for not needing to interrogate the workbench.
+         */
+        private var sidebarView: String? = null
+
+        private fun showView(name: String, keyCode: Int) {
+            if (sidebarView == name) {
+                sendKey(KeyEvent.KEYCODE_B, KeyEvent.META_CTRL_ON)
+                sidebarView = null
+            } else {
+                sendKey(keyCode, KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON)
+                sidebarView = name
+            }
+        }
+
+        fun toggleSidebar() = showView("explorer", KeyEvent.KEYCODE_E)
+
+        fun toggleSourceControl() = showView("scm", KeyEvent.KEYCODE_G)
+
+        /**
+         * Search across the workspace. Ctrl+Shift+F is `workbench.action.findInFiles` and
+         * Search lives in the primary sidebar, so [showView]'s hide branch applies to it
+         * unchanged. Nothing else in the app can reach it: the activity bar is hidden, and
+         * [find] only searches the open editor.
+         */
+        fun toggleSearch() = showView("search", KeyEvent.KEYCODE_F)
 
         fun commandPalette() =
             sendKey(KeyEvent.KEYCODE_P, KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON)
@@ -342,6 +395,21 @@ object WorkbenchWebView {
         fun save() = sendKey(KeyEvent.KEYCODE_S, KeyEvent.META_CTRL_ON)
 
         fun find() = sendKey(KeyEvent.KEYCODE_F, KeyEvent.META_CTRL_ON)
+
+        /**
+         * Undo and redo, deliberately here rather than in the key row: [sendKey] hands the
+         * event straight to the WebView, so these cannot land in a terminal even when one
+         * has focus - and Ctrl+Z at a shell is SIGTSTP, which would suspend whatever the
+         * user is running.
+         *
+         * Nothing else on the device can produce Ctrl+Z. There are no letter keys in the
+         * key row, and the workbench settings hide every one of VS Code's own undo
+         * affordances, which left the command palette as the only route.
+         */
+        fun undo() = sendKey(KeyEvent.KEYCODE_Z, KeyEvent.META_CTRL_ON)
+
+        fun redo() =
+            sendKey(KeyEvent.KEYCODE_Z, KeyEvent.META_CTRL_ON or KeyEvent.META_SHIFT_ON)
 
         fun escape() = sendKey(KeyEvent.KEYCODE_ESCAPE)
     }

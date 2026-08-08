@@ -1,13 +1,10 @@
-package dev.kern.app.ui
+﻿package dev.kern.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,19 +13,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.imeAnimationTarget
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -41,8 +31,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -51,6 +39,42 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.kern.app.session.SessionService
 import dev.kern.app.session.SessionState
+
+/**
+ * Where the shell is. One slot rather than a flag per screen: precedence used to be
+ * written down once per notation — five back handlers, five `if` blocks and one usage
+ * effect — and the copies had already drifted apart.
+ *
+ * The terminal is deliberately not a destination. It is a pane inside [Editor], shown
+ * beside the workbench on the wide postures, so it stays a boolean.
+ */
+sealed interface ShellDestination {
+
+    /** Which bucket time spent here belongs to (M5a). */
+    val surface: UsageTracker.Surface
+
+    data object Editor : ShellDestination {
+        override val surface = UsageTracker.Surface.Editor
+    }
+
+    data object Projects : ShellDestination {
+        override val surface = UsageTracker.Surface.Projects
+    }
+
+    data object Cockpit : ShellDestination {
+        override val surface = UsageTracker.Surface.Cockpit
+    }
+
+    // Status and Settings are chrome, not work. Counting them as editor time is what made
+    // the editorShare number too flattering to settle D12 with.
+    data object Status : ShellDestination {
+        override val surface = UsageTracker.Surface.Chrome
+    }
+
+    data object Settings : ShellDestination {
+        override val surface = UsageTracker.Surface.Chrome
+    }
+}
 
 /**
  * The native fold shell (M2, decision D12).
@@ -64,143 +88,166 @@ import dev.kern.app.session.SessionState
 fun Shell(state: SessionState) {
     val fold = rememberFoldState()
     var showTerminal by remember { mutableStateOf(false) }
-    var showProjects by remember { mutableStateOf(false) }
     // Always open on the IDE. The cockpit is a place you choose to go (the "agent" chip),
     // not something that greets you.
-    var showCockpit by remember { mutableStateOf(false) }
-    var showStatus by remember { mutableStateOf(false) }
-    var showSettings by remember { mutableStateOf(false) }
+    var destination by remember { mutableStateOf<ShellDestination>(ShellDestination.Editor) }
 
-    BackHandler(enabled = showSettings) { showSettings = false }
-    BackHandler(enabled = showStatus && !showSettings) { showStatus = false }
-    BackHandler(enabled = showProjects) { showProjects = false }
-    BackHandler(enabled = showCockpit && !showProjects) { showCockpit = false }
-    BackHandler(enabled = !showProjects && !showCockpit) { WorkbenchWebView.Commands.escape() }
+    // The two conditions are each other's negation, so precedence cannot be got wrong.
+    // Compose gives priority to the most recently registered enabled handler, and while
+    // precedence was spelled out by hand the escape handler outranked the settings and
+    // status handlers declared above it and they never fired — back sent ESC into a
+    // detached WebView and those screens simply ignored the gesture.
+    BackHandler(enabled = destination != ShellDestination.Editor) {
+        destination = ShellDestination.Editor
+    }
+    BackHandler(enabled = destination == ShellDestination.Editor) {
+        WorkbenchWebView.Commands.escape()
+    }
 
     // M5a: record where session time actually goes, so decision D12 can be settled with
     // a number instead of a hunch.
     val context = LocalContext.current
-    LaunchedEffect(showCockpit, showProjects, showTerminal) {
+    LaunchedEffect(destination, showTerminal) {
+        val onTerminal = destination == ShellDestination.Editor && showTerminal
         UsageTracker.enter(
             context,
-            when {
-                showProjects -> UsageTracker.Surface.Projects
-                showCockpit -> UsageTracker.Surface.Cockpit
-                showTerminal -> UsageTracker.Surface.Terminal
-                else -> UsageTracker.Surface.Editor
-            },
+            if (onTerminal) UsageTracker.Surface.Terminal else destination.surface,
         )
     }
     DisposableEffect(Unit) { onDispose { UsageTracker.flush(context) } }
 
-    if (showSettings) {
-        SettingsScreen(
-            onDismiss = { showSettings = false },
-            // Deleting the guest invalidates the whole session; drop back to setup.
-            onGuestDeleted = {
-                showSettings = false
-                SessionService.stop(context)
-            },
-        )
-        return
-    }
-
-    if (showStatus) {
-        StatusScreen(
-            onDismiss = { showStatus = false },
-            onOpenSettings = { showStatus = false; showSettings = true },
-        )
-        return
-    }
-
-    if (showCockpit && !showProjects) {
-        CockpitScreen(onDismiss = { showCockpit = false })
-        return
-    }
-
-    if (showProjects) {
-        ProjectsScreen(
-            onOpenFolder = { path ->
-                WorkbenchWebView.openFolder(path)
-                showProjects = false
-            },
-            onDismiss = { showProjects = false },
-        )
-        return
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            WorkbenchWebView.detach()
-            TerminalHost.detach()
-        }
-    }
-
+    // The strip sits above the destination, not inside the editor layout: Projects is the
+    // screen that fails *because* the toolchain has not landed yet, and while the strip
+    // lived under the editor's top bar that was the one screen unable to say so. Owning the
+    // system-bar inset here costs the screens below nothing - their ScreenSurface finds it
+    // already consumed and adds none of its own.
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .windowInsetsPadding(WindowInsets.systemBars)
-            // imeAnimationTarget rather than imePadding: the animated version resizes on
-            // every frame of the keyboard animation, and each resize makes the WebView
-            // re-lay out the entire workbench, which is what made opening and closing the
-            // keyboard feel like it was struggling. This takes the final size at once and
-            // lets the keyboard animate over a layout that has already settled.
-            .windowInsetsPadding(WindowInsets.imeAnimationTarget),
+            .windowInsetsPadding(WindowInsets.systemBars),
     ) {
-        TopBar(
-            state = state,
-            mode = fold.mode,
-            terminalShown = showTerminal,
-            onToggleTerminal = { showTerminal = !showTerminal },
-            onOpenProjects = { showProjects = true },
-            onOpenCockpit = { showCockpit = true },
-            onOpenStatus = { showStatus = true },
-            onOpenSettings = { showSettings = true },
-        )
-
         SetupStrip()
 
-        Box(modifier = Modifier.weight(1f)) {
-            when {
-                // Tabletop always splits at the crease: content up, terminal down.
-                fold.mode == DisplayMode.Tabletop -> TabletopLayout(fold)
-
-                // Compact: one surface at a time — a split would leave neither usable.
-                fold.mode == DisplayMode.Cover ->
-                    if (showTerminal) TerminalPane(Modifier.fillMaxSize())
-                    else EditorPane(Modifier.fillMaxSize())
-
-                showTerminal -> Column(Modifier.fillMaxSize()) {
-                    EditorPane(
-                        Modifier
-                            .fillMaxWidth()
-                            .weight(0.6f),
-                    )
-                    Spacer(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                    )
-                    TerminalPane(
-                        Modifier
-                            .fillMaxWidth()
-                            .weight(0.4f),
-                    )
-                }
-
-                else -> EditorPane(Modifier.fillMaxSize())
+        when (destination) {
+            ShellDestination.Settings -> {
+                SettingsScreen(
+                    onDismiss = { destination = ShellDestination.Editor },
+                    // Deleting the guest invalidates the whole session; drop back to setup.
+                    onGuestDeleted = {
+                        destination = ShellDestination.Editor
+                        SessionService.stop(context)
+                    },
+                )
+                return@Column
             }
-            if (state is SessionState.Reconnecting) ReconnectOverlay()
+
+            ShellDestination.Status -> {
+                StatusScreen(
+                    onDismiss = { destination = ShellDestination.Editor },
+                    onOpenSettings = { destination = ShellDestination.Settings },
+                )
+                return@Column
+            }
+
+            ShellDestination.Cockpit -> {
+                CockpitScreen(onDismiss = { destination = ShellDestination.Editor })
+                return@Column
+            }
+
+            ShellDestination.Projects -> {
+                ProjectsScreen(
+                    onOpenFolder = { path ->
+                        WorkbenchWebView.openFolder(path)
+                        destination = ShellDestination.Editor
+                    },
+                    onDismiss = { destination = ShellDestination.Editor },
+                )
+                return@Column
+            }
+
+            // Falls through to the layout below; every other destination has taken over the
+            // rest of the window and returned.
+            ShellDestination.Editor -> Unit
         }
 
-        KeyRow()
+        DisposableEffect(Unit) {
+            onDispose {
+                WorkbenchWebView.detach()
+                // Only what this layout was showing. Compose applies every change before it
+                // dispatches remember observers, so the cockpit has already attached the
+                // agent by the time this runs and a global detach undid it.
+                TerminalSessions.detachShells()
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                // imeAnimationTarget rather than imePadding: the animated version resizes on
+                // every frame of the keyboard animation, and each resize makes the WebView
+                // re-lay out the entire workbench, which is what made opening and closing the
+                // keyboard feel like it was struggling. This takes the final size at once and
+                // lets the keyboard animate over a layout that has already settled.
+                .windowInsetsPadding(WindowInsets.imeAnimationTarget),
+        ) {
+            TopBar(
+                state = state,
+                mode = fold.mode,
+                terminalShown = showTerminal,
+                onToggleTerminal = { showTerminal = !showTerminal },
+                onNavigate = { destination = it },
+                onNewShell = { showTerminal = true },
+                onQuit = {
+                    // Stops the supervisor, which takes code-server and the guest with it,
+                    // then closes the app. Without this the only way to shut the session
+                    // down was the notification action, which is not where anyone looks.
+                    SessionService.stop(context)
+                    (context as? android.app.Activity)?.finish()
+                },
+            )
+
+            Box(modifier = Modifier.weight(1f)) {
+                when {
+                    // Tabletop always splits at the crease: content up, terminal down.
+                    fold.mode == DisplayMode.Tabletop -> TabletopLayout(fold)
+
+                    // Compact: one surface at a time — a split would leave neither usable.
+                    fold.mode == DisplayMode.Cover ->
+                        if (showTerminal) TerminalPane(Modifier.fillMaxSize())
+                        else EditorPane(Modifier.fillMaxSize())
+
+                    showTerminal -> Column(Modifier.fillMaxSize()) {
+                        EditorPane(
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(0.6f),
+                        )
+                        Spacer(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                        )
+                        TerminalPane(
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(0.4f),
+                        )
+                    }
+
+                    else -> EditorPane(Modifier.fillMaxSize())
+                }
+                if (state is SessionState.Reconnecting) ReconnectOverlay()
+            }
+
+            KeyRow()
+        }
     }
 }
 
 /**
- * Setup's second half, reported from inside the editor.
+ * Setup's second half, reported from wherever the user happens to be standing.
  *
  * The toolchain finishes installing after the IDE has opened, so this is the only place
  * the user would otherwise learn that git is still on its way — and, just as usefully,
@@ -209,29 +256,49 @@ fun Shell(state: SessionState) {
  */
 @Composable
 private fun SetupStrip() {
+    val context = LocalContext.current
     val stage by RootfsInstaller.stage.collectAsStateWithLifecycle()
-    val label = when (val current = stage) {
+    val current = stage
+    // Failed has to say so here. The toolchain installs behind the running editor, so this
+    // strip is the only surface watching when it breaks, and falling through to null left
+    // the user with an editor whose git, gh and tmux never arrived and nothing on screen
+    // that ever mentioned it.
+    val failure = (current as? RootfsInstaller.Stage.Failed)?.message
+        ?.let { Diagnostics.explain(context, it) }
+    val label = when (current) {
         is RootfsInstaller.Stage.Working -> current.what
         is RootfsInstaller.Stage.Downloading -> "Downloading ${current.what}"
         else -> null
-    } ?: return
+    }
+    if (label == null && failure == null) return
 
     Column(Modifier.fillMaxWidth()) {
         Text(
-            "$label — you can keep working",
+            failure ?: "$label — you can keep working",
             fontFamily = FontFamily.Monospace,
             fontSize = 10.sp,
-            color = MaterialTheme.colorScheme.primary,
+            color = if (failure != null) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.primary
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.surface)
                 .padding(horizontal = 12.dp, vertical = 3.dp),
         )
-        LinearProgressIndicator(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(2.dp),
-        )
+        if (failure == null) {
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(2.dp),
+            )
+        } else {
+            // The editor is already open by the time the toolchain breaks, so the setup
+            // screen is behind the user and this strip is the only place the report can
+            // still be taken from.
+            CopyDiagnosticsButton(Modifier.height(30.dp))
+        }
     }
 }
 
@@ -272,134 +339,6 @@ private fun EditorPane(modifier: Modifier = Modifier) {
         )
         // Native selection handles ride on top of the workbench (M4 part 2).
         SelectionOverlay()
-    }
-}
-
-@Composable
-private fun TopBar(
-    state: SessionState,
-    mode: DisplayMode,
-    terminalShown: Boolean,
-    onToggleTerminal: () -> Unit,
-    onOpenProjects: () -> Unit,
-    onOpenCockpit: () -> Unit,
-    onOpenStatus: () -> Unit,
-    onOpenSettings: () -> Unit,
-) {
-    var menuOpen by remember { mutableStateOf(false) }
-
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        val dot = when (state) {
-            is SessionState.Healthy -> Color(0xFF6FAE7F)
-            is SessionState.Reconnecting -> Color(0xFFC99A4E)
-            else -> Color(0xFF8F929A)
-        }
-        Box(
-            modifier = Modifier
-                .size(7.dp)
-                .clip(CircleShape)
-                .background(dot),
-        )
-        Spacer(Modifier.width(8.dp))
-
-        // Only the four surfaces worth a permanent thumb target. Everything else lives
-        // behind "more" — reachable, but not competing for the bar. Still scrollable so
-        // the cover display cannot wrap the posture label.
-        Row(
-            modifier = Modifier
-                .weight(1f)
-                .horizontalScroll(rememberScrollState()),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ActionChip("files") { WorkbenchWebView.Commands.toggleSidebar() }
-            ActionChip("project", onClick = onOpenProjects)
-            if (mode != DisplayMode.Tabletop) {
-                ActionChip(
-                    label = if (terminalShown) "editor" else "term",
-                    highlighted = terminalShown,
-                    onClick = onToggleTerminal,
-                )
-            }
-            ActionChip("agent", onClick = onOpenCockpit)
-        }
-
-        Spacer(Modifier.width(6.dp))
-        Text(
-            mode.name.lowercase(),
-            fontFamily = FontFamily.Monospace,
-            fontSize = 11.sp,
-            maxLines = 1,
-            softWrap = false,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-
-        Box {
-            ActionChip("more") { menuOpen = true }
-            DropdownMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
-            ) {
-                // The command palette earns its place here rather than being dropped:
-                // it is the way into every VS Code command that has no chip.
-                MenuAction("go to file", { menuOpen = false }) {
-                    WorkbenchWebView.Commands.quickOpen()
-                }
-                MenuAction("command palette", { menuOpen = false }) {
-                    WorkbenchWebView.Commands.commandPalette()
-                }
-                MenuAction("chat", { menuOpen = false }) {
-                    WorkbenchWebView.Commands.toggleChatPanel()
-                }
-                MenuAction("status", { menuOpen = false }, onOpenStatus)
-                MenuAction("settings", { menuOpen = false }, onOpenSettings)
-            }
-        }
-    }
-}
-
-@Composable
-private fun MenuAction(label: String, dismiss: () -> Unit, onClick: () -> Unit) {
-    DropdownMenuItem(
-        text = {
-            Text(
-                label,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-        },
-        onClick = {
-            dismiss()
-            onClick()
-        },
-    )
-}
-
-@Composable
-private fun ActionChip(
-    label: String,
-    highlighted: Boolean = false,
-    onClick: () -> Unit,
-) {
-    TextButton(
-        onClick = onClick,
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.height(36.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
-    ) {
-        Text(
-            label,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            color = if (highlighted) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurface,
-        )
     }
 }
 

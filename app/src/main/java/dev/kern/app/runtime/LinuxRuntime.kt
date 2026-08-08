@@ -3,8 +3,6 @@ package dev.kern.app.runtime
 import android.content.Context
 import android.util.Log
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -13,6 +11,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+
+/**
+ * Wrap [value] as a single-quoted shell word bash cannot re-interpret.
+ *
+ * The quotes are PART OF THE RESULT. Call sites read `cd ${sq(path)}` — never
+ * `cd '${sq(path)}'`. A bare `'$x'` in a guest script template is then visibly
+ * wrong and greppable.
+ */
+internal fun sq(value: String): String = "'" + value.replace("'", "'\\''") + "'"
 
 /**
  * The app's Linux backend: an Ubuntu filesystem inside app-private storage, entered
@@ -29,8 +36,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 object LinuxRuntime {
 
     private const val TAG = "Kern"
-
-    const val CODE_SERVER_PORT = 13337
 
     private val commandCounter = AtomicLong(0)
 
@@ -52,7 +57,11 @@ object LinuxRuntime {
 
     fun rootfsDir(context: Context): File = File(context.filesDir, "linux")
 
-    fun tmpDir(context: Context): File = File(context.filesDir, "tmp").apply { mkdirs() }
+    /** PRoot's own scratch dir, on the **host** side, handed to it as `PROOT_TMP_DIR`. */
+    fun prootTmpDir(context: Context): File = File(context.filesDir, "tmp").apply { mkdirs() }
+
+    /** `/tmp` as seen from inside the guest. Not the same directory as [prootTmpDir]. */
+    fun guestTmpDir(context: Context): File = File(rootfsDir(context), "tmp").apply { mkdirs() }
 
     /**
      * Where PRoot parks the real file behind each translated hard link.
@@ -69,20 +78,61 @@ object LinuxRuntime {
 
     private fun nativeLibDir(context: Context): File = File(context.applicationInfo.nativeLibraryDir)
 
-    fun prootBinary(context: Context): File = File(nativeLibDir(context), "libproot.so")
+    internal fun prootBinary(context: Context): File = File(nativeLibDir(context), "libproot.so")
 
     /** Guest home; also where cloned projects live. */
     fun projectsDir(context: Context): File =
         File(rootfsDir(context), "root/projects")
 
-    fun isInstalled(context: Context): Boolean {
+    /**
+     * The shape of a whole Ubuntu base: a release file, a shell, apt, and dpkg's database.
+     *
+     * Deliberately more than the os-release-and-bash pair this grew out of. Those two are
+     * among the first things any extraction produces, so a tar that stopped partway
+     * satisfied both - while apt can do nothing without the other two, and apt is the only
+     * thing the rest of setup asks of this filesystem.
+     */
+    internal fun rootfsLooksComplete(context: Context): Boolean {
         val root = rootfsDir(context)
         return File(root, "etc/os-release").exists() &&
-            (File(root, "bin/bash").exists() || File(root, "usr/bin/bash").exists())
+            (File(root, "bin/bash").exists() || File(root, "usr/bin/bash").exists()) &&
+            (File(root, "bin/apt-get").exists() || File(root, "usr/bin/apt-get").exists()) &&
+            File(root, "var/lib/dpkg/status").exists()
     }
 
-    fun isCodeServerInstalled(context: Context): Boolean =
-        File(rootfsDir(context), "usr/bin/code-server").exists()
+    /**
+     * Written once the archive has been unpacked and the result checked.
+     *
+     * Existence is the whole contract; the release inside it is there for a bug report.
+     * Inside the rootfs on purpose, so deleting the guest takes it away too.
+     */
+    private fun installMarker(context: Context): File = File(rootfsDir(context), ".kern-installed")
+
+    internal fun markInstalled(context: Context) {
+        runCatching { installMarker(context).writeText(GuestConfig.UBUNTU_RELEASE + "\n") }
+    }
+
+    fun isInstalled(context: Context): Boolean {
+        if (!rootfsLooksComplete(context)) return false
+        // A file test alone cannot tell a finished extraction from one that hit ENOSPC
+        // in the middle, and believing the latter was fatal: the guest reported itself
+        // installed, so setup skipped extraction on every later run and Retry could never
+        // reach the one step that was broken - only deleting everything could.
+        //
+        // The second half is for guests installed before the marker existed. Those are
+        // real installs and telling their owners to start again would be a lie.
+        // code-server is the proof: apt installs it *inside* the guest, after extraction,
+        // so a filesystem that has it is one that unpacked far enough to run.
+        return installMarker(context).exists() || CodeServer.isInstalled(context)
+    }
+
+    /**
+     * Everything the IDE needs to open. The app's whole top-level route turns on this, so
+     * it lives here rather than being spelled out at each of the three places that ask —
+     * a third condition added to two of three hands the user the IDE while the setup
+     * screen still thinks there is work to do.
+     */
+    fun isReady(context: Context): Boolean = isInstalled(context) && CodeServer.isInstalled(context)
 
     /** How the guest describes itself, e.g. "Ubuntu 26.04 LTS". */
     suspend fun osPrettyName(context: Context): String? =
@@ -92,7 +142,7 @@ object LinuxRuntime {
             timeoutMs = 25_000,
         )?.stdout?.trim()?.takeIf { it.isNotBlank() }
 
-    fun prootEnv(context: Context): Map<String, String> {
+    internal fun prootEnv(context: Context): Map<String, String> {
         val nativeLib = nativeLibDir(context)
         return mapOf(
             // proot's baked RUNPATH points at Termux's prefix, which we do not have.
@@ -100,7 +150,7 @@ object LinuxRuntime {
             "PROOT_LOADER" to File(nativeLib, "libproot_loader.so").absolutePath,
             "PROOT_LOADER32" to File(nativeLib, "libproot_loader32.so").absolutePath,
             // Without this proot tries Termux's prefix and warns on every launch.
-            "PROOT_TMP_DIR" to tmpDir(context).absolutePath,
+            "PROOT_TMP_DIR" to prootTmpDir(context).absolutePath,
             "PROOT_L2S_DIR" to l2sDir(context).absolutePath,
             "TERM" to "xterm-256color",
             "HOME" to "/root",
@@ -120,7 +170,7 @@ object LinuxRuntime {
      * SELinux forbids hard links in app storage and dpkg depends on them, so without it
      * the first `apt install` fails.
      */
-    fun prootArgs(
+    internal fun prootArgs(
         context: Context,
         guestCommand: List<String>,
         workingDir: String = "/root",
@@ -162,12 +212,33 @@ object LinuxRuntime {
         return args
     }
 
+    /** The one way to start a process inside the guest. */
+    internal fun spawnInGuest(
+        context: Context,
+        guestCommand: List<String>,
+        workingDir: String = "/root",
+        columns: Int = 200,
+        rows: Int = 50,
+    ): PtyProcess? = PtyProcess.spawn(
+        command = prootBinary(context).absolutePath,
+        argv = prootArgs(context, guestCommand, workingDir),
+        env = prootEnv(context),
+        cwd = context.filesDir.absolutePath,
+        columns = columns,
+        rows = rows,
+    )
+
     // ---- running commands ---------------------------------------------------
 
     data class Result(val exitCode: Int, val stdout: String, val stderr: String) {
         val ok: Boolean get() = exitCode == 0
         val lines: List<String>
             get() = stdout.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+
+        /** The last thing the command said, from either stream — what an error message wants. */
+        fun lastLine(limit: Int = 160): String? =
+            (stdout.lineSequence() + stderr.lineSequence())
+                .map { it.trim() }.lastOrNull { it.isNotEmpty() }?.take(limit)
     }
 
     /**
@@ -191,7 +262,7 @@ object LinuxRuntime {
         if (!isInstalled(context)) return@withContext null
 
         val id = commandCounter.incrementAndGet()
-        val guestTmp = File(rootfsDir(context), "tmp").apply { mkdirs() }
+        val guestTmp = guestTmpDir(context)
         val scriptFile = File(guestTmp, "fc-$id.sh")
         val outFile = File(guestTmp, "fc-$id.out")
         val errFile = File(guestTmp, "fc-$id.err")
@@ -208,13 +279,10 @@ object LinuxRuntime {
                 "bash /tmp/fc-$id.sh > /tmp/fc-$id.out 2> /tmp/fc-$id.err; " +
                     "echo \$? > /tmp/fc-$id.rc"
 
-            val process = PtyProcess.spawn(
-                command = prootBinary(context).absolutePath,
-                argv = prootArgs(context, listOf("/bin/bash", "-lc", wrapper), workingDir),
-                env = prootEnv(context),
-                cwd = context.filesDir.absolutePath,
-                columns = 200,
-                rows = 50,
+            val process = spawnInGuest(
+                context,
+                listOf("/bin/bash", "-lc", wrapper),
+                workingDir,
             ) ?: return@withContext null
 
             val exit = try {
@@ -267,128 +335,58 @@ object LinuxRuntime {
         return from + cut + 1
     }
 
+    /**
+     * Spawn an arbitrary command on its own pty.
+     *
+     * Backs the agent cockpit. A login shell so the guest's profile is loaded — agents
+     * are usually installed by a package manager that puts them somewhere only a login
+     * shell knows about — and `exec` so the command replaces bash rather than leaving a
+     * shell waiting behind it, which would keep the pty open after the agent exits.
+     */
+    fun spawnCommand(
+        context: Context,
+        command: String,
+        columns: Int,
+        rows: Int,
+        workingDir: String = ProjectRepository.currentFolder(context),
+    ): PtyProcess? = spawnInGuest(
+        context,
+        // not sq(): the user's own agent command line must stay a command, not a word.
+        listOf("/bin/bash", "-lc", "exec $command"),
+        workingDir,
+        columns = columns,
+        rows = rows,
+    )
+
     /** Spawn an interactive login shell on its own pty — this backs the terminal. */
     fun spawnShell(
         context: Context,
         columns: Int,
         rows: Int,
-        workingDir: String = "/root",
-    ): PtyProcess? = PtyProcess.spawn(
-        command = prootBinary(context).absolutePath,
-        argv = prootArgs(
-            context,
-            // tmux keeps the session alive across terminal detach/reattach.
-            listOf("/bin/bash", "-lc", "tmux new-session -A -s kern || exec bash -l"),
-            workingDir,
+        /**
+         * Distinct per terminal. `tmux new-session -A` attaches to an existing session of
+         * the same name, so a shared name meant every new tab attached to the first one
+         * and showed identical output — several terminals that were all the same terminal.
+         */
+        sessionName: String = "kern",
+        /**
+         * The open project, not the home directory. A terminal that opens somewhere other
+         * than the thing you are working on just means typing `cd` before every session.
+         */
+        workingDir: String = ProjectRepository.currentFolder(context),
+    ): PtyProcess? = spawnInGuest(
+        context,
+        // tmux keeps the session alive across terminal detach/reattach. `-c` so the
+        // session it creates starts in the project too, not just the bash that ran it.
+        listOf(
+            "/bin/bash",
+            "-lc",
+            "tmux new-session -A -s ${sq(sessionName)} -c ${sq(workingDir)} || exec bash -l",
         ),
-        env = prootEnv(context),
-        cwd = context.filesDir.absolutePath,
+        workingDir,
         columns = columns,
         rows = rows,
     )
-
-    // ---- code-server --------------------------------------------------------
-
-    fun codeServerUrl(folder: String = "/root"): String =
-        "http://127.0.0.1:$CODE_SERVER_PORT/?folder=$folder"
-
-    const val HEALTH_URL = "http://127.0.0.1:$CODE_SERVER_PORT/healthz"
-
-    /**
-     * Start code-server inside the guest if it is not already listening. Idempotent via
-     * a pidfile; deliberately not `pgrep`, whose pattern would also match the very shell
-     * doing the checking.
-     */
-    /**
-     * The long-lived PRoot process hosting code-server.
-     *
-     * Held for the app's lifetime on purpose. PRoot supervises everything it traces, so
-     * this handle *is* the running guest — closing it would take the server down with
-     * it, and letting it be collected would do the same.
-     */
-    @Volatile
-    private var serverProcess: PtyProcess? = null
-
-    /**
-     * Start code-server in the guest. Returns as soon as it has been launched; whether it
-     * actually came up is decided by health-polling, not by this call.
-     */
-    fun startCodeServer(context: Context, token: String): Boolean {
-        if (serverProcess != null) return true
-
-        val script = """
-            mkdir -p /root/.kern /root/.local/share/code-server/User
-            export PASSWORD='$token'
-            exec code-server --auth password --bind-addr 127.0.0.1:$CODE_SERVER_PORT \
-              --disable-telemetry --disable-update-check \
-              >> /root/.kern/server.log 2>&1
-        """.trimIndent()
-
-        val process = PtyProcess.spawn(
-            command = prootBinary(context).absolutePath,
-            argv = prootArgs(context, listOf("/bin/bash", "-lc", script)),
-            env = prootEnv(context),
-            cwd = context.filesDir.absolutePath,
-            columns = 200,
-            rows = 50,
-        ) ?: return false
-
-        serverProcess = process
-        // Drain the pty in the background: the server writes to a log file, but anything
-        // that does reach the pty would eventually fill the buffer and stall it.
-        Thread({
-            runCatching {
-                val buffer = ByteArray(4096)
-                while (process.input.read(buffer) >= 0) { /* discard */ }
-            }
-        }, "KernServerDrain").apply { isDaemon = true }.start()
-
-        return true
-    }
-
-    fun stopCodeServer() {
-        serverProcess?.close()
-        serverProcess = null
-    }
-
-    fun isCodeServerRunning(): Boolean = serverProcess != null
-
-    /** Push workbench settings so the web layer renders only the editor (see docs/06). */
-    suspend fun applyWorkbenchSettings(context: Context) {
-        val settingsFile = File(
-            rootfsDir(context),
-            "root/.local/share/code-server/User/settings.json",
-        )
-        runCatching {
-            settingsFile.parentFile?.mkdirs()
-            settingsFile.writeText(WORKBENCH_SETTINGS)
-        }.onFailure { Log.w(TAG, "could not write workbench settings: ${it.message}") }
-    }
-
-    private val WORKBENCH_SETTINGS = """
-        {
-          "workbench.activityBar.location": "hidden",
-          "workbench.statusBar.visible": false,
-          "workbench.secondarySideBar.defaultVisibility": "hidden",
-          "workbench.layoutControl.enabled": false,
-          "workbench.editor.editorActionsLocation": "hidden",
-          "window.menuBarVisibility": "hidden",
-          "window.commandCenter": false,
-          "workbench.startupEditor": "none",
-          "workbench.colorTheme": "Default Dark Modern",
-          "editor.minimap.enabled": false,
-          "editor.wordWrap": "on",
-          "editor.fontSize": 14,
-          "editor.stickyScroll.enabled": false,
-          "editor.acceptSuggestionOnEnter": "off",
-          "terminal.integrated.fontSize": 13,
-          "keyboard.dispatch": "keyCode",
-          "security.workspace.trust.enabled": false,
-          "update.mode": "none",
-          "telemetry.telemetryLevel": "off",
-          "chat.commandCenter.enabled": false
-        }
-    """.trimIndent()
 
     /**
      * Prove the bundled PRoot runs, independent of whether a rootfs exists. A failure
@@ -398,6 +396,8 @@ object LinuxRuntime {
         val proot = prootBinary(context)
         if (!proot.exists()) return@withContext "libproot.so missing"
         withTimeoutOrNull(15_000) {
+            // not spawnInGuest(): no -r and no binds on purpose, so this still answers
+            // with no rootfs present — a failure here is the native layer, not the guest.
             val process = PtyProcess.spawn(
                 command = proot.absolutePath,
                 argv = listOf(proot.absolutePath, "--version"),
@@ -405,65 +405,10 @@ object LinuxRuntime {
                 cwd = context.filesDir.absolutePath,
             ) ?: return@withTimeoutOrNull "spawn failed"
             try {
-                readUntilClosed(process)
+                process.readUntilClosed()
             } finally {
                 process.close()
             }
         } ?: "timed out"
-    }
-
-    /**
-     * Drain a pty until the child goes away, keeping whatever it printed.
-     *
-     * Reading a pty master after its child exits raises EIO rather than returning EOF, so
-     * a plain `readBytes()` both throws *and* discards everything already read. Accumulate
-     * chunk by chunk and treat the error as end-of-stream.
-     */
-    private fun readUntilClosed(process: PtyProcess): String {
-        val out = StringBuilder()
-        val buffer = ByteArray(4096)
-        try {
-            while (true) {
-                val read = process.input.read(buffer)
-                if (read < 0) break
-                out.append(String(buffer, 0, read, Charsets.UTF_8))
-            }
-        } catch (e: Exception) {
-            // EIO here means the child exited; whatever we collected is the output.
-        }
-        return out.toString().trim()
-    }
-
-    /** Shared helper for downloading into app storage with progress. */
-    internal fun download(url: String, dest: File, onProgress: (Long, Long) -> Unit) {
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 20_000
-            readTimeout = 60_000
-            instanceFollowRedirects = true
-        }
-        try {
-            connection.inputStream.use { input ->
-                val total = connection.contentLengthLong
-                dest.parentFile?.mkdirs()
-                dest.outputStream().use { output ->
-                    val buffer = ByteArray(128 * 1024)
-                    var written = 0L
-                    var lastReport = 0L
-                    while (true) {
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        output.write(buffer, 0, read)
-                        written += read
-                        if (written - lastReport > 512 * 1024) {
-                            onProgress(written, total)
-                            lastReport = written
-                        }
-                    }
-                    onProgress(written, total)
-                }
-            }
-        } finally {
-            connection.disconnect()
-        }
     }
 }

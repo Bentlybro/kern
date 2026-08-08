@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,17 +7,30 @@ plugins {
 }
 
 /**
+ * compilerOptions rather than the older `kotlinOptions { jvmTarget = "17" }`.
+ *
+ * That form was deprecated for a long time and became a hard error in Kotlin 2.4, which
+ * is what broke the grouped dependency update rather than anything in the update itself.
+ * This DSL works on both, so it is a fix rather than a version bump in disguise.
+ */
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+/**
  * The single source of truth for the version. The release workflow reads this to name the
  * tag, and the in-app updater compares it against the latest GitHub release, so it must
  * not be duplicated anywhere else.
  */
-val appVersionName = "0.1.0"
+val appVersionName = "0.1.1"
 
 /**
  * Overridable so CI can guarantee a monotonically increasing code without anyone having
  * to remember to bump it: `-PversionCode=<run number>`.
  */
-val appVersionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 2
+val appVersionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 3
 
 android {
     namespace = "dev.kern.app"
@@ -61,9 +76,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
     buildFeatures {
         compose = true
         // The updater compares BuildConfig.VERSION_NAME against the latest release.
@@ -100,4 +112,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.window)
     implementation(libs.kotlinx.coroutines.android)
+
+    // Plain JVM JUnit 4 only. The unit tests here cover pure logic - quoting, parsing,
+    // arithmetic - so nothing in src/test may need an emulator, Robolectric or a network:
+    // the suite has to stay fast enough that every push can afford to run it.
+    testImplementation(libs.junit)
 }

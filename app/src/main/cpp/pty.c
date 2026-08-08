@@ -133,6 +133,20 @@ Java_dev_kern_app_runtime_Pty_createSubprocess(
         }
 
         execve(cmd, argv, envp);
+
+        /* execve only returns when it failed, and stderr is already the pty slave, so say
+         * why. Exiting silently here is indistinguishable from a process that started
+         * cleanly and then vanished: the parent is handed a live master fd either way, sees
+         * no output, and gets EIO milliseconds later. That cost a long evening once. */
+        {
+            char msg[512];
+            int n = snprintf(msg, sizeof(msg), "kern: could not exec %s: %s\n",
+                             cmd, strerror(errno));
+            if (n > 0) {
+                ssize_t ignored = write(STDERR_FILENO, msg, (size_t) n);
+                (void) ignored;
+            }
+        }
         _exit(127);
     }
 

@@ -18,7 +18,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -34,47 +33,26 @@ import androidx.compose.ui.unit.sp
  */
 @Composable
 fun KeyRow() {
-    var ctrl by remember { mutableStateOf(false) }
-    var alt by remember { mutableStateOf(false) }
-    var shift by remember { mutableStateOf(false) }
-
-    // Mirror into shared state so the terminal's client can read sticky modifiers.
-    KeyRowState.ctrl = ctrl
-    KeyRowState.alt = alt
-    KeyRowState.shift = shift
-
-    fun meta(): Int =
-        (if (ctrl) KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON else 0) or
-            (if (alt) KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON else 0) or
-            (if (shift) KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON else 0)
-
-    fun clearModifiers() {
-        ctrl = false
-        alt = false
-        shift = false
-        KeyRowState.clear()
-    }
-
     /** Route to whichever surface has focus — terminal or workbench. */
     fun key(code: Int) {
-        if (TerminalHost.hasFocus()) {
-            TerminalHost.sendKey(code, meta())
+        if (TerminalSessions.hasFocus()) {
+            TerminalSessions.sendKey(code, ModifierKeys.meta())
         } else {
-            WorkbenchWebView.sendKey(code, meta())
+            WorkbenchWebView.sendKey(code, ModifierKeys.meta())
         }
-        clearModifiers()
+        ModifierKeys.clear()
     }
 
     fun char(c: Char) {
-        if (TerminalHost.hasFocus()) {
-            TerminalHost.write(c.toString())
+        if (TerminalSessions.hasFocus()) {
+            TerminalSessions.write(c.toString())
         } else {
             val wv = WorkbenchWebView.current() ?: return
             KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD)
                 .getEvents(charArrayOf(c))
                 ?.forEach { wv.dispatchKeyEvent(it) }
         }
-        clearModifiers()
+        ModifierKeys.clear()
     }
 
     Surface(color = MaterialTheme.colorScheme.surface) {
@@ -85,15 +63,12 @@ fun KeyRow() {
                 .padding(horizontal = 4.dp, vertical = 2.dp),
         ) {
             // Explicit IME control: the guaranteed way in, when Monaco will not ask.
-            Key("⌨") {
-                if (TerminalHost.hasFocus()) TerminalHost.toggleKeyboard()
-                else WorkbenchWebView.toggleKeyboard()
-            }
+            Key("⌨") { focusedInputView()?.toggleIme() }
             Key("esc") { key(KeyEvent.KEYCODE_ESCAPE) }
             Key("tab") { key(KeyEvent.KEYCODE_TAB) }
-            Sticky("ctrl", ctrl) { ctrl = !ctrl }
-            Sticky("alt", alt) { alt = !alt }
-            Sticky("shift", shift) { shift = !shift }
+            Sticky("ctrl", ModifierKeys.ctrl) { ModifierKeys.ctrl = !ModifierKeys.ctrl }
+            Sticky("alt", ModifierKeys.alt) { ModifierKeys.alt = !ModifierKeys.alt }
+            Sticky("shift", ModifierKeys.shift) { ModifierKeys.shift = !ModifierKeys.shift }
             Key("←") { key(KeyEvent.KEYCODE_DPAD_LEFT) }
             Key("↓") { key(KeyEvent.KEYCODE_DPAD_DOWN) }
             Key("↑") { key(KeyEvent.KEYCODE_DPAD_UP) }
@@ -103,15 +78,15 @@ fun KeyRow() {
             Key("pgup") { key(KeyEvent.KEYCODE_PAGE_UP) }
             Key("pgdn") { key(KeyEvent.KEYCODE_PAGE_DOWN) }
             Key("^C") {
-                ctrl = true
+                ModifierKeys.ctrl = true
                 key(KeyEvent.KEYCODE_C)
             }
             Key("^D") {
-                ctrl = true
+                ModifierKeys.ctrl = true
                 key(KeyEvent.KEYCODE_D)
             }
-            Key("save") { WorkbenchWebView.Commands.save(); clearModifiers() }
-            Key("find") { WorkbenchWebView.Commands.find(); clearModifiers() }
+            Key("save") { WorkbenchWebView.Commands.save(); ModifierKeys.clear() }
+            Key("find") { WorkbenchWebView.Commands.find(); ModifierKeys.clear() }
 
             "|/\\-_=+;:'\"`{}[]()<>$#%&*!?~^@".forEach { c -> Key(c.toString()) { char(c) } }
         }
@@ -156,5 +131,43 @@ private fun Sticky(label: String, active: Boolean, onTap: () -> Unit) {
             color = if (active) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.onSurface,
         )
+    }
+}
+
+/**
+ * Shared modifier state so the key row can drive either the workbench or a terminal.
+ *
+ * Snapshot state, so [KeyRow] recomposes off the same fields the terminal's client reads —
+ * there is no second copy to keep in step.
+ */
+object ModifierKeys {
+    var ctrl by mutableStateOf(false)
+    var alt by mutableStateOf(false)
+    var shift by mutableStateOf(false)
+
+    fun meta(): Int =
+        (if (ctrl) KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON else 0) or
+            (if (alt) KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON else 0) or
+            (if (shift) KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON else 0)
+
+    /**
+     * Read a modifier for the keystroke in flight and drop it.
+     *
+     * A sticky modifier that outlives its keystroke is not sticky, it is stuck: leave ctrl
+     * on, type on the soft keyboard, and every character arrives as a control code. The key
+     * row was the only thing that ever cleared it, so anything typed on Gboard - or
+     * anything at all in the cockpit, which has no key row and no lit chip to explain
+     * itself - carried the modifier forever.
+     */
+    fun consumeCtrl(): Boolean = ctrl.also { ctrl = false }
+
+    fun consumeAlt(): Boolean = alt.also { alt = false }
+
+    fun consumeShift(): Boolean = shift.also { shift = false }
+
+    fun clear() {
+        ctrl = false
+        alt = false
+        shift = false
     }
 }

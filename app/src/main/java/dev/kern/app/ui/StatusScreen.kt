@@ -1,7 +1,5 @@
 package dev.kern.app.ui
 
-import android.content.Intent
-import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
@@ -9,15 +7,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -37,13 +32,25 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.kern.app.runtime.AppScope
+import dev.kern.app.runtime.BatteryOptimization
 import dev.kern.app.runtime.HealthCheck
 import dev.kern.app.runtime.UsageTracker
+import kotlinx.coroutines.flow.MutableStateFlow
+
+/**
+ * Packages currently being installed, or null when idle.
+ *
+ * Outside the composition because apt outlives this screen now: a screen-local flag came
+ * back cleared, re-enabled Fix on top of an apt that was still running, and the second one
+ * died on dpkg's lock.
+ */
+private val installingPackages = MutableStateFlow<String?>(null)
 
 /**
  * Environment health and usage stats (M6 + M5a). This is where the app tells the truth
@@ -52,12 +59,12 @@ import dev.kern.app.runtime.UsageTracker
 @Composable
 fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
     val context = LocalContext.current
+    val app = context.applicationContext
     val scope = rememberCoroutineScope()
     var items by remember { mutableStateOf<List<HealthCheck.Item>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var refresh by remember { mutableIntStateOf(0) }
-    /** Packages currently being installed, or null when idle. */
-    var installing by remember { mutableStateOf<String?>(null) }
+    val installing by installingPackages.collectAsStateWithLifecycle()
 
     LaunchedEffect(refresh) {
         loading = true
@@ -68,35 +75,31 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
     val totals = remember(refresh) { UsageTracker.totals(context) }
     val totalMs = totals.values.sum()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .windowInsetsPadding(WindowInsets.systemBars),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "status",
-                fontFamily = FontFamily.Monospace,
-                fontSize = 14.sp,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = onOpenSettings) {
-                Text("settings", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+    /** Install what a check said was missing, then re-run the checks. */
+    fun install(packages: List<String>) {
+        installingPackages.value = packages.joinToString(", ")
+        // apt runs on the app scope: leaving Status used to cancel it mid-unpack, and a
+        // dpkg stopped there is past what Repair can put back.
+        val work = AppScope.start {
+            try {
+                HealthCheck.install(app, packages)
+            } finally {
+                // Cleared here, not after the await below: that dies with the screen, and
+                // the label would then stay lit and hold every Fix button disabled.
+                installingPackages.value = null
             }
-            TextButton(onClick = { refresh++ }) {
-                Text("recheck", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-            }
-            TextButton(onClick = onDismiss) {
-                Text("close", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-            }
+        }
+        scope.launch {
+            work.await()
+            refresh++
+        }
+    }
+
+    ScreenSurface {
+        ScreenHeader("status") {
+            HeaderAction("settings", onOpenSettings)
+            HeaderAction("recheck") { refresh++ }
+            HeaderAction("close", onDismiss)
         }
 
         if (loading) {
@@ -136,9 +139,9 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                 ) {
                     val color = when (item.level) {
-                        HealthCheck.Level.Ok -> Color(0xFF6FAE7F)
-                        HealthCheck.Level.Warn -> Color(0xFFC99A4E)
-                        HealthCheck.Level.Fail -> Color(0xFFD07158)
+                        HealthCheck.Level.Ok -> KernColors.Ok
+                        HealthCheck.Level.Warn -> KernColors.Warn
+                        HealthCheck.Level.Fail -> MaterialTheme.colorScheme.error
                     }
                     Box(
                         Modifier
@@ -175,23 +178,11 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                                 enabled = installing == null,
                                 onClick = {
                                     when (remedy) {
-                                        is HealthCheck.Remedy.Install -> {
-                                            installing = remedy.packages.joinToString(", ")
-                                            scope.launch {
-                                                HealthCheck.install(context, remedy.packages)
-                                                installing = null
-                                                refresh++
-                                            }
-                                        }
+                                        is HealthCheck.Remedy.Install ->
+                                            install(remedy.packages)
                                         HealthCheck.Remedy.OpenSettings -> onOpenSettings()
-                                        HealthCheck.Remedy.BatterySettings -> runCatching {
-                                            context.startActivity(
-                                                Intent(
-                                                    Settings
-                                                        .ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
-                                                ),
-                                            )
-                                        }
+                                        HealthCheck.Remedy.BatterySettings ->
+                                            BatteryOptimization.requestExemption(context)
                                     }
                                 },
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
@@ -267,6 +258,21 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 )
+            }
+            // The last resort when something above says Fail and nothing here can fix it.
+            // A phone has no adb and no second screen, so without this the user has the
+            // whole story on the display in front of them and no way to send it anywhere.
+            item {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    Text(
+                        "Something wrong? This copies your device, Android version, free " +
+                            "space and the tail of the setup log, ready to paste into a " +
+                            "GitHub issue.",
+                        fontSize = 11.5.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    CopyDiagnosticsButton(Modifier.padding(top = 4.dp))
+                }
             }
             item { Spacer(Modifier.height(24.dp)) }
         }

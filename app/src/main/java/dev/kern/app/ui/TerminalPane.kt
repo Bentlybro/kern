@@ -1,258 +1,232 @@
 package dev.kern.app.ui
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
-import android.util.Log
-import android.view.KeyEvent
-import android.view.MotionEvent
-import android.view.ViewGroup
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
-import com.termux.terminal.TerminalSession
-import com.termux.terminal.TerminalSessionClient
-import com.termux.view.TerminalView
-import com.termux.view.TerminalViewClient
-import dev.kern.app.runtime.LinuxRuntime
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /**
- * Native terminal surface (M3). Renders Termux's real terminal emulator/view over a
- * socket-backed [TerminalSession] — no xterm.js, no WebView in the input path, which is
- * what makes the terminal usable on touch (docs/10 F3).
+ * The terminal surface: Termux's real emulator and view over a local pty, with a tab
+ * strip once there is more than one shell or a closed one waiting to be taken back.
+ *
+ * The strip hides itself while a single shell is open and nothing is detached. One tab is
+ * not a choice, and a row of chrome that never changes is chrome that stops being read.
  */
-object TerminalHost {
+@Composable
+fun TerminalPane(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val sessions by TerminalSessions.sessions.collectAsStateWithLifecycle()
+    val activeId by TerminalSessions.activeId.collectAsStateWithLifecycle()
+    val detached by TerminalSessions.detached.collectAsStateWithLifecycle()
+    val stuck by TerminalSessions.shellStuck.collectAsStateWithLifecycle()
 
-    private var view: TerminalView? = null
-    private var session: TerminalSession? = null
+    val shells = sessions.filter { it.kind == TerminalSessions.Kind.Shell }
+    val active = shells.firstOrNull { it.id == activeId } ?: shells.firstOrNull()
 
-    fun acquire(context: Context): TerminalView {
-        view?.let { return it }
-
-        val terminalView = TerminalView(context, null).apply {
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
-            setTextSize(spToPx(context, 13f))
-            keepScreenOn = true
-            isFocusableInTouchMode = true
+    // Asking for the shell from composition is how this pane took part in the respawn
+    // loop: every frame without one asked for another. The live values rather than the
+    // collected ones, because the two flows do not necessarily land in the same frame.
+    LaunchedEffect(active?.id, stuck) {
+        if (TerminalSessions.shells().isEmpty() && !TerminalSessions.shellStuck.value) {
+            TerminalSessions.openShell(context)
         }
-        terminalView.setTerminalViewClient(KernTerminalViewClient(terminalView))
+    }
 
-        // Local pty into the Linux guest — no bridge, no sockets, no token.
-        val appContext = context.applicationContext
-        val newSession = TerminalSession(
-            { columns, rows -> LinuxRuntime.spawnShell(appContext, columns, rows) },
-            2000,
-            KernTerminalSessionClient(appContext, terminalView),
+    Column(modifier = modifier) {
+        if (shells.size > 1 || detached.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                shells.forEach { shell ->
+                    Tab(
+                        title = shell.title,
+                        selected = shell.id == active?.id,
+                        closable = shells.size > 1,
+                        onSelect = { TerminalSessions.select(shell.id) },
+                        onClose = { TerminalSessions.closeShell(shell.id) },
+                    )
+                }
+                detached.forEach { slot ->
+                    DetachedTab(slot) { TerminalSessions.reattach(context, slot) }
+                }
+            }
+        }
+
+        Box(Modifier.fillMaxSize()) {
+            when {
+                active != null -> TerminalSurface(active, Modifier.fillMaxSize())
+                stuck -> ShellStuck { TerminalSessions.retryShell(context) }
+            }
+        }
+    }
+}
+
+/**
+ * What a shell that will not stay up looks like, in place of another spawn.
+ *
+ * Usually the guest was killed to free memory, which on a phone is routine rather than
+ * exceptional, and asking again a moment later works.
+ */
+@Composable
+private fun ShellStuck(onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            "The shell keeps exiting.",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.primary,
         )
-        terminalView.attachSession(newSession)
-
-        view = terminalView
-        session = newSession
-        return terminalView
+        Text(
+            "It closed twice within a few seconds, so Kern stopped reopening it. Android " +
+                "may have killed the Linux guest to free memory.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(onClick = onRetry) { Text("Try again", fontSize = 13.sp) }
     }
+}
 
-    fun detach() {
-        view?.let { (it.parent as? ViewGroup)?.removeView(it) }
+/**
+ * Host a session's live emulator. Detaches every terminal before reparenting, and keys on
+ * the session id — without the key Compose reuses the node and rebinds a live pty to the
+ * wrong emulator, so every tab shows the first shell. The same key is what gets a restarted
+ * agent a fresh view rather than the old one rebound to a dead pty.
+ */
+@Composable
+internal fun TerminalSurface(entry: TerminalSessions.Entry, modifier: Modifier = Modifier) {
+    key(entry.id) {
+        AndroidView(
+            modifier = modifier,
+            factory = {
+                TerminalSessions.detachAll()
+                entry.view
+            },
+        )
     }
+}
 
-    /** Send a key to the terminal (used by the shared key row when the terminal has focus). */
-    fun sendKey(keyCode: Int, meta: Int = 0) {
-        val v = view ?: return
-        val t = android.os.SystemClock.uptimeMillis()
-        v.dispatchKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_DOWN, keyCode, 0, meta))
-        v.dispatchKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_UP, keyCode, 0, meta))
-    }
-
-    fun write(text: String) {
-        session?.let { s ->
-            val bytes = text.toByteArray(Charsets.UTF_8)
-            s.write(bytes, 0, bytes.size)
-        }
-    }
-
-    fun hasFocus(): Boolean = view?.hasFocus() == true
-
-    fun isKeyboardVisible(): Boolean {
-        val v = view ?: return false
-        return ViewCompat.getRootWindowInsets(v)
-            ?.isVisible(WindowInsetsCompat.Type.ime()) == true
-    }
-
-    fun toggleKeyboard() {
-        val v = view ?: return
-        v.requestFocus()
-        val controller = ViewCompat.getWindowInsetsController(v) ?: return
-        if (isKeyboardVisible()) {
-            controller.hide(WindowInsetsCompat.Type.ime())
-        } else {
-            controller.show(WindowInsetsCompat.Type.ime())
-        }
-    }
-
-    fun isAttached(): Boolean = view != null
-
-    fun current(): TerminalView? = view
-
-    private fun spToPx(context: Context, sp: Float): Int =
-        (sp * context.resources.displayMetrics.scaledDensity).toInt()
+/** A new shell. Lives in the top bar's overflow, next to the terminal toggle. */
+@Composable
+fun rememberNewShell(): () -> Unit {
+    val context = LocalContext.current
+    return { TerminalSessions.openShell(context) }
 }
 
 @Composable
-fun TerminalPane(modifier: Modifier = Modifier) {
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            TerminalHost.detach()
-            TerminalHost.acquire(ctx)
-        },
-    )
-}
-
-private const val TAG = "Kern"
-
-private class KernTerminalViewClient(
-    private val view: TerminalView,
-) : TerminalViewClient {
-
-    override fun onScale(scale: Float): Float = 1.0f
-
-    override fun onSingleTapUp(e: MotionEvent?) {
-        // Raise the soft keyboard on tap — the behaviour the WebView terminal never got right.
-        view.requestFocus()
-        val imm = view.context.getSystemService(Context.INPUT_METHOD_SERVICE)
-            as android.view.inputmethod.InputMethodManager
-        imm.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
-    }
-
-    override fun shouldBackButtonBeMappedToEscape(): Boolean = true
-
-    override fun shouldEnforceCharBasedInput(): Boolean = true
-
-    override fun shouldUseCtrlSpaceWorkaround(): Boolean = false
-
-    override fun isTerminalViewSelected(): Boolean = true
-
-    override fun copyModeChanged(copyMode: Boolean) {}
-
-    override fun onKeyDown(keyCode: Int, e: KeyEvent?, session: TerminalSession?): Boolean = false
-
-    override fun onKeyUp(keyCode: Int, e: KeyEvent?): Boolean = false
-
-    override fun onLongPress(event: MotionEvent?): Boolean = false
-
-    override fun readControlKey(): Boolean = KeyRowState.ctrl
-
-    override fun readAltKey(): Boolean = KeyRowState.alt
-
-    override fun readShiftKey(): Boolean = KeyRowState.shift
-
-    override fun readFnKey(): Boolean = false
-
-    override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession?): Boolean =
-        false
-
-    override fun onEmulatorSet() {}
-
-    override fun logError(tag: String?, message: String?) {
-        Log.e(TAG, "$tag: $message")
-    }
-
-    override fun logWarn(tag: String?, message: String?) {
-        Log.w(TAG, "$tag: $message")
-    }
-
-    override fun logInfo(tag: String?, message: String?) {
-        Log.i(TAG, "$tag: $message")
-    }
-
-    override fun logDebug(tag: String?, message: String?) {}
-
-    override fun logVerbose(tag: String?, message: String?) {}
-
-    override fun logStackTraceWithMessage(tag: String?, message: String?, e: Exception?) {
-        Log.e(TAG, "$tag: $message", e)
-    }
-
-    override fun logStackTrace(tag: String?, e: Exception?) {
-        Log.e(TAG, "terminal", e)
+private fun Tab(
+    title: String,
+    selected: Boolean,
+    closable: Boolean,
+    onSelect: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.surfaceVariant
+                else MaterialTheme.colorScheme.surface,
+            )
+            .clickable(onClick = onSelect)
+            .heightIn(min = 48.dp)
+            .padding(start = 12.dp, end = if (closable) 0.dp else 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            title,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.sp,
+            color = if (selected) MaterialTheme.colorScheme.primary
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (closable) {
+            // A whole 48dp for the glyph. Drawn it is a few dp wide, it sits against the
+            // tab you were aiming for, and one thumb-width of overshoot closed a shell.
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(onClick = onClose),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "x",
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 
-private class KernTerminalSessionClient(
-    private val appContext: Context,
-    private val view: TerminalView,
-) : TerminalSessionClient {
-
-    override fun onTextChanged(changedSession: TerminalSession) {
-        view.onScreenUpdated()
-    }
-
-    override fun onTitleChanged(changedSession: TerminalSession) {}
-
-    override fun onSessionFinished(finishedSession: TerminalSession) {
-        Log.i(TAG, "terminal session finished")
-    }
-
-    override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {
-        val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("terminal", text ?: ""))
-    }
-
-    override fun onPasteTextFromClipboard(session: TerminalSession?) {
-        val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val text = cm.primaryClip?.getItemAt(0)?.coerceToText(appContext)?.toString() ?: return
-        TerminalHost.write(text)
-    }
-
-    override fun onBell(session: TerminalSession) {}
-
-    override fun onColorsChanged(session: TerminalSession) {}
-
-    override fun onTerminalCursorStateChange(state: Boolean) {}
-
-    override fun setTerminalShellPid(session: TerminalSession, pid: Int) {}
-
-    override fun getTerminalCursorStyle(): Int? = null
-
-    override fun logError(tag: String?, message: String?) {
-        Log.e(TAG, "$tag: $message")
-    }
-
-    override fun logWarn(tag: String?, message: String?) {
-        Log.w(TAG, "$tag: $message")
-    }
-
-    override fun logInfo(tag: String?, message: String?) {
-        Log.i(TAG, "$tag: $message")
-    }
-
-    override fun logDebug(tag: String?, message: String?) {}
-
-    override fun logVerbose(tag: String?, message: String?) {}
-
-    override fun logStackTraceWithMessage(tag: String?, message: String?, e: Exception?) {
-        Log.e(TAG, "$tag: $message", e)
-    }
-
-    override fun logStackTrace(tag: String?, e: Exception?) {
-        Log.e(TAG, "terminal", e)
-    }
-}
-
-/** Shared modifier state so the key row can drive either the workbench or the terminal. */
-object KeyRowState {
-    var ctrl: Boolean = false
-    var alt: Boolean = false
-    var shift: Boolean = false
-
-    fun clear() {
-        ctrl = false
-        alt = false
-        shift = false
+/**
+ * A shell whose tab was closed, still running on the tmux server.
+ *
+ * Without this the strip is the only record that it existed, so closing a tab hid a build
+ * that kept going with nothing left in the UI that could reach it.
+ */
+@Composable
+private fun DetachedTab(slot: Int, onReattach: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .clickable(onClick = onReattach)
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            "sh $slot",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            "reopen",
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.primary,
+        )
     }
 }

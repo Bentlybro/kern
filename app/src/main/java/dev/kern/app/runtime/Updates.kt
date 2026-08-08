@@ -38,9 +38,6 @@ object Updates {
 
     private const val LATEST = "https://api.github.com/repos/$REPO/releases/latest"
 
-    private const val PREFS = "kern"
-    private const val KEY_SKIPPED = "update_skipped_version"
-
     data class Release(
         val version: String,
         val notes: String,
@@ -184,12 +181,10 @@ object Updates {
     // ---- skipping -----------------------------------------------------------
 
     fun skippedVersion(context: Context): String? =
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY_SKIPPED, null)
+        Prefs.of(context).getString(Prefs.KEY_UPDATE_SKIPPED_VERSION, null)
 
     fun skip(context: Context, version: String) {
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY_SKIPPED, version).apply()
+        Prefs.of(context).edit().putString(Prefs.KEY_UPDATE_SKIPPED_VERSION, version).apply()
         _state.value = State.Idle
     }
 
@@ -205,7 +200,7 @@ object Updates {
         _state.value = State.Downloading(0)
         val target = File(context.cacheDir, "kern-${release.version}.apk")
         try {
-            LinuxRuntime.download(release.apkUrl, target) { got, total ->
+            download(release.apkUrl, target) { got, total ->
                 val percent = if (total > 0) (got * 100 / total).toInt() else 0
                 _state.value = State.Downloading(percent)
             }

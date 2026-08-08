@@ -115,7 +115,7 @@ class ShellQuotingTest {
     @Test
     fun `the shell model rejects the quoting mistakes sq exists to avoid`() {
         // Everything above is only worth running if [shellWord] would actually notice a
-        // wrong sq(). These are the four rewrites someone reaches for, and each one is a
+        // wrong sq(). These are the rewrites someone reaches for, and every one is a
         // hole; if any of them starts round-tripping, the model has gone blind and the
         // rest of this file has quietly stopped testing anything.
         val broken = listOf<Pair<String, (String) -> String>>(

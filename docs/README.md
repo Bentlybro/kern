@@ -28,6 +28,7 @@ Two things worth knowing before you read:
 | [17 — Releases, CI and updates](17-releases.md) | Branches, the signing key, and in-app updates. |
 | [18 — Terminal and agent](18-terminal-and-agent.md) | Multiple terminals, the agent's own terminal, and three bugs whose causes were nowhere near their symptoms. |
 | [19 — What is next](19-next.md) | The honest backlog, ordered by what would change Kern most. |
+| [20 — Testing](20-testing.md) | The unit suite and what it deliberately does not cover, plus the device checklist to run before a release. |
 | [09 — Building](09-building.md) | Toolchain, dependencies, and build configuration. |
 
 ## Design — the shape of the app

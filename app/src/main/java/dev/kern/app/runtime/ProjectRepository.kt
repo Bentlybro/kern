@@ -201,12 +201,28 @@ object ProjectRepository {
     }
 
     /** Folder names come from human typing and from URLs; neither is shell-safe. */
-    private fun sanitise(raw: String): String =
+    // internal rather than private so ProjectNameTest can exercise it directly.
+    /**
+     * Reduce a typed name or a URL's last segment to one safe path component.
+     *
+     * Letters and digits in ANY script, not just ASCII. An ASCII-only allowlist turned a
+     * repository whose name is written in Chinese, Arabic, Cyrillic or Greek into a run of
+     * dashes and then into nothing, so the app answered "could not work out a folder name"
+     * for a URL git would have cloned without complaint — and for a name the user had typed
+     * correctly. Linux filenames are bytes and git, tar and code-server all handle UTF-8;
+     * the app was the only thing that did not.
+     *
+     * Safety does not come from the alphabet: `/` is still not a letter, leading dots and
+     * dashes are still trimmed, and every use of the result is quoted with [sq] before it
+     * reaches a shell.
+     */
+    internal fun sanitise(raw: String): String =
         raw.trim()
-            .replace(Regex("[^A-Za-z0-9._-]"), "-")
+            .replace(Regex("[^\\p{L}\\p{N}._-]"), "-")
             .trim('-', '.')
 
-    private fun deriveName(url: String): String =
+    // internal rather than private so ProjectNameTest can exercise it directly.
+    internal fun deriveName(url: String): String =
         url.trim().trimEnd('/').substringAfterLast('/').removeSuffix(".git")
 
     // ---- recents -------------------------------------------------------------

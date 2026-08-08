@@ -24,7 +24,7 @@ kotlin {
  * tag, and the in-app updater compares it against the latest GitHub release, so it must
  * not be duplicated anywhere else.
  */
-val appVersionName = "0.1.2"
+val appVersionName = "0.1.3"
 
 /**
  * Overridable so CI can guarantee a monotonically increasing code without anyone having

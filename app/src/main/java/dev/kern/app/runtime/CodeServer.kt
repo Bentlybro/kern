@@ -51,8 +51,21 @@ object CodeServer {
     fun start(context: Context, token: String): Boolean {
         if (serverProcess != null) return true
 
+        // Made from this side on purpose, rather than with `mkdir -p` in the script below.
+        //
+        // Ubuntu 26.04 ships uutils coreutils: one Rust multi-call binary with about a
+        // hundred and fifteen hard links pointing at it. PRoot turns every hard link into a
+        // symlink under its link-to-symlink directory, so while apt is unpacking and
+        // running triggers those links are briefly replaced and EVERY core utility in the
+        // guest disappears at once. The first start after setup runs while the toolchain
+        // install is still going, and it died reproducibly on its own first word with
+        // "mkdir: command not found" - eighty milliseconds, no other output, a server that
+        // looked like it had hung. The retry in SessionService recovers it, but needing
+        // coreutils to exist before the server can start is the dependency worth removing.
+        File(LinuxRuntime.rootfsDir(context), "root/.kern").mkdirs()
+        File(LinuxRuntime.rootfsDir(context), "root/.local/share/code-server/User").mkdirs()
+
         val script = """
-            mkdir -p /root/.kern /root/.local/share/code-server/User
             export PASSWORD=${sq(token)}
             exec code-server --auth password --bind-addr 127.0.0.1:$PORT \
               --disable-telemetry --disable-update-check \

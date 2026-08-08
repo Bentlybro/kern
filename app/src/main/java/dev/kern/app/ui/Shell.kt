@@ -217,23 +217,42 @@ fun Shell(state: SessionState) {
                         if (showTerminal) TerminalPane(Modifier.fillMaxSize())
                         else EditorPane(Modifier.fillMaxSize())
 
-                    showTerminal -> Column(Modifier.fillMaxSize()) {
-                        EditorPane(
-                            Modifier
-                                .fillMaxWidth()
-                                .weight(0.6f),
-                        )
-                        Spacer(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(1.dp)
-                                .background(MaterialTheme.colorScheme.surfaceVariant),
-                        )
-                        TerminalPane(
-                            Modifier
-                                .fillMaxWidth()
-                                .weight(0.4f),
-                        )
+                    showTerminal -> {
+                        // The pane the keyboard is typing into is the pane that needs the
+                        // room. A fixed 60/40 split shares the keyboard's cost between
+                        // both panes, which left the terminal ~10 rows tall on the
+                        // unfolded screen — under thumbs that were covering the editor
+                        // anyway. So while the IME is up and a terminal holds focus, the
+                        // editor collapses to a sliver and the terminal takes the rest;
+                        // either putting the keyboard away or tapping the editor restores
+                        // the split. The editor stays in composition on purpose: removing
+                        // it would detach the WebView and run the layout's teardown.
+                        val terminalFocused by TerminalSessions.focused
+                            .collectAsStateWithLifecycle()
+                        val imeUp =
+                            WindowInsets.imeAnimationTarget.getBottom(LocalDensity.current) > 0
+                        // Snapped, not animated: each step of a weight animation re-lays
+                        // out the workbench, which is the struggle imeAnimationTarget
+                        // exists to avoid.
+                        val editorWeight = if (imeUp && terminalFocused) 0.12f else 0.6f
+                        Column(Modifier.fillMaxSize()) {
+                            EditorPane(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .weight(editorWeight),
+                            )
+                            Spacer(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(1.dp)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                            )
+                            TerminalPane(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f - editorWeight),
+                            )
+                        }
                     }
 
                     else -> EditorPane(Modifier.fillMaxSize())

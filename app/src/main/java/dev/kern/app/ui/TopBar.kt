@@ -69,25 +69,21 @@ internal fun TopBar(
         )
         Spacer(Modifier.width(8.dp))
 
-        // The surfaces worth a permanent thumb target, plus undo and redo. Everything
-        // else lives behind "more" - reachable, but not competing for the bar. Scrollable
-        // because the full set does not fit a folded phone, and wrapping the bar would
-        // eat a row of editor.
+        // Only what gets tapped repeatedly WHILE editing. The bar had grown to eight chips
+        // by accretion, one per feature, which is how a toolbar stops being scannable: past
+        // about four the eye reads it as a wall and stops picking anything out. The test
+        // applied here is frequency during a session, not importance in the abstract -
+        // opening a project happens once, so it moved to the menu, while toggling the file
+        // tree happens constantly, so it stayed. Everything dropped is still one tap away
+        // behind "more".
         Row(
             modifier = Modifier
                 .weight(1f)
                 .horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Undo leads because the row scrolls: on the cover display only the first few
-            // chips are on screen, and this is the one you reach for the instant Gboard
-            // autocorrects an identifier. It is also the only way to send Ctrl+Z at all.
-            ActionChip("undo") { WorkbenchWebView.Commands.undo() }
-            ActionChip("redo") { WorkbenchWebView.Commands.redo() }
             ActionChip("files") { WorkbenchWebView.Commands.toggleSidebar() }
-            ActionChip("search") { WorkbenchWebView.Commands.toggleSearch() }
             ActionChip("git") { WorkbenchWebView.Commands.toggleSourceControl() }
-            ActionChip("project") { onNavigate(ShellDestination.Projects) }
             if (mode != DisplayMode.Tabletop) {
                 ActionChip(
                     label = if (terminalShown) "editor" else "term",
@@ -95,6 +91,11 @@ internal fun TopBar(
                     onClick = onToggleTerminal,
                 )
             }
+            // Undo keeps a chip while redo does not, and the asymmetry is deliberate. It is
+            // the most frequent action in any editor, it is what you reach for the instant
+            // the soft keyboard autocorrects an identifier, and without it there is no way
+            // to send Ctrl+Z at all. Redo is comparatively rare, so it went to the menu.
+            ActionChip("undo") { WorkbenchWebView.Commands.undo() }
             // Only when there is an agent to open. Someone who never wanted one should
             // not be carrying a permanent chip for it, and the cockpit's diff and commit
             // half is still reachable through "more".
@@ -111,20 +112,32 @@ internal fun TopBar(
                 expanded = menuOpen,
                 onDismissRequest = { menuOpen = false },
             ) {
-                // The command palette earns its place here rather than being dropped:
-                // it is the way into every VS Code command that has no chip.
+                // Ordered by how often it is reached for, not by category. Redo sits at the
+                // top because someone who has just used the undo chip and overshot is the
+                // likeliest person to open this menu at all.
+                MenuAction("redo", { menuOpen = false }) {
+                    WorkbenchWebView.Commands.redo()
+                }
                 MenuAction("go to file", { menuOpen = false }) {
                     WorkbenchWebView.Commands.quickOpen()
                 }
+                MenuAction("find in files", { menuOpen = false }) {
+                    WorkbenchWebView.Commands.toggleSearch()
+                }
+                // The command palette earns its place here rather than being dropped:
+                // it is the way into every VS Code command that has no chip.
                 MenuAction("command palette", { menuOpen = false }) {
                     WorkbenchWebView.Commands.commandPalette()
                 }
-                MenuAction("chat", { menuOpen = false }) {
-                    WorkbenchWebView.Commands.toggleChatPanel()
+                MenuAction("projects", { menuOpen = false }) {
+                    onNavigate(ShellDestination.Projects)
                 }
                 MenuAction("new terminal", { menuOpen = false }) {
                     TerminalSessions.openShell(context)
                     onNewShell()
+                }
+                MenuAction("chat", { menuOpen = false }) {
+                    WorkbenchWebView.Commands.toggleChatPanel()
                 }
                 MenuAction("status", { menuOpen = false }) {
                     onNavigate(ShellDestination.Status)

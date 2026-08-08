@@ -38,7 +38,7 @@ jobs:
           java-version: '17'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
 
       - name: Assemble debug
         run: ./gradlew assembleDebug --no-daemon --stacktrace
@@ -47,8 +47,50 @@ jobs:
         run: ./gradlew lintDebug --no-daemon
         continue-on-error: true
 
+      # Deliberately no `continue-on-error`: unlike lint, a failing unit test stops the
+      # run. These cover shell quoting, project-name sanitising and the rootfs the
+      # installer picks, and none of the three has a safe failure mode.
       - name: Unit tests
+        id: unit-tests
         run: ./gradlew testDebugUnitTest --no-daemon
+
+      # For the whole life of this project the step above passed without running anything,
+      # because there was no test source set for it to find, and Gradle reports an empty
+      # task as success. A green tick that means "nothing ran" is worse than no check at
+      # all, because it is trusted. If the tests ever stop being wired up, fail here and
+      # say so rather than going quietly green again.
+      - name: Check the unit tests actually ran
+        run: |
+          results=app/build/test-results/testDebugUnitTest
+          # One awk over the JUnit XML rather than a pipeline: it always exits 0 and always
+          # prints a number, so this cannot fail as a broken pipe under `set -o pipefail`
+          # and be mistaken for the thing it is here to detect.
+          count=0
+          if ls "$results"/*.xml >/dev/null 2>&1; then
+            count=$(awk 'match($0, /tests="[0-9]+"/) {
+                total += substr($0, RSTART + 7, RLENGTH - 8)
+              } END { print total + 0 }' "$results"/*.xml)
+          fi
+          echo "Unit tests run: $count" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::testDebugUnitTest succeeded without running a single test." \
+              "The task is reporting NO-SOURCE - check app/src/test still exists and is" \
+              "on the debug unit-test source set."
+            exit 1
+          fi
+
+      # Only when the tests themselves went red. A red run is otherwise undiagnosable
+      # without a local checkout, since the console shows the count and not which
+      # assertion failed: the XML carries the message and the HTML is readable.
+      - name: Upload unit test report
+        if: failure() && steps.unit-tests.outcome == 'failure'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unit-test-report-${{ github.sha }}
+          path: |
+            app/build/reports/tests/testDebugUnitTest
+            app/build/test-results/testDebugUnitTest
+          retention-days: 14
 
       # Debug builds are signed with Android's throwaway debug key, so this artifact is
       # safe to publish and cannot be installed over a release build.

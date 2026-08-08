@@ -30,4 +30,6 @@ internal object Prefs {
     const val KEY_UPDATE_SKIPPED_VERSION = "update_skipped_version"
     const val KEY_LAYOUT_EPOCH = "layout_epoch"
     const val KEY_USAGE_EPOCH = "usage_epoch"
+    const val KEY_TERMINAL_FONT_SP = "terminal_font_sp"
+    const val KEY_RELAUNCH_AFTER_UPDATE = "relaunch_after_update"
 }

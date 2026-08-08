@@ -1,72 +1,58 @@
 # Kern documentation
 
-Kern is a complete Ubuntu development environment and the VS Code workbench, running
-inside a single Android app. These documents cover how it works, why it is built this
-way, and what was tried and rejected on the way.
+Kern is a complete Ubuntu development environment and the VS Code workbench, running inside a single Android app. These documents cover how it works, why it is built this way, and what was tried and rejected on the way.
 
-Two things worth knowing before you read:
+Two things are worth knowing before you read:
 
-- **The project changed shape partway through.** It began as a native shell around
-  Termux, and became a self-contained app with its own embedded Linux. Documents written
-  before that switch still describe the Termux design in places. Each is labelled below,
-  and where an older document conflicts with a newer one, the newer one wins.
-- **Claims here are measured, not assumed.** Where a document says something was
-  verified, it was verified on a real device, and the failure it protects against is
-  usually recorded alongside it. That is deliberate: most of the hard-won knowledge in
-  this project is about *how* things fail, and the failures are rarely self-explanatory.
+- **The project changed shape partway through.** It began as a native shell around Termux, and became a self-contained app with its own embedded Linux. Documents written before that switch still describe the Termux design in places. Each is labelled below, and where an older document conflicts with a newer one, the newer one wins.
+- **Claims here are measured, not assumed.** Where a document says something was verified, it was verified on a real device, and the failure it protects against is usually recorded alongside it. That is deliberate: most of the hard-won knowledge in this project is about *how* things fail, and the failures are rarely self-explanatory.
 
 ## Current — how the system works today
 
 | Document | Covers |
 |---|---|
-| [11 — Embedded Linux](11-embedded-linux.md) | **Start here.** How a real Ubuntu runs inside an app at targetSdk 36: PRoot, the loader stub, fake root, and the flags that are load-bearing. |
-| [12 — Setup and the installer](12-setup.md) | What first run actually does, why it is split in two, and where the time goes. |
-| [13 — Git and GitHub](13-git-and-github.md) | Device-flow sign-in, the credential helper, and why driving `gh` needs a terminal emulator. |
-| [14 — Storage](14-storage.md) | What the guest costs, why there is no hard cap, and the symlink trap in measuring it. |
-| [15 — Projects](15-projects.md) | Creating, cloning and opening workspaces from native UI. |
-| [16 — Development](16-development.md) | Building, deploying, and driving a real device from the harness. |
-| [17 — Releases, CI and updates](17-releases.md) | Branches, the signing key, and in-app updates. |
-| [18 — Terminal and agent](18-terminal-and-agent.md) | Multiple terminals, the agent's own terminal, and three bugs whose causes were nowhere near their symptoms. |
-| [19 — What is next](19-next.md) | The honest backlog, ordered by what would change Kern most. |
-| [09 — Building](09-building.md) | Toolchain, dependencies, and build configuration. |
+| [11 — Embedded Linux](11-embedded-linux.md) | **Start here.** This document explains how a real Ubuntu runs inside an app at a modern targetSdk, covering PRoot, the loader stub, fake root, and the flags that are load-bearing. |
+| [12 — Setup and the installer](12-setup.md) | It describes what first run actually does, why it is split in two, and where the time goes. |
+| [13 — Git and GitHub](13-git-and-github.md) | It explains device-flow sign-in, the credential helper, and why driving `gh` needs a terminal emulator. |
+| [14 — Storage](14-storage.md) | It sets out what the guest costs, why there is no hard cap, and the symlink trap involved in measuring it. |
+| [15 — Projects](15-projects.md) | It covers creating, cloning and opening workspaces from native UI. |
+| [16 — Development](16-development.md) | It covers building, deploying, and driving a real device from the harness. |
+| [17 — Releases, CI and updates](17-releases.md) | It covers branches, the signing key, and in-app updates. |
+| [18 — Terminal and agent](18-terminal-and-agent.md) | It covers multiple terminals, the agent's own terminal, and three bugs whose causes were nowhere near their symptoms. |
+| [19 — What is next](19-next.md) | This is the honest backlog, ordered by what would change Kern most. |
+| [20 — Testing](20-testing.md) | It describes the unit suite and what it deliberately does not cover, plus the device checklist to run before a release. |
+| [21 — Guest compatibility](21-guest-compatibility.md) | It records what runs in the Ubuntu guest and what does not, as measured on device, and gives the two rules that predict the answer. |
+| [09 — Building](09-building.md) | It covers the toolchain, the dependencies, and the build configuration. |
 
 ## Design — the shape of the app
 
 | Document | Covers | Status |
 |---|---|---|
-| [01 — Goals and requirements](01-goals-and-requirements.md) | What this is for and what it refuses to be | Current |
-| [02 — Device](02-device.md) | The hardware it was designed against | Current |
-| [03 — Android constraints](03-android-constraints.md) | W^X, the phantom process killer, background limits | Current |
-| [04 — Architecture](04-architecture.md) | Component layout and process model | **Partly superseded** by 11 — the runtime is no longer Termux |
-| [05 — UX](05-ux.md) | Postures, layouts, and input design | Current |
-| [10 — Native UI requirements](10-native-ui-requirements.md) | What must be native rather than web, and why | Current |
+| [01 — Goals and requirements](01-goals-and-requirements.md) | It sets out what this is for and what it refuses to be. | It is current. |
+| [02 — Device](02-device.md) | It describes the hardware Kern was designed against. | It is current. |
+| [03 — Android constraints](03-android-constraints.md) | It covers W^X, the phantom process killer, and background limits. | It is current. |
+| [04 — Architecture](04-architecture.md) | It describes the component layout and the process model. | It is **partly superseded** by 11, because the runtime is no longer Termux. |
+| [05 — UX](05-ux.md) | It covers postures, layouts, and input design. | It is current. |
+| [10 — Native UI requirements](10-native-ui-requirements.md) | It explains what must be native rather than web, and why. | It is current. |
 
 ## History — decisions, risks, and the road here
 
 | Document | Covers |
 |---|---|
-| [08 — Decisions](08-decisions.md) | Numbered decisions with their reasoning. D4 and D5 are superseded by 11. |
-| [07 — Risks](07-risks.md) | The risk register and what closed each one |
-| [06 — Roadmap](06-roadmap.md) | Milestones M0–M6 and what each delivered |
+| [08 — Decisions](08-decisions.md) | It lists numbered decisions with their reasoning. D4 and D5 are superseded by 11. |
+| [07 — Risks](07-risks.md) | This is the risk register, and it records what closed each risk. |
+| [06 — Roadmap](06-roadmap.md) | It covers milestones M0–M6 and what each one delivered. |
 
 ## Research — what was investigated before committing
 
-These are working notes from before and during the build. They are kept because the
-reasoning is often more useful than the conclusion, but they are **snapshots, not
-current documentation**.
+These are working notes from before and during the build. They are kept because the reasoning is often more useful than the conclusion, but they are **snapshots, not current documentation**.
 
-- [`research/`](research/) — the device, the IDE landscape, VS Code's architecture,
-  editor technology, foldable development, and runtime execution constraints.
-- [`research2/`](research2/) — the harder questions: a native editor versus the
-  workbench, what is lost without extensions, remote protocols, Kotlin LSP/DAP, an
-  AndroidIDE post-mortem, and a deliberate devil's-advocate challenge to the whole plan.
-- [`research3-terminal/`](research3-terminal/) — terminal approaches that were evaluated
-  and largely abandoned once the app gained its own PTY.
+- [`research/`](research/) covers the device, the IDE landscape, VS Code's architecture, editor technology, foldable development, and runtime execution constraints.
+- [`research2/`](research2/) takes on the harder questions: a native editor versus the workbench, what is lost without extensions, remote protocols, Kotlin LSP/DAP, an AndroidIDE post-mortem, and a deliberate devil's-advocate challenge to the whole plan.
+- [`research3-terminal/`](research3-terminal/) records the terminal approaches that were evaluated and largely abandoned once the app gained its own PTY.
 
 ## Conventions
 
-- Code comments explain **why**, not what. If a line looks strange, the comment says what
-  breaks without it.
-- Failure modes are quoted verbatim where they are misleading — several of the bugs in
-  this project reported something that had nothing to do with the actual cause.
+- Code comments explain **why**, not what. If a line looks strange, the comment says what breaks without it.
+- Failure modes are quoted verbatim where they are misleading, because several of the bugs in this project reported something that had nothing to do with the actual cause.
 - Anything described as verified has a device behind it.

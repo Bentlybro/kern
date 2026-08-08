@@ -294,15 +294,27 @@ object RootfsInstaller {
      * way. If it is unreachable, today's literal name still gets a try: a cdimage
      * restructure should cost verification, not the install.
      */
-    private fun resolveRootfs(): RootfsSource {
+    private fun resolveRootfs(): RootfsSource = selectRootfs(
+        runCatching { fetchText(CDIMAGE_BASE + "SHA256SUMS") }
+            .onFailure { Log.w(TAG, "could not read SHA256SUMS", it) }
+            .getOrNull(),
+    )
+
+    /**
+     * The newest ubuntu-base of our own series named in [sums], with the digest listed
+     * beside it - or today's literal name and no digest when [sums] is unreadable or names
+     * nothing we can use.
+     *
+     * Split from the fetch above, and internal rather than private, so the choice can be
+     * tested against real SHA256SUMS text without reaching cdimage.
+     */
+    internal fun selectRootfs(sums: String?): RootfsSource {
         val fallback = RootfsSource(
             ROOTFS_FALLBACK_NAME,
             CDIMAGE_BASE + ROOTFS_FALLBACK_NAME,
             null,
         )
-        val sums = runCatching { fetchText(CDIMAGE_BASE + "SHA256SUMS") }
-            .onFailure { Log.w(TAG, "could not read SHA256SUMS", it) }
-            .getOrNull() ?: return fallback
+        if (sums == null) return fallback
 
         var best: RootfsSource? = null
         var bestVersion = emptyList<Int>()
@@ -324,7 +336,8 @@ object RootfsInstaller {
         return best ?: fallback
     }
 
-    private class RootfsSource(val name: String, val url: String, val sha256: String?)
+    // internal, not private, only so [selectRootfs] can be read back in a unit test.
+    internal class RootfsSource(val name: String, val url: String, val sha256: String?)
 
     /** `<digest> *ubuntu-base-26.04-base-arm64.tar.gz`, with the point release captured. */
     private val ROOTFS_LINE =

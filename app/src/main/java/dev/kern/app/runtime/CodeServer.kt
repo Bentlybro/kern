@@ -1,6 +1,7 @@
 package dev.kern.app.runtime
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import java.io.File
 import org.json.JSONObject
@@ -50,8 +51,21 @@ object CodeServer {
     fun start(context: Context, token: String): Boolean {
         if (serverProcess != null) return true
 
+        // Made from this side on purpose, rather than with `mkdir -p` in the script below.
+        //
+        // Ubuntu 26.04 ships uutils coreutils: one Rust multi-call binary with about a
+        // hundred and fifteen hard links pointing at it. PRoot turns every hard link into a
+        // symlink under its link-to-symlink directory, so while apt is unpacking and
+        // running triggers those links are briefly replaced and EVERY core utility in the
+        // guest disappears at once. The first start after setup runs while the toolchain
+        // install is still going, and it died reproducibly on its own first word with
+        // "mkdir: command not found" - eighty milliseconds, no other output, a server that
+        // looked like it had hung. The retry in SessionService recovers it, but needing
+        // coreutils to exist before the server can start is the dependency worth removing.
+        File(LinuxRuntime.rootfsDir(context), "root/.kern").mkdirs()
+        File(LinuxRuntime.rootfsDir(context), "root/.local/share/code-server/User").mkdirs()
+
         val script = """
-            mkdir -p /root/.kern /root/.local/share/code-server/User
             export PASSWORD=${sq(token)}
             exec code-server --auth password --bind-addr 127.0.0.1:$PORT \
               --disable-telemetry --disable-update-check \
@@ -75,9 +89,24 @@ object CodeServer {
         // the handle when the drain ends is what stops a dead server being reported as
         // running for the life of the process — `start` returns early on a non-null handle,
         // so without this one death meant no restart would ever be attempted again.
-        process.drainInBackground("KernServerDrain") {
+        val startedAt = SystemClock.elapsedRealtime()
+        process.drainInBackground("KernServerDrain") { output ->
             if (serverProcess === process) {
-                Log.w(TAG, "code-server exited")
+                val alive = SystemClock.elapsedRealtime() - startedAt
+                // The server redirects its own output to a log file, so anything that
+                // reaches the pty came from before that redirect took effect: PRoot itself,
+                // or bash failing to get as far as the first line of the script. That is
+                // exactly the case worth reporting, and it is the case where the log file
+                // the failure message points at does not exist yet.
+                // waitFor also reaps the child. Nothing used to, which is where the zombies
+                // in the guest's process list came from. A negative value is the signal
+                // that killed it, and 127 means the exec never happened at all.
+                val status = runCatching { process.waitFor() }.getOrDefault(0)
+                Log.w(
+                    TAG,
+                    "code-server exited after ${alive}ms, status $status; " +
+                        "pty said: ${output.ifBlank { "(nothing)" }}",
+                )
                 serverProcess = null
             }
         }
@@ -133,6 +162,14 @@ object CodeServer {
         }
         val ours = JSONObject(WORKBENCH_SETTINGS)
         for (key in ours.keys()) merged.put(key, ours.get(key))
+        // Written only when absent, so the user's own choice wins from then on. These
+        // used to sit in the enforced set, which meant a font size or theme changed
+        // through the workbench's own settings UI quietly reverted on the next cold
+        // start - the one behaviour guaranteed to make an editor feel rented.
+        val defaults = JSONObject(WORKBENCH_DEFAULTS)
+        for (key in defaults.keys()) {
+            if (!merged.has(key)) merged.put(key, defaults.get(key))
+        }
         return merged.toString(2)
     }
 
@@ -156,19 +193,33 @@ object CodeServer {
           "window.menuBarVisibility": "hidden",
           "window.commandCenter": false,
           "workbench.startupEditor": "none",
-          "workbench.colorTheme": "Default Dark Modern",
           "files.autoSave": "afterDelay",
-          "editor.minimap.enabled": false,
-          "editor.wordWrap": "on",
-          "editor.fontSize": 14,
-          "editor.stickyScroll.enabled": false,
-          "editor.acceptSuggestionOnEnter": "off",
-          "terminal.integrated.fontSize": 13,
           "keyboard.dispatch": "keyCode",
           "security.workspace.trust.enabled": false,
           "update.mode": "none",
           "telemetry.telemetryLevel": "off",
           "chat.commandCenter.enabled": false
+        }
+    """.trimIndent()
+
+    /**
+     * Looks, not chrome: theme, fonts, wrap, minimap. Kern has an opinion about the
+     * starting point and no business having one afterwards — the workbench's own
+     * settings UI is fully reachable through the command palette, and a choice made
+     * there has to survive the next start or the editor feels rented. The enforced set
+     * above stays enforced because the native shell breaks without it: a menu bar or
+     * status bar coming back would duplicate chrome the app draws itself, and autosave
+     * off loses work to a process death Android will not warn about.
+     */
+    private val WORKBENCH_DEFAULTS = """
+        {
+          "workbench.colorTheme": "Default Dark Modern",
+          "editor.minimap.enabled": false,
+          "editor.wordWrap": "on",
+          "editor.fontSize": 13,
+          "editor.stickyScroll.enabled": false,
+          "editor.acceptSuggestionOnEnter": "off",
+          "terminal.integrated.fontSize": 12
         }
     """.trimIndent()
 }

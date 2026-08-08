@@ -1,7 +1,10 @@
 package dev.kern.app.runtime
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageInstaller
+import android.net.Uri
+import android.provider.Settings
 import android.util.Log
 import dev.kern.app.BuildConfig
 import java.io.File
@@ -50,6 +53,18 @@ object Updates {
         data object Checking : State
         data object UpToDate : State
         data class Available(val release: Release) : State
+
+        /**
+         * The user has to flip "Install unknown apps" for Kern before the platform will
+         * take an APK from it. Declaring REQUEST_INSTALL_PACKAGES in the manifest is not
+         * the grant — it only makes the toggle exist. Without this state the block
+         * surfaced as a dead-end failure ("blocked by unknown source package") with
+         * nothing on screen leading to the one settings switch that fixes it, and the
+         * plausible-looking way out from there is uninstalling — which deletes the whole
+         * Linux environment.
+         */
+        data class NeedsPermission(val release: Release) : State
+
         data class Downloading(val percent: Int) : State
         data object Installing : State
         data class Failed(val message: String) : State
@@ -68,6 +83,29 @@ object Updates {
     fun failed(message: String) {
         _state.value = State.Failed(message)
     }
+
+    /** Whether Android will accept an install session from Kern at all. */
+    fun canInstall(context: Context): Boolean =
+        context.packageManager.canRequestPackageInstalls()
+
+    fun needsPermission(release: Release) {
+        _state.value = State.NeedsPermission(release)
+    }
+
+    /** A user who has just granted the toggle should land back on the offer, not re-check. */
+    fun permissionGranted(release: Release) {
+        _state.value = State.Available(release)
+    }
+
+    /**
+     * Android's per-app "Install unknown apps" screen, opened directly on Kern's own
+     * entry. The package URI is what skips the list of every app on the device.
+     */
+    fun permissionSettingsIntent(context: Context): Intent =
+        Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:${context.packageName}"),
+        )
 
     // ---- checking -----------------------------------------------------------
 
@@ -224,6 +262,15 @@ object Updates {
     suspend fun install(context: Context, apk: File): Boolean = withContext(Dispatchers.IO) {
         _state.value = State.Installing
         try {
+            // The update kills this process, so nothing here survives to reopen the app.
+            // MY_PACKAGE_REPLACED arrives in the *new* version's process, and this stamp
+            // is how its receiver knows the replace was an update the user just asked
+            // for — rather than a sideload or a backup restore, which should not fling
+            // the app onto the screen.
+            Prefs.of(context).edit()
+                .putLong(Prefs.KEY_RELAUNCH_AFTER_UPDATE, System.currentTimeMillis())
+                .apply()
+
             val installer = context.packageManager.packageInstaller
             val params = PackageInstaller.SessionParams(
                 PackageInstaller.SessionParams.MODE_FULL_INSTALL,

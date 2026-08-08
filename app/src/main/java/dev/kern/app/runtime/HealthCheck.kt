@@ -151,7 +151,8 @@ object HealthCheck {
      * asks for both; this is the same knowledge, applied to the other button that
      * installs gh.
      */
-    private fun packagesFor(binaries: List<String>): List<String> =
+    // internal rather than private so the unit tests can check the mapping directly.
+    internal fun packagesFor(binaries: List<String>): List<String> =
         binaries.flatMap { PACKAGES_FOR[it] ?: listOf(it) }.distinct()
 
     private val PACKAGES_FOR = mapOf(

@@ -9,8 +9,25 @@ package dev.kern.app.runtime
  */
 object AgentPrompt {
 
+    /**
+     * Every alternative here is a shape a question takes, not merely a word it contains.
+     *
+     * `permission` and `approve` were once matched bare, and both had to be narrowed.
+     * "Permission denied" is among the most common last lines a Linux terminal ever shows
+     * — `git@github.com: Permission denied (publickey).` is the likeliest way a push fails
+     * in this app, and `bash: ./gradlew: Permission denied` the next — so the bare word
+     * raised "your agent is waiting for you" on exactly the screens where the user was
+     * already having a bad time. `approve` did the same for "Approved" in ordinary output.
+     * A notification that cries wolf is worse than one that never fires, because the next
+     * real one gets ignored too.
+     *
+     * `permission to` keeps the agent asking to act ("asking for permission to write
+     * outside the project") while dropping the denial, and the word boundary on `approve`
+     * keeps the imperative while dropping the past tense.
+     */
     private val PATTERN = Regex(
-        "(\\?\\s*$)|(\\[y/n\\])|(\\(y/N\\))|(yes/no)|(continue\\??)|(approve)|(permission)",
+        "(\\?\\s*$)|(\\[y/n\\])|(\\(y/n\\))|(yes/no)|(press enter)|(continue\\?)" +
+            "|(\\bapprove\\b)|(permission to\\b)",
         RegexOption.IGNORE_CASE,
     )
 

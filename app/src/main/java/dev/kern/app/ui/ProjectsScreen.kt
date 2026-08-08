@@ -154,7 +154,15 @@ fun ProjectsScreen(
                         // and the retry then reported the name as taken. Only the reporting
                         // below dies with the screen.
                         val work = AppScope.start {
-                            ProjectRepository.create(app, name, initGit)
+                            val outcome = ProjectRepository.create(app, name, initGit)
+                            // Same shape as clone below: the screen only reports, so the
+                            // consequence has to ride on the work or a posture change
+                            // strands the new project unopened.
+                            if (outcome is ProjectRepository.Outcome.Success) {
+                                ProjectRepository.rememberOpened(app, outcome.path)
+                                WorkbenchWebView.openFolder(outcome.path)
+                            }
+                            outcome
                         }
                         scope.launch {
                             val outcome = work.await()
@@ -164,7 +172,7 @@ fun ProjectsScreen(
                                     newName = ""
                                     message = "Created ${outcome.name}"
                                     reloadToken++
-                                    open(outcome.path)
+                                    onDismiss()
                                 }
                                 is ProjectRepository.Outcome.Failure ->
                                     message = outcome.message
@@ -212,11 +220,23 @@ fun ProjectsScreen(
                         message = "Cloning..."
                         cloneProgress.value = null
                         val work = AppScope.start {
-                            ProjectRepository.clone(
+                            val outcome = ProjectRepository.clone(
                                 app,
                                 url,
                                 onProgress = { cloneProgress.value = it },
                             )
+                            // Opening the result travels with the work, not with the
+                            // screen. The reporting coroutine below dies whenever this
+                            // screen does — and on a foldable it does without anyone
+                            // navigating, because a posture change recreates the activity
+                            // and `destination` resets to the editor. A clone that
+                            // finished with no one listening used to open nothing: the
+                            // repository existed, and the workbench never heard about it.
+                            if (outcome is ProjectRepository.Outcome.Success) {
+                                ProjectRepository.rememberOpened(app, outcome.path)
+                                WorkbenchWebView.openFolder(outcome.path)
+                            }
+                            outcome
                         }
                         cloneJob = work
                         scope.launch {
@@ -233,7 +253,10 @@ fun ProjectsScreen(
                                     cloneUrl = ""
                                     message = "Cloned ${outcome.name}"
                                     reloadToken++
-                                    open(outcome.path)
+                                    // The work already pointed the workbench at the new
+                                    // folder; a second openFolder here would just reload
+                                    // it. All that is left is to step out of the way.
+                                    onDismiss()
                                 }
                                 is ProjectRepository.Outcome.Failure ->
                                     message = outcome.message

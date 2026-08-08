@@ -11,14 +11,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.kern.app.runtime.Updates
 import kotlinx.coroutines.launch
@@ -39,6 +43,25 @@ fun UpdateSection() {
     // Check on open rather than on a timer: this screen is the only place it surfaces,
     // so anywhere else would be doing network the user never asked for.
     LaunchedEffect(Unit) { Updates.check(context) }
+
+    // Coming back from Android's "Install unknown apps" screen is a resume, not a
+    // recomposition, so nothing here would notice the grant by itself — the user
+    // returned to the same "needs permission" text they left, with the toggle already
+    // on. Watching resume puts them back on the offer the moment they return.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            val current = Updates.state.value
+            if (event == Lifecycle.Event.ON_RESUME &&
+                current is Updates.State.NeedsPermission &&
+                Updates.canInstall(context)
+            ) {
+                Updates.permissionGranted(current.release)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
@@ -71,6 +94,14 @@ fun UpdateSection() {
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
+                        // Checked before the download, not after: without the grant the
+                        // platform blocks the session at commit, tens of megabytes too
+                        // late, and the error it produces ("blocked by unknown source
+                        // package") names a settings screen it does not open.
+                        if (!Updates.canInstall(context)) {
+                            Updates.needsPermission(current.release)
+                            return@Button
+                        }
                         scope.launch {
                             val apk = Updates.download(context, current.release)
                             if (apk != null) Updates.install(context, apk)
@@ -81,6 +112,23 @@ fun UpdateSection() {
                     TextButton(onClick = { Updates.skip(context, current.release.version) }) {
                         Text("Skip this version")
                     }
+                }
+            }
+
+            is Updates.State.NeedsPermission -> {
+                Text(
+                    "Android needs your permission before Kern can install its own " +
+                        "updates. It is a one-time switch: \"Allow from this source\" on " +
+                        "the screen behind this button.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(onClick = {
+                    runCatching {
+                        context.startActivity(Updates.permissionSettingsIntent(context))
+                    }
+                }) {
+                    Text("Open Android settings")
                 }
             }
 

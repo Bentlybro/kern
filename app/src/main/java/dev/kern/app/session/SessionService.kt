@@ -54,6 +54,10 @@ class SessionService : Service() {
         private const val CHANNEL_ID = "session"
         private const val AGENT_CHANNEL_ID = "agent"
         private const val TAG = "Kern"
+
+        /** Enough to outlast the toolchain install racing the first start, no more. */
+        private const val START_ATTEMPTS = 3
+        private const val START_TIMEOUT_MS = 60_000L
         const val ACTION_START = "dev.kern.app.action.START"
         const val ACTION_STOP = "dev.kern.app.action.STOP"
 
@@ -110,24 +114,7 @@ class SessionService : Service() {
             Log.i(TAG, "supervise: adopted an already-running server")
         } else {
             CodeServer.applyWorkbenchSettings(this)
-            // A refused spawn is known immediately, so say so immediately rather than
-            // spending ninety seconds polling a server that was never launched and then
-            // pointing the user at a log file that cannot exist.
-            if (!CodeServer.start(this, Secrets.token(this))) {
-                val why = "Could not launch code-server. Try Repair in settings."
-                Log.e(TAG, "supervise: $why")
-                _state.value = SessionState.Failed(why)
-                updateNotification("Failed to start - open the app for details")
-                return
-            }
-            if (!awaitHealthy(90_000)) {
-                val why = "code-server did not start. See /root/.kern/server.log " +
-                    "in the terminal."
-                Log.e(TAG, "supervise: $why")
-                _state.value = SessionState.Failed(why)
-                updateNotification("Failed to start - open the app for details")
-                return
-            }
+            if (!launchWithRetries()) return
         }
         _state.value = SessionState.Healthy
         updateNotification("Running on 127.0.0.1:${CodeServer.PORT}")
@@ -184,10 +171,54 @@ class SessionService : Service() {
         }
     }
 
+    /**
+     * Start the server, and try again if it dies on the way up.
+     *
+     * The first start after a fresh setup fails reproducibly on device: the toolchain apt
+     * runs on in the same guest behind the opening editor, and code-server's bash exits
+     * within about a hundred milliseconds without creating so much as its log directory.
+     * The same start succeeds every time once that has finished, so it is transient rather
+     * than broken. What made it fatal was the response, not the fault - one attempt, then
+     * ninety seconds spent polling a process we had already been told was dead, then a
+     * failure blaming a log file that was never created.
+     *
+     * Returns false only after every attempt has failed, having already reported why.
+     */
+    private suspend fun launchWithRetries(): Boolean {
+        repeat(START_ATTEMPTS) { attempt ->
+            if (attempt > 0) {
+                Log.i(TAG, "supervise: retrying code-server (attempt ${attempt + 1})")
+                CodeServer.stop()
+                delay(3_000)
+            }
+            if (!CodeServer.start(this, Secrets.token(this))) {
+                // A refused spawn is known immediately. Retrying it is still worth a turn,
+                // since fd and process pressure during setup is exactly what causes it.
+                return@repeat
+            }
+            if (awaitHealthy(START_TIMEOUT_MS)) return true
+        }
+
+        val why = "code-server did not start after $START_ATTEMPTS attempts. " +
+            "See /root/.kern/server.log in the terminal, or try Repair in settings."
+        Log.e(TAG, "supervise: $why")
+        _state.value = SessionState.Failed(why)
+        updateNotification("Failed to start - open the app for details")
+        return false
+    }
+
+    /**
+     * Poll until the server answers, or until it is gone.
+     *
+     * Stopping early when the process has died is the point: without it a server that
+     * exited in a tenth of a second still cost the full timeout before anyone noticed,
+     * which is most of what made this look like a hang rather than a crash.
+     */
     private suspend fun awaitHealthy(timeoutMs: Long): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             if (isHealthy()) return true
+            if (!CodeServer.isRunning()) return false
             // Poll briskly: this delay is most of the perceived startup time.
             delay(300)
         }

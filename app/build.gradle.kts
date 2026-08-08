@@ -112,4 +112,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.window)
     implementation(libs.kotlinx.coroutines.android)
+
+    // Plain JVM JUnit 4 only. The unit tests here cover pure logic - quoting, parsing,
+    // arithmetic - so nothing in src/test may need an emulator, Robolectric or a network:
+    // the suite has to stay fast enough that every push can afford to run it.
+    testImplementation(libs.junit)
 }

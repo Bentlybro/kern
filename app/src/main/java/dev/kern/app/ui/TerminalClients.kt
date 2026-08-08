@@ -17,7 +17,22 @@ internal class KernTerminalViewClient(
     private val view: TerminalView,
 ) : TerminalViewClient {
 
-    override fun onScale(scale: Float): Float = 1.0f
+    /**
+     * Pinch changes the terminal text size, the way every terminal app on Android has
+     * taught fingers to expect. The view hands in an accumulated factor; crossing a
+     * threshold spends it on one step of size and returns 1.0 so the next step needs the
+     * same deliberate distance again — returning the raw factor instead turns a single
+     * pinch into a size that runs away with it.
+     */
+    override fun onScale(scale: Float): Float {
+        if (scale < 0.9f || scale > 1.1f) {
+            val step = if (scale > 1f) 1 else -1
+            val context = view.context
+            TerminalSessions.setFontSp(context, TerminalSessions.fontSp(context) + step)
+            return 1.0f
+        }
+        return scale
+    }
 
     override fun onSingleTapUp(e: MotionEvent?) {
         // The InputMethodManager on purpose, not the insets controller the rest of the
@@ -101,7 +116,19 @@ internal class KernTerminalSessionClient(
     override fun onTitleChanged(changedSession: TerminalSession) {}
 
     override fun onSessionFinished(finishedSession: TerminalSession) {
-        Log.i(TAG, "terminal session finished")
+        // The status and the last thing on screen, because a shell that dies at birth
+        // with living siblings simply loses its tab — no error surface exists. The tmux
+        // ACL regression sat behind exactly this: two launches, two silent
+        // disappearances, and a log that said only "finished" with nothing to grep for.
+        val lastLine = runCatching {
+            finishedSession.emulator?.screen?.transcriptText
+                ?.trimEnd()?.lineSequence()?.lastOrNull()
+        }.getOrNull()
+        Log.i(
+            TAG,
+            "terminal session finished (exit ${finishedSession.exitStatus}, " +
+                "last: ${lastLine ?: "(nothing)"})",
+        )
         // Post rather than call straight through: this arrives on the session's own
         // thread, and replacing views has to happen on the main one.
         view.post { TerminalSessions.handleFinished(id) }

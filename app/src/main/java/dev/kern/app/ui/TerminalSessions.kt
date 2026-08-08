@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import com.termux.terminal.TerminalSession
 import com.termux.view.TerminalView
 import dev.kern.app.runtime.LinuxRuntime
+import dev.kern.app.runtime.Prefs
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -233,7 +234,7 @@ object TerminalSessions {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
-            setTextSize(spToPx(context, 13f))
+            setTextSize(spToPx(context, fontSp(context).toFloat()))
             keepScreenOn = true
             isFocusableInTouchMode = true
         }
@@ -317,6 +318,30 @@ object TerminalSessions {
         }
     }
 
+    // ---- text size ----------------------------------------------------------
+
+    private const val DEFAULT_FONT_SP = 13
+    private const val MIN_FONT_SP = 8
+    private const val MAX_FONT_SP = 28
+
+    fun fontSp(context: Context): Int =
+        Prefs.of(context).getInt(Prefs.KEY_TERMINAL_FONT_SP, DEFAULT_FONT_SP)
+            .coerceIn(MIN_FONT_SP, MAX_FONT_SP)
+
+    /**
+     * One size for every terminal, live and future, persisted across sessions.
+     *
+     * Per-view sizes were considered and rejected: the views come and go with tabs and
+     * respawns, so a size pinched into one shell would silently revert on the next, and
+     * "why is this terminal different" is not a question worth making answerable.
+     */
+    fun setFontSp(context: Context, sp: Int) {
+        val clamped = sp.coerceIn(MIN_FONT_SP, MAX_FONT_SP)
+        Prefs.of(context).edit().putInt(Prefs.KEY_TERMINAL_FONT_SP, clamped).apply()
+        val px = spToPx(context, clamped.toFloat())
+        entries.forEach { it.view.setTextSize(px) }
+    }
+
     // ---- input --------------------------------------------------------------
 
     private fun focused(): Entry? = entries.firstOrNull { it.view.hasFocus() }
@@ -344,6 +369,34 @@ object TerminalSessions {
         val entry = entries.firstOrNull { it.id == id } ?: return
         val bytes = (text + "\n").toByteArray(Charsets.UTF_8)
         entry.session.write(bytes, 0, bytes.size)
+    }
+
+    /**
+     * Send bytes exactly as given — no newline. A TUI agent reads Esc and Ctrl+C as
+     * single bytes, and [writeTo]'s appended newline turns "cancel" into "cancel, and
+     * also confirm whatever was highlighted".
+     */
+    fun writeRawTo(id: Int, text: String) {
+        val entry = entries.firstOrNull { it.id == id } ?: return
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        entry.session.write(bytes, 0, bytes.size)
+    }
+
+    /**
+     * Send a key through a session's own emulator rather than as fixed bytes.
+     *
+     * Arrows have two encodings and the guest chooses: normal mode wants `ESC [ A`,
+     * application cursor mode (which python's REPL, vim and most TUIs switch on) wants
+     * `ESC O A`. Only the emulator knows which mode the session is in, so hardcoded
+     * bytes are right half the time — measured, not hypothetical: CSI arrows fell on
+     * the floor in python 3.14's REPL. Dispatching to the view routes through
+     * [com.termux.terminal.KeyHandler], which encodes per the live terminal state.
+     */
+    fun sendKeyTo(id: Int, keyCode: Int) {
+        val entry = entries.firstOrNull { it.id == id } ?: return
+        val now = android.os.SystemClock.uptimeMillis()
+        entry.view.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, 0))
+        entry.view.dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, 0))
     }
 
     fun isAttached(): Boolean = entries.isNotEmpty()

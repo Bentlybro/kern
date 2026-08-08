@@ -69,6 +69,25 @@ object GitCommands {
         return r.lastLine() ?: "Committed"
     }
 
+    /**
+     * Fast-forward only, deliberately. A merge stopped halfway on conflicts leaves the
+     * repository mid-merge with nothing on a phone able to finish or abort it — the
+     * cockpit has no conflict UI and should not pretend to. When histories have diverged
+     * this fails in one line, which the cockpit shows, and resolving belongs in the
+     * terminal or the workbench.
+     */
+    suspend fun pull(context: Context, projectPath: String): String {
+        val script = """
+            cd ${sq(projectPath)} 2>/dev/null || exit 1
+            command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }
+            git pull --ff-only 2>&1 | tail -n 3
+        """.trimIndent()
+        val r = LinuxRuntime.run(context, script, timeoutMs = 120_000)
+            ?: return "Timed out"
+        if (r.exitCode == 3) return "git is not installed yet — check Status."
+        return r.lastLine() ?: "Pulled"
+    }
+
     suspend fun push(context: Context, projectPath: String): String {
         val script = """
             cd ${sq(projectPath)} 2>/dev/null || exit 1

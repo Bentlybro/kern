@@ -216,10 +216,10 @@ object CodeServer {
           "workbench.colorTheme": "Default Dark Modern",
           "editor.minimap.enabled": false,
           "editor.wordWrap": "on",
-          "editor.fontSize": 14,
+          "editor.fontSize": 13,
           "editor.stickyScroll.enabled": false,
           "editor.acceptSuggestionOnEnter": "off",
-          "terminal.integrated.fontSize": 13
+          "terminal.integrated.fontSize": 12
         }
     """.trimIndent()
 }

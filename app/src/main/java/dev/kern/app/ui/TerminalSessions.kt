@@ -320,7 +320,7 @@ object TerminalSessions {
 
     // ---- text size ----------------------------------------------------------
 
-    private const val DEFAULT_FONT_SP = 13
+    private const val DEFAULT_FONT_SP = 12
     private const val MIN_FONT_SP = 8
     private const val MAX_FONT_SP = 28
 

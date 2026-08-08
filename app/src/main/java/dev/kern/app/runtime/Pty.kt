@@ -61,6 +61,15 @@ class PtyProcess private constructor(
         // Kill the group, not just proot: otherwise the guest's children survive.
         runCatching { Pty.killProcessGroup(pid) }
         runCatching { parcel.close() }
+        // And reap, or the child stays a zombie holding its pid forever. This was not
+        // hypothetical: every LinuxRuntime.run left one - the cockpit's git poll made a
+        // fresh zombie every few seconds, ~35 of them inside ten minutes on device -
+        // because run() deliberately watches an rc file instead of waitpid (a native
+        // wait cannot be cancelled by a coroutine timeout) and nothing else ever
+        // collected the corpse. Safe to block on: the group was just SIGKILLed, so this
+        // returns in milliseconds; and safe to repeat after another waiter, because
+        // waitpid then fails with ECHILD rather than hanging.
+        runCatching { Pty.waitFor(pid) }
     }
 
     /**

@@ -184,6 +184,10 @@ object WorkbenchWebView {
                 }
 
                 override fun onPageFinished(view: WebView, url: String) {
+                    // The workbench's address is invisible from outside a WebView, and
+                    // "which folder did it actually load" is the whole question when a
+                    // workspace switch goes missing.
+                    android.util.Log.i("Kern", "workbench page: $url")
                     // code-server runs with --auth password (risk R16). The password is
                     // our per-install token, so log in silently - the user never sees a
                     // login screen and other apps on the device cannot reach the IDE.
@@ -254,9 +258,28 @@ object WorkbenchWebView {
 
     fun current(): WebView? = instance
 
-    /** Switch the workbench to a different workspace folder. */
+    /**
+     * Switch the workbench to a different workspace folder.
+     *
+     * Callable from any thread: clone and create finish on [dev.kern.app.runtime.AppScope]'s
+     * IO dispatcher, and the switch is their consequence, so it has to be safe to issue from
+     * there. A WebView only accepts calls on the main thread, hence the hop — the process
+     * main looper rather than `view.post`, because a detached view (the editor is not on
+     * screen while Projects is) parks posted work until it is reattached, and the load
+     * should start now, behind whatever screen is up.
+     */
     fun openFolder(path: String) {
-        instance?.loadUrl(CodeServer.url(path))
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            val view = instance
+            // Worth a line either way: this is the only call that changes the workspace,
+            // and when it goes missing the symptom (the workbench still on the old folder)
+            // says nothing about whether the call happened at all.
+            android.util.Log.i(
+                "Kern",
+                "openFolder: $path (view=${view != null}, attached=${view?.parent != null})",
+            )
+            view?.loadUrl(CodeServer.url(path))
+        }
     }
 
     /**

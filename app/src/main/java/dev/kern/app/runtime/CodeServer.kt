@@ -162,6 +162,14 @@ object CodeServer {
         }
         val ours = JSONObject(WORKBENCH_SETTINGS)
         for (key in ours.keys()) merged.put(key, ours.get(key))
+        // Written only when absent, so the user's own choice wins from then on. These
+        // used to sit in the enforced set, which meant a font size or theme changed
+        // through the workbench's own settings UI quietly reverted on the next cold
+        // start - the one behaviour guaranteed to make an editor feel rented.
+        val defaults = JSONObject(WORKBENCH_DEFAULTS)
+        for (key in defaults.keys()) {
+            if (!merged.has(key)) merged.put(key, defaults.get(key))
+        }
         return merged.toString(2)
     }
 
@@ -185,19 +193,33 @@ object CodeServer {
           "window.menuBarVisibility": "hidden",
           "window.commandCenter": false,
           "workbench.startupEditor": "none",
-          "workbench.colorTheme": "Default Dark Modern",
           "files.autoSave": "afterDelay",
-          "editor.minimap.enabled": false,
-          "editor.wordWrap": "on",
-          "editor.fontSize": 14,
-          "editor.stickyScroll.enabled": false,
-          "editor.acceptSuggestionOnEnter": "off",
-          "terminal.integrated.fontSize": 13,
           "keyboard.dispatch": "keyCode",
           "security.workspace.trust.enabled": false,
           "update.mode": "none",
           "telemetry.telemetryLevel": "off",
           "chat.commandCenter.enabled": false
+        }
+    """.trimIndent()
+
+    /**
+     * Looks, not chrome: theme, fonts, wrap, minimap. Kern has an opinion about the
+     * starting point and no business having one afterwards — the workbench's own
+     * settings UI is fully reachable through the command palette, and a choice made
+     * there has to survive the next start or the editor feels rented. The enforced set
+     * above stays enforced because the native shell breaks without it: a menu bar or
+     * status bar coming back would duplicate chrome the app draws itself, and autosave
+     * off loses work to a process death Android will not warn about.
+     */
+    private val WORKBENCH_DEFAULTS = """
+        {
+          "workbench.colorTheme": "Default Dark Modern",
+          "editor.minimap.enabled": false,
+          "editor.wordWrap": "on",
+          "editor.fontSize": 13,
+          "editor.stickyScroll.enabled": false,
+          "editor.acceptSuggestionOnEnter": "off",
+          "terminal.integrated.fontSize": 12
         }
     """.trimIndent()
 }

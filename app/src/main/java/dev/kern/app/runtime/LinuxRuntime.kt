@@ -374,19 +374,53 @@ object LinuxRuntime {
          * than the thing you are working on just means typing `cd` before every session.
          */
         workingDir: String = ProjectRepository.currentFolder(context),
-    ): PtyProcess? = spawnInGuest(
-        context,
-        // tmux keeps the session alive across terminal detach/reattach. `-c` so the
-        // session it creates starts in the project too, not just the bash that ran it.
-        listOf(
-            "/bin/bash",
-            "-lc",
-            "tmux new-session -A -s ${sq(sessionName)} -c ${sq(workingDir)} || exec bash -l",
-        ),
-        workingDir,
-        columns = columns,
-        rows = rows,
-    )
+    ): PtyProcess? {
+        // tmux here is plumbing, not UI: the native tab strip is what says which shell
+        // this is, so the status bar only eats a terminal row repeating it in green.
+        // Seeded as a file rather than set inline on every attach, and only when absent,
+        // so it is the user's file: edit it to turn the bar back on and Kern will never
+        // touch it again.
+        runCatching {
+            val conf = File(rootfsDir(context), "root/.tmux.conf")
+            if (!conf.exists()) conf.writeText("set -g status off\n")
+        }
+
+        // tmux 3.5+ guards its server socket with a uid ACL, and the uids here can
+        // never match on their own: every terminal is its own PRoot, the server
+        // believes it is uid 0, and the kernel reports the app's real uid for any
+        // client arriving from a sibling PRoot. Ubuntu 26.04's tmux 3.6 enforces the
+        // check where 24.04's did not, so the second tab and every reattach died at
+        // birth with "access not allowed" — and died silently, because a shell that
+        // exits with living siblings just loses its tab. Teaching tmux the app's real
+        // identity takes two lines: a passwd entry naming the uid, and a system-wide
+        // conf admitting it. /etc/tmux.conf rather than the user's ~/.tmux.conf,
+        // because this is load-bearing plumbing, not a preference — verified on
+        // device: with these two lines a fresh PRoot client attaches to a surviving
+        // session, without them it is refused.
+        runCatching {
+            val uid = android.os.Process.myUid()
+            val passwd = File(rootfsDir(context), "etc/passwd")
+            if (passwd.isFile && passwd.readLines().none { it.startsWith("kernhost:") }) {
+                passwd.appendText("kernhost:x:$uid:$uid::/root:/bin/bash\n")
+            }
+            File(rootfsDir(context), "etc/tmux.conf")
+                .writeText("server-access -a kernhost\n")
+        }
+
+        return spawnInGuest(
+            context,
+            // tmux keeps the session alive across terminal detach/reattach. `-c` so the
+            // session it creates starts in the project too, not just the bash that ran it.
+            listOf(
+                "/bin/bash",
+                "-lc",
+                "tmux new-session -A -s ${sq(sessionName)} -c ${sq(workingDir)} || exec bash -l",
+            ),
+            workingDir,
+            columns = columns,
+            rows = rows,
+        )
+    }
 
     /**
      * Prove the bundled PRoot runs, independent of whether a rootfs exists. A failure

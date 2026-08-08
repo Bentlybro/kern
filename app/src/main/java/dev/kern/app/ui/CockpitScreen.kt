@@ -1,5 +1,6 @@
 package dev.kern.app.ui
 
+import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -14,9 +15,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -236,6 +236,15 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                         refresh++
                     }
                 },
+                onPull = {
+                    busy = "Pulling..."
+                    val work = AppScope.start { GitCommands.pull(app, project) }
+                    scope.launch {
+                        result = work.await()
+                        busy = null
+                        refresh++
+                    }
+                },
             )
         } else if (agent != null) {
             ReplyBar(
@@ -265,31 +274,58 @@ private fun ReplyBar(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValue,
-            singleLine = true,
-            label = { Text("reply to agent", fontSize = 12.sp) },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            modifier = Modifier.fillMaxWidth(),
-        )
+        // Addressed to the agent, not written into whatever happens to have focus.
+        // The ambient write() resolves to the focused view or the active *shell* —
+        // the active id is never set to an agent — so these answers went to a bash
+        // prompt the user could not see, or nowhere at all, while the agent sat
+        // waiting. Answering y/n one handed is the entire point of this screen.
+        //
+        // A scrollable row of its own, not squeezed beside Send: a TUI agent is driven
+        // with more than yes and no — arrows walk its menus, esc backs out, ^C stops
+        // it — and seven keys sharing a line with the send button left targets too
+        // small to hit with a thumb.
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            QuickKey("yes") { TerminalSessions.writeTo(agentId, "yes") }
+            QuickKey("no") { TerminalSessions.writeTo(agentId, "no") }
+            QuickKey("enter") { TerminalSessions.writeTo(agentId, "") }
+            // Raw, not writeTo: a TUI reads these as bytes, and the newline the
+            // line-send appends would confirm whatever esc was meant to back out of.
+            QuickKey("esc") { TerminalSessions.writeRawTo(agentId, "\u001B") }
+            QuickKey("^C") { TerminalSessions.writeRawTo(agentId, "\u0003") }
+            // Through the emulator, not as bytes: arrows encode differently in
+            // normal and application cursor mode, and only the session knows which
+            // is active. Menus in agent TUIs are vertical lists, so up and down
+            // earn a place here; left and right stay in the terminal's key row.
+            QuickKey("↑") { TerminalSessions.sendKeyTo(agentId, KeyEvent.KEYCODE_DPAD_UP) }
+            QuickKey("↓") { TerminalSessions.sendKeyTo(agentId, KeyEvent.KEYCODE_DPAD_DOWN) }
+        }
         Row(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Addressed to the agent, not written into whatever happens to have focus.
-            // The ambient write() resolves to the focused view or the active *shell* —
-            // the active id is never set to an agent — so these answers went to a bash
-            // prompt the user could not see, or nowhere at all, while the agent sat
-            // waiting. Answering y/n one handed is the entire point of this screen.
-            TextButton(onClick = { TerminalSessions.writeTo(agentId, "yes") }) { Text("yes") }
-            TextButton(onClick = { TerminalSessions.writeTo(agentId, "no") }) { Text("no") }
-            TextButton(onClick = { TerminalSessions.writeTo(agentId, "") }) {
-                Text("enter", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-            }
-            Spacer(Modifier.weight(1f))
+            OutlinedTextField(
+                value = value,
+                onValueChange = onValue,
+                singleLine = true,
+                label = { Text("reply to agent", fontSize = 12.sp) },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                modifier = Modifier.weight(1f),
+            )
             Button(enabled = value.isNotBlank(), onClick = onSend) { Text("Send") }
         }
+    }
+}
+
+@Composable
+private fun QuickKey(label: String, onTap: () -> Unit) {
+    TextButton(onClick = onTap) {
+        Text(label, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
     }
 }
 
@@ -300,6 +336,7 @@ private fun CommitBar(
     enabled: Boolean,
     onCommit: () -> Unit,
     onPush: () -> Unit,
+    onPull: () -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -311,7 +348,11 @@ private fun CommitBar(
         OutlinedTextField(
             value = message,
             onValueChange = onMessage,
-            singleLine = true,
+            // Multi-line on purpose: a subject plus a body is a normal commit message,
+            // and a single-line field was quietly forbidding it. Capped so the field
+            // cannot climb over the diff it is describing.
+            singleLine = false,
+            maxLines = 4,
             label = { Text("commit message", fontSize = 12.sp) },
             modifier = Modifier.fillMaxWidth(),
         )
@@ -320,6 +361,7 @@ private fun CommitBar(
                 Text("Commit all")
             }
             TextButton(enabled = enabled, onClick = onPush) { Text("Push") }
+            TextButton(enabled = enabled, onClick = onPull) { Text("Pull") }
         }
     }
 }
@@ -336,8 +378,19 @@ private fun DiffView(lines: List<String>) {
         )
         return
     }
-    LazyColumn(Modifier.fillMaxSize()) {
-        items(lines) { line ->
+    // A plain column under both scrolls, not a LazyColumn. Lazy items cannot share one
+    // horizontal pan, and it was wrapping long lines to three and then cutting them —
+    // silent truncation in the one surface that exists for reading changes. Code lines
+    // pan rather than wrap because wrap destroys the indentation that makes a diff
+    // scannable, and eager composition is affordable: GitCommands caps the diff at 400
+    // lines before it gets here.
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .horizontalScroll(rememberScrollState()),
+    ) {
+        lines.forEach { line ->
             val colour = when {
                 line.startsWith("+++") || line.startsWith("---") ->
                     MaterialTheme.colorScheme.onSurfaceVariant
@@ -352,11 +405,12 @@ private fun DiffView(lines: List<String>) {
                 fontFamily = FontFamily.Monospace,
                 fontSize = 10.5.sp,
                 color = colour,
-                maxLines = 3,
+                maxLines = 1,
+                softWrap = false,
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
         }
-        item { Spacer(Modifier.height(16.dp)) }
+        Spacer(Modifier.height(16.dp))
     }
 }
 

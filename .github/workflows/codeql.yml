@@ -50,7 +50,7 @@ jobs:
       # would mean driving the NDK build under CodeQL — slow, fragile, and less useful
       # than reading it. Revisit if that file grows.
       - name: Initialise CodeQL
-        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        uses: github/codeql-action/init@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           languages: java-kotlin
           build-mode: manual
@@ -68,6 +68,6 @@ jobs:
         run: ./gradlew assembleDebug --no-daemon
 
       - name: Analyse
-        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
+        uses: github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           category: /language:java-kotlin

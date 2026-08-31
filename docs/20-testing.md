@@ -10,7 +10,7 @@ The tests live in `app/src/test/java/dev/kern/app/runtime/`.
 ./gradlew testDebugUnitTest
 ```
 
-There are 66 tests. They take six seconds on a warm build and twenty-five from cold, and most of that is compiling the app. They need no network, no device and no emulator. The HTML report lands in `app/build/reports/tests/testDebugUnitTest/index.html`, and the machine-readable results land in `app/build/test-results/testDebugUnitTest/`.
+There are 77 tests. They take six seconds on a warm build and twenty-five from cold, and most of that is compiling the app. They need no network, no device and no emulator. The HTML report lands in `app/build/reports/tests/testDebugUnitTest/index.html`, and the machine-readable results land in `app/build/test-results/testDebugUnitTest/`.
 
 CI runs the same task on every push to `dev` and every pull request into `dev` or `main`. Unlike lint it has no `continue-on-error`, so a red test is a red build. When the tests themselves fail, CI uploads both reports as a `unit-test-report-<sha>` artifact — the console only prints a count, and the artifact is what says which assertion went and why.
 
@@ -25,14 +25,17 @@ There is one extra CI step, `Check the unit tests actually ran`, and it is there
 | `RootfsResolveTest` | `RootfsInstaller.selectRootfs()` | This is step one of setup, and there is no way past it. Picking a pruned name kills every new install; picking the wrong series gives a guest whose apt sources name a codename that no longer describes it; pairing a name with a neighbour's digest fails every download as corrupt. |
 | `ResultTest` | `LinuxRuntime.Result.lastLine()` / `lines` | This is what the user is shown when a guest command fails, and what the project list and the health check parse as data. |
 | `AgentPromptTest` | `AgentPrompt.awaitingInput()` / `lastLine()` | This drives a notification. A miss parks an agent for an hour in a pocket; a false alarm teaches the user to ignore the one that matters. |
+| `GuestCommandTest` | `LinuxRuntime.parseExitCode()` / `prootArgv()` / `bindCandidates()` | Both halves of this file pin something whose failure is silent. A guest command's exit code is read from a file the shell creates by truncation before writing, so an early read used to come back as exit 0 — success — for a command that had failed. And a PRoot invocation with a bind missing or an option after the guest command does not error; it produces a guest that breaks minutes later, on the first package with a hard link, a long way from the argv that caused it. |
 | `PackagesForTest` | `HealthCheck.packagesFor()` | The app probes binary names and installs package names, and where the two differ an unmapped list produces `E: Unable to locate package node`, which is a Fix button that can only fail. |
 
-Two conventions run through all six, and both exist so the suite cannot quietly stop testing anything:
+Two conventions run through all seven, and both exist so the suite cannot quietly stop testing anything:
 
 - **Test the contract, not the source.** `ShellQuotingTest` checks `sq()` against a small model of bash's word parsing rather than against the escaping it happens to emit, so a rewrite has to satisfy the shell rather than resemble the version that was there when the test was written. `ProjectNameTest` spells out the allowed character set rather than reusing the implementation's regex.
 - **Test the fixtures too.** Several files end with a test asserting that their own fixtures still have the property that makes the rest of the file meaningful — that `AgentPromptTest`'s screens are really padded with blank rows, that `RootfsResolveTest` gives every image a distinct digest, that the bash model still rejects the quoting mistakes `sq()` exists to avoid. Without these, a fixture that drifts turns the file into passing tests of nothing, which is the exact failure this suite was written to end.
 
-Three functions were widened from `private` to `internal` to be reached from tests, each with a one-line comment saying so: `HealthCheck.packagesFor`, `ProjectRepository.sanitise` and `deriveName`, and `RootfsInstaller.selectRootfs`. `selectRootfs` was also split out of `resolveRootfs` so the choice can be made from SHA256SUMS text without reaching cdimage. No behaviour was changed to suit a test.
+A handful of functions were widened from `private` to `internal` to be reached from tests, each with a one-line comment saying so: `HealthCheck.packagesFor`, `ProjectRepository.sanitise` and `deriveName`, `RootfsInstaller.selectRootfs`, `GuestConfig.resolvConf`, and `LinuxRuntime.parseExitCode`, `prootArgv` and `bindCandidates`.
+
+Three of those were also *split out* of a larger function so the decision inside could be reached without a device: `selectRootfs` out of `resolveRootfs`, so the choice can be made from SHA256SUMS text without reaching cdimage; and `prootArgv` and `bindCandidates` out of `prootArgs`, so the argv can be built from paths rather than from a `Context`. The split is the only change in each case — `prootArgs` still filters the candidate binds against the host filesystem, because whether `/sdcard` exists is a question only a real device can answer. No behaviour was changed to suit a test.
 
 ## Why the suite stops there
 

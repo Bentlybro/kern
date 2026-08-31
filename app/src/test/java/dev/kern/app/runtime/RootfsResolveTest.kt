@@ -1,7 +1,7 @@
 package dev.kern.app.runtime
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -88,10 +88,14 @@ class RootfsResolveTest {
     @Test
     fun `a document offering only another series falls back rather than installing it`() {
         // The directory is per-series, so this only happens if cdimage is restructured -
-        // and the right answer then is the name we know, unverified, not a stranger.
+        // and the right answer then is the name we know, not a stranger.
         val source = resolve(sums(image("$NEXT_SERIES.1"), image("$NEXT_SERIES.2")))
         assertEquals(image(RELEASE), source.name)
-        assertNull("the fallback must not borrow another series' digest", source.sha256)
+        assertEquals(
+            "the fallback must not borrow another series' digest",
+            RootfsInstaller.ROOTFS_FALLBACK_SHA256,
+            source.sha256,
+        )
     }
 
     @Test
@@ -115,12 +119,37 @@ class RootfsResolveTest {
     }
 
     @Test
-    fun `an unreachable SHA256SUMS still gets today's name, unverified`() {
-        // A cdimage outage or restructure should cost verification, not the install. The
-        // null is what makes setup say out loud that this one could not be checked.
+    fun `an unreachable SHA256SUMS still gets today's name, and still verifies it`() {
+        // A cdimage outage or restructure should cost neither the install nor the
+        // verification. This used to return a null digest, which download() reads as
+        // "nothing to check against" - so anything able to drop one request could turn a
+        // verified install into an unverified one, and 400 MB went in unchecked.
         val source = resolve(null)
         assertEquals(image(RELEASE), source.name)
-        assertNull(source.sha256)
+        assertEquals(RootfsInstaller.ROOTFS_FALLBACK_SHA256, source.sha256)
+        assertFalse("the digest did not come from SHA256SUMS", source.fromSums)
+    }
+
+    @Test
+    fun `there is no route through selectRootfs that skips verification`() {
+        // The invariant the test above protects, stated once over every fixture this file
+        // has: whatever comes back is checkable. A future branch here that cannot name a
+        // digest has to fail the install instead of quietly downloading unchecked.
+        val documents = listOf(
+            null,
+            "",
+            "not a checksum file at all",
+            sums(image(RELEASE)),
+            sums(image("$RELEASE.1"), image("$RELEASE.2")),
+            sums(image("$NEXT_SERIES.1")),
+        )
+        for (document in documents) {
+            val source = RootfsInstaller.selectRootfs(document)
+            assertTrue(
+                "unverifiable source from <$document>",
+                source.sha256.matches(Regex("[0-9a-f]{64}")),
+            )
+        }
     }
 
     @Test
@@ -142,7 +171,11 @@ class RootfsResolveTest {
             // if they had been accepted.
             val source = RootfsInstaller.selectRootfs(document)
             assertEquals("accepted <$document>", image(RELEASE), source.name)
-            assertNull("accepted <$document>", source.sha256)
+            assertEquals(
+                "accepted <$document>",
+                RootfsInstaller.ROOTFS_FALLBACK_SHA256,
+                source.sha256,
+            )
         }
     }
 

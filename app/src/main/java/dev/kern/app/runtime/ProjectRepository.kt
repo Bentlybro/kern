@@ -101,6 +101,11 @@ object ProjectRepository {
         val name = sanitise(nameOverride?.takeIf { it.isNotBlank() } ?: deriveName(url))
         if (name.isBlank()) return Outcome.Failure("Could not work out a folder name")
 
+        // git is about to talk to a remote, and the guest's resolv.conf may name whatever
+        // network the phone was on when it was set up. A clone that fails on DNS reports it
+        // as "Could not resolve host", which reads as a bad URL rather than a stale file.
+        GuestConfig.refreshDns(context)
+
         val target = "$PROJECTS_DIR/$name"
         // The "does it exist already" test is its own round trip so that the cleanup below
         // knows the folder is ours to remove. Folded into the clone script it could not: a

@@ -64,12 +64,20 @@ The setup screen therefore offers **Delete and start over** whenever an environm
 
 | File | Why |
 |---|---|
-| `/etc/resolv.conf` | The base image ships none, and without it nothing resolves. |
+| `/etc/resolv.conf` | The base image ships none, and without it nothing resolves. It names the device's own DNS servers first and public resolvers underneath, and it is rewritten before every `apt` and every clone rather than only at setup — see below. |
 | `/etc/apt/sources.list` | arm64 lives on `ports.ubuntu.com` rather than on `archive.ubuntu.com`. |
 | `/etc/apt/apt.conf.d/99kern` | It sets `APT::Sandbox::User "root"`, because apt otherwise drops to `_apt`, which cannot work under PRoot. It also turns pipelining and PDiffs off, since those are the classic causes of apt hanging under PRoot, and it turns off recommends and translations. |
 | `/etc/dpkg/dpkg.cfg.d/01-kern` | It carries `force-unsafe-io` and the doc and man exclusions. |
 
 The installer removes the deb822 `ubuntu.sources` that the base image ships, because apt otherwise warns that every target is configured twice.
+
+### DNS
+
+`/etc/resolv.conf` used to name `1.1.1.1` and `8.8.8.8` and nothing else, written once at setup. That is wrong in both directions on a phone.
+
+A guest that only ever asks a public resolver cannot see names that only the network it is on knows, and it is refused outright wherever outbound port 53 to anywhere else is blocked, which is ordinary on hotel, campus and corporate Wi-Fi and universal behind a captive portal. `apt` then fails in a way that reads as a dead mirror. Meanwhile a guest that only named the device's resolvers would be carrying whatever was current when it was installed, which on a phone is stale within the day.
+
+So the file names both, device first, public underneath, capped at the three entries glibc actually reads — and `GuestConfig.refreshDns` rewrites it before anything that has to reach the network, which is every `apt` and every `git clone`. Reading the device's resolvers is what `ACCESS_NETWORK_STATE` in the manifest is for, and it is the only thing it is for.
 
 ## Distro version
 

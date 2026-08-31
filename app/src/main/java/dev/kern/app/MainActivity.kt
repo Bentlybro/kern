@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.kern.app.runtime.LinuxRuntime
+import dev.kern.app.runtime.UsageTracker
 import dev.kern.app.session.SessionService
 import dev.kern.app.session.SessionState
 import dev.kern.app.ui.KernTheme
@@ -55,6 +56,23 @@ class MainActivity : ComponentActivity() {
                 AppRoot()
             }
         }
+    }
+
+    /**
+     * Stop and start the usage clock with the window, not with the composition.
+     *
+     * [dev.kern.app.runtime.UsageTracker] measures which surface the user is actually in,
+     * and nothing was stopping it when the app left the screen - so a phone in a pocket
+     * kept banking time against whatever was last open. See UsageTracker.pause.
+     */
+    override fun onStart() {
+        super.onStart()
+        UsageTracker.resume(this)
+    }
+
+    override fun onStop() {
+        UsageTracker.pause(this)
+        super.onStop()
     }
 
     /**

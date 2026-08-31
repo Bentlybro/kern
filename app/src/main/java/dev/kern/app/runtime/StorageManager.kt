@@ -2,6 +2,7 @@ package dev.kern.app.runtime
 
 import android.content.Context
 import android.os.StatFs
+import dev.kern.app.session.SessionService
 import dev.kern.app.ui.TerminalSessions
 import dev.kern.app.ui.WorkbenchWebView
 import java.io.File
@@ -110,6 +111,13 @@ object StorageManager {
      * is the recovery path when an install goes wrong.
      */
     suspend fun deleteGuest(context: Context): Boolean = withContext(Dispatchers.IO) {
+        // The supervisor first, or it outlives the guest it is supervising. It polls every
+        // fifteen seconds and restarts a server it finds missing - which, once the rootfs
+        // is gone, means spawning PRoot at a directory that no longer exists, on a timer,
+        // for as long as the service lives. Neither of the two Delete buttons did this,
+        // and it belongs here rather than at either of them: it is a fact about deleting a
+        // guest, not about the screen that asked.
+        SessionService.stop(context)
         CodeServer.stop()
         // The terminals and the workbench are process scoped, so they used to survive this
         // and carry on addressing a guest that is gone - a shell whose cwd is an unlinked

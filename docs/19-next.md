@@ -22,9 +22,13 @@ Somebody asked for this and nobody has started it. The terminal is currently eit
 
 What was asked for is a terminal that sits above the keyboard, can be resized, and can be dragged wherever the user wants it. The interaction is worth sketching before building, because "floating panel" covers several quite different designs and the wrong guess is a lot of work to undo.
 
-## 3. Prove the cockpit with a real TUI agent — **unverified**
+## 3. ~~Prove the cockpit with a real TUI agent~~ — **verified 2026-08-31**
 
-The cockpit now renders a real terminal, which should fix TUI agents. That has not been demonstrated, because no agent is installed on the test device. Install one, run it, and confirm a full-screen interface actually draws and accepts input.
+Done, with `less` standing in for an agent. It draws a full screen, redraws on input, and renders its reverse-video status line correctly; a `G` typed into the native reply field reached it and jumped the view to `(END)`. So the cockpit's terminal handles full-screen redraw, cursor addressing, attributes, and input from the native chrome.
+
+What is still open is narrower than it was: no *actual* coding agent has run in it, because none is installed on the test device and each wants credentials. The rendering question — the one that made TUI agents look broken before the cockpit got a real emulator — is answered.
+
+Two things worth knowing, both found while doing this. `htop` cannot work in the guest at all: Android denies apps `/proc/stat`, which is the platform rather than PRoot, and is now recorded in [03](03-android-constraints.md). And `less` was not installed, which is why `git log` used to dump its whole output at the terminal; it is in the toolchain now.
 
 ## 4. Extensions from Open VSX
 

@@ -133,6 +133,17 @@ Two more things are worth turning on in the browser, because no workflow can do 
 
 None of this covers anyone who has write access to the repository, and none of it covers your own machine. The key is only ever as safe as those two things.
 
+## The release build is minified
+
+`isMinifyEnabled` and `isShrinkResources` are on. Two things in Kern are reached by *name* at runtime rather than through a reference R8 can follow, and both are pinned in `app/proguard-rules.pro`:
+
+- **The JNI pty.** `cpp/pty.c` binds statically, so its symbols spell out `Java_dev_kern_app_runtime_Pty_*`. The class's fully-qualified name and its native method names are part of the ABI; rename either and the first terminal anyone opens dies with `UnsatisfiedLinkError`.
+- **The workbench bridge.** `WorkbenchBridge`'s methods are called only from injected JavaScript, so R8 sees no caller and removes them. That does not crash — the injected script wraps each call in `try/catch` — it just silently stops the editor raising the keyboard and reporting selection. A release-only regression that fails quietly is the worst shape one can take, so it is kept explicitly.
+
+Line numbers are kept (`-keepattributes SourceFile,LineNumberTable`) because Kern's bug reports are stack traces the user copies out of the app, and an obfuscated one is useless to whoever receives it.
+
+**Verify a minified build on the device before publishing.** Neither failure above exists in a debug build, so CI cannot see them and neither can the unit suite. The check is small: open a terminal (the pty), then tap in the editor and confirm the keyboard comes up (the bridge). Build one locally with a throwaway key by setting `KEYSTORE_FILE`, `KEYSTORE_PASSWORD`, `KEY_ALIAS` and `KEY_PASSWORD` in the environment and running `./gradlew assembleRelease` — note that installing it means uninstalling the debug build, which deletes the guest.
+
 ## Cutting a release
 
 1. Bump `appVersionName` in `app/build.gradle.kts`. It is the single source of truth, because the workflow reads it for the tag and the updater compares against it.

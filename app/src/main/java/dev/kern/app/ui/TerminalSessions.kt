@@ -1,6 +1,7 @@
 package dev.kern.app.ui
 
 import android.content.Context
+import android.content.MutableContextWrapper
 import android.view.KeyEvent
 import android.view.ViewGroup
 import com.termux.terminal.TerminalSession
@@ -47,6 +48,60 @@ object TerminalSessions {
 
     /** Kept so a session that ends can be replaced without a Context from the caller. */
     private val appContexts = mutableMapOf<Int, Context>()
+
+    /**
+     * The Activity every terminal view is built against, behind one indirection.
+     *
+     * A View needs an Activity context - it is what backs the IME, the theme and any
+     * dialog - but these entries are process scoped and outlive any particular Activity.
+     * Built against the Activity directly, each terminal held a hard reference for the life
+     * of the process to whichever Activity happened to be current when that session was
+     * created, and with it that whole window: its view tree, its Compose composition, and
+     * everything those hold.
+     *
+     * The bound is one retained Activity per session created, not one per recreation -
+     * [create] runs when a tab is opened, and a recreation reuses the views it finds. So it
+     * is a real leak of a large object graph rather than a runaway one, and it accumulates
+     * only when tabs are opened across the life of the app, which is the ordinary way to
+     * use them. Measured on device: with the fix reverted, twelve recreations with a single
+     * terminal open retained nothing extra, which is what first made the shape clear.
+     *
+     * The manifest's `configChanges` absorbs fold and rotation, so a recreation needs a
+     * locale or font-scale change or a return from process death - another reason this
+     * stayed invisible.
+     *
+     * [WorkbenchWebView] has always done this for the same reason. It is the same fix, and
+     * the two now agree.
+     */
+    private var contextWrapper: MutableContextWrapper? = null
+
+    /**
+     * Point every existing and future terminal at [activityContext].
+     *
+     * Called once per Activity, before anything can ask for a terminal. Safe to call when
+     * nothing has been created yet: the wrapper is made on first use either way.
+     */
+    fun rebind(activityContext: Context) {
+        val wrapper = contextWrapper
+        if (wrapper == null) {
+            contextWrapper = MutableContextWrapper(activityContext)
+        } else {
+            wrapper.baseContext = activityContext
+        }
+    }
+
+    /**
+     * The context terminal views are constructed with.
+     *
+     * Falls back to wrapping [fallback] if [rebind] has somehow not run, rather than
+     * refusing to make a terminal - a leak is a worse outcome than a missing shell, but a
+     * missing shell is a worse outcome than either and this cannot be the thing that
+     * causes one.
+     */
+    private fun viewContext(fallback: Context): Context {
+        rebind(fallback)
+        return contextWrapper!!
+    }
 
     /** Two deaths this close together are a spawn that fails, not someone typing `exit`. */
     private const val RESPAWN_WINDOW_MS = 5_000L
@@ -229,7 +284,10 @@ object TerminalSessions {
     ): Entry {
         val appContext = context.applicationContext
 
-        val view = TerminalView(context, null).apply {
+        // The wrapper, not the Activity: see [contextWrapper]. setTextSize and spToPx below
+        // still read from the caller's context, which is fine - they want a density now,
+        // not a reference kept.
+        val view = TerminalView(viewContext(context), null).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,

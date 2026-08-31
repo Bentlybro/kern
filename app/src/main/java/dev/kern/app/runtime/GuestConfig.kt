@@ -1,8 +1,10 @@
 package dev.kern.app.runtime
 
 import android.content.Context
+import android.net.ConnectivityManager
 import android.util.Log
 import java.io.File
+import java.net.Inet4Address
 
 /**
  * The settings a Kern guest needs to be usable: apt, DNS, dpkg and the login environment.
@@ -57,10 +59,74 @@ object GuestConfig {
         )
     }
 
+    /**
+     * Public resolvers, used only after the device's own have been tried.
+     *
+     * They cannot be the whole answer. A guest that always asks Cloudflare cannot resolve
+     * anything on a network whose names only its own resolver knows - a corporate or home
+     * network with internal hosts - and it is refused outright behind a captive portal or
+     * on a network that blocks outbound 53 to anywhere else, which is common on hotel and
+     * campus Wi-Fi. `apt` then fails in a way that reads as a dead mirror. They are still
+     * worth keeping underneath, because a device resolver captured at setup time is stale
+     * the moment the phone changes network.
+     */
+    private val PUBLIC_RESOLVERS = listOf("1.1.1.1", "8.8.8.8")
+
+    /**
+     * What `/etc/resolv.conf` should say right now: the device's resolvers first, then
+     * [PUBLIC_RESOLVERS] as a floor.
+     *
+     * glibc tries each in turn, so listing both means the guest prefers the network's own
+     * view of DNS and still resolves when that view is missing or broken. Capped at
+     * resolv.conf's own limit - glibc reads three nameservers and silently ignores the
+     * rest, so a long list would push the fallbacks past where they can ever be reached.
+     *
+     * internal so the ordering and the cap can be tested without a device.
+     */
+    internal fun resolvConf(context: Context): String =
+        (deviceResolvers(context) + PUBLIC_RESOLVERS)
+            .distinct()
+            .take(MAX_NAMESERVERS)
+            .joinToString("") { "nameserver $it\n" }
+
+    /** glibc's `MAXNS`. Anything past the third line is never consulted. */
+    private const val MAX_NAMESERVERS = 3
+
+    /**
+     * The resolvers Android is using for the active network, or nothing if it will not say.
+     *
+     * IPv4 only, deliberately: PRoot does not stop the guest reaching an IPv6 resolver, but
+     * a phone on a network without working IPv6 routing would then spend the resolver
+     * timeout on every lookup before falling through, which turns a slow `apt` into one
+     * that looks hung. The v4 addresses in the same list do the job.
+     */
+    private fun deviceResolvers(context: Context): List<String> = runCatching {
+        val manager = context.getSystemService(ConnectivityManager::class.java)
+        val active = manager?.activeNetwork ?: return@runCatching emptyList()
+        manager.getLinkProperties(active)?.dnsServers.orEmpty()
+            .filterIsInstance<Inet4Address>()
+            .mapNotNull { it.hostAddress }
+    }.onFailure {
+        Log.w(TAG, "could not read the device's DNS servers: ${it.message}")
+    }.getOrDefault(emptyList())
+
+    /**
+     * Rewrite `/etc/resolv.conf` for the network the phone is on now.
+     *
+     * [apply] runs at setup and Repair only, so without this the guest keeps whatever
+     * resolvers were current when it was installed - which on a phone is wrong within the
+     * day. Called before anything that has to reach the network, and cheap enough to not
+     * be worth deciding about: two syscalls and a 60-byte write.
+     */
+    fun refreshDns(context: Context) {
+        if (!LinuxRuntime.isInstalled(context)) return
+        write(File(LinuxRuntime.rootfsDir(context), "etc/resolv.conf"), resolvConf(context))
+    }
+
     fun apply(context: Context) {
         val root = LinuxRuntime.rootfsDir(context)
 
-        write(File(root, "etc/resolv.conf"), "nameserver 1.1.1.1\nnameserver 8.8.8.8\n")
+        write(File(root, "etc/resolv.conf"), resolvConf(context))
         write(
             File(root, "etc/hosts"),
             "127.0.0.1 localhost\n::1 localhost ip6-localhost ip6-loopback\n",

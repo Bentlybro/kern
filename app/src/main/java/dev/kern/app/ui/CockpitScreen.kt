@@ -41,7 +41,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import dev.kern.app.runtime.AgentRepository
 import dev.kern.app.runtime.AppScope
 import dev.kern.app.runtime.GitCommands
@@ -84,11 +87,21 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
 
     // Only the git side is polled now. The terminal repaints itself, so there is nothing
     // to poll for output, and every read here is a round trip into the guest.
-    LaunchedEffect(showDiff, refresh) {
-        while (true) {
-            status = GitCommands.status(context, project)
-            if (showDiff) diff = GitCommands.diff(context, project)
-            delay(if (showDiff) 6000 else 4000)
+    //
+    // repeatOnLifecycle rather than a bare LaunchedEffect, because a composition survives
+    // the app being backgrounded and this loop is not free: every pass spawns a PRoot in
+    // the guest to run git. Left running, a phone in a pocket with the cockpit open forked
+    // one every four seconds indefinitely - against a phantom process killer that caps this
+    // app at 32 children, and on a battery that has nothing to show for it, since there is
+    // no screen to put the answer on. It resumes on its own when the app comes back.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(showDiff, refresh, lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                status = GitCommands.status(context, project)
+                if (showDiff) diff = GitCommands.diff(context, project)
+                delay(if (showDiff) 6000 else 4000)
+            }
         }
     }
 

@@ -2,7 +2,7 @@
 
 Kern has a small unit suite and a written device checklist, and the split between them is deliberate. The suite covers the handful of pure decisions that are genuinely wrong-able on a laptop. Everything else — which is most of the app — is covered by a human with a phone, because there is nowhere else it can be covered.
 
-The tests live in `app/src/test/java/dev/kern/app/runtime/`.
+The tests live in `app/src/test/java/dev/kern/app/`, under `runtime/` and `session/`.
 
 ## Running them
 
@@ -10,7 +10,7 @@ The tests live in `app/src/test/java/dev/kern/app/runtime/`.
 ./gradlew testDebugUnitTest
 ```
 
-There are 66 tests. They take six seconds on a warm build and twenty-five from cold, and most of that is compiling the app. They need no network, no device and no emulator. The HTML report lands in `app/build/reports/tests/testDebugUnitTest/index.html`, and the machine-readable results land in `app/build/test-results/testDebugUnitTest/`.
+There are 105 tests. They take six seconds on a warm build and twenty-five from cold, and most of that is compiling the app. They need no network, no device and no emulator. The HTML report lands in `app/build/reports/tests/testDebugUnitTest/index.html`, and the machine-readable results land in `app/build/test-results/testDebugUnitTest/`.
 
 CI runs the same task on every push to `dev` and every pull request into `dev` or `main`. Unlike lint it has no `continue-on-error`, so a red test is a red build. When the tests themselves fail, CI uploads both reports as a `unit-test-report-<sha>` artifact — the console only prints a count, and the artifact is what says which assertion went and why.
 
@@ -25,14 +25,20 @@ There is one extra CI step, `Check the unit tests actually ran`, and it is there
 | `RootfsResolveTest` | `RootfsInstaller.selectRootfs()` | This is step one of setup, and there is no way past it. Picking a pruned name kills every new install; picking the wrong series gives a guest whose apt sources name a codename that no longer describes it; pairing a name with a neighbour's digest fails every download as corrupt. |
 | `ResultTest` | `LinuxRuntime.Result.lastLine()` / `lines` | This is what the user is shown when a guest command fails, and what the project list and the health check parse as data. |
 | `AgentPromptTest` | `AgentPrompt.awaitingInput()` / `lastLine()` | This drives a notification. A miss parks an agent for an hour in a pocket; a false alarm teaches the user to ignore the one that matters. |
+| `GuestCommandTest` | `LinuxRuntime.parseExitCode()` / `prootArgv()` / `bindCandidates()` | Both halves of this file pin something whose failure is silent. A guest command's exit code is read from a file the shell creates by truncation before writing, so an early read used to come back as exit 0 — success — for a command that had failed. And a PRoot invocation with a bind missing or an option after the guest command does not error; it produces a guest that breaks minutes later, on the first package with a hard link, a long way from the argv that caused it. |
+| `RestartPolicyTest` | `RestartPolicy.next()` / `backoffMs()` | This decides whether a phone with a broken guest reports it or quietly flattens its battery, and the version it replaced did the latter: the miss counter reset only on a *successful* restart, so a server that could not come back was stopped and restarted every fifteen seconds forever, wakelock held, UI stuck on "Reconnecting". The test that pins it runs an hour of failing ticks and asserts the restart count. |
+| `DeviceFlowReasonTest` | `GitHubDeviceFlow.reasonFor()` | This string is the entire failure the sign-in screen shows. Each case points the reader somewhere different — back to GitHub, at the Status screen, or at trying again — and the wrong one costs them the time it takes to rule it out. It also has to keep gh's answered prompts and the one-time code itself out of the message, both of which sit on the pane and both of which read as explanations. |
+| `UpdateVersionTest` | `Updates.isNewer()` / `digestOf()` | `isNewer` decides on every launch whether the user is shown an update. Backwards, and the app either offers a downgrade or silently never offers anything again — invisible until someone notices they are several versions behind. It had been `internal` since it was written, widened for a test that did not exist. |
 | `PackagesForTest` | `HealthCheck.packagesFor()` | The app probes binary names and installs package names, and where the two differ an unmapped list produces `E: Unable to locate package node`, which is a Fix button that can only fail. |
 
-Two conventions run through all six, and both exist so the suite cannot quietly stop testing anything:
+Two conventions run through all ten, and both exist so the suite cannot quietly stop testing anything:
 
 - **Test the contract, not the source.** `ShellQuotingTest` checks `sq()` against a small model of bash's word parsing rather than against the escaping it happens to emit, so a rewrite has to satisfy the shell rather than resemble the version that was there when the test was written. `ProjectNameTest` spells out the allowed character set rather than reusing the implementation's regex.
 - **Test the fixtures too.** Several files end with a test asserting that their own fixtures still have the property that makes the rest of the file meaningful — that `AgentPromptTest`'s screens are really padded with blank rows, that `RootfsResolveTest` gives every image a distinct digest, that the bash model still rejects the quoting mistakes `sq()` exists to avoid. Without these, a fixture that drifts turns the file into passing tests of nothing, which is the exact failure this suite was written to end.
 
-Three functions were widened from `private` to `internal` to be reached from tests, each with a one-line comment saying so: `HealthCheck.packagesFor`, `ProjectRepository.sanitise` and `deriveName`, and `RootfsInstaller.selectRootfs`. `selectRootfs` was also split out of `resolveRootfs` so the choice can be made from SHA256SUMS text without reaching cdimage. No behaviour was changed to suit a test.
+A handful of functions were widened from `private` to `internal` to be reached from tests, each with a one-line comment saying so: `HealthCheck.packagesFor`, `ProjectRepository.sanitise` and `deriveName`, `RootfsInstaller.selectRootfs`, `GuestConfig.resolvConf`, `Updates.digestOf`, `GitHubDeviceFlow.reasonFor`, and `LinuxRuntime.parseExitCode`, `prootArgv` and `bindCandidates`. `RestartPolicy` is a whole `internal object` split out of `SessionService` for the same reason.
+
+Several were also *split out* of something larger so the decision inside could be reached without a device: `selectRootfs` out of `resolveRootfs`, so the choice can be made from SHA256SUMS text without reaching cdimage; `prootArgv` and `bindCandidates` out of `prootArgs`, so the argv can be built from paths rather than from a `Context`; and `RestartPolicy` out of `SessionService.supervise`, which was four lines of arithmetic tangled into a loop with a wakelock, a notification and two network calls - untestable in place, and wrong. The split is the only change in each case — `prootArgs` still filters the candidate binds against the host filesystem, because whether `/sdcard` exists is a question only a real device can answer. No behaviour was changed to suit a test.
 
 ## Why the suite stops there
 
@@ -47,6 +53,16 @@ There is no Robolectric, no instrumentation source set, and no Compose UI test. 
 **Nothing in the suite touches a clock, a socket, or a file.** Every test is a pure function of its input. That is what makes six seconds on every push affordable and, more to the point, what makes a red build believable — a flaky suite would be back to a green tick nobody reads.
 
 The result is that a large majority of the app has no automated coverage at all, and it is better to say that plainly than to inflate the number with tests that would pass whatever happened. What the suite protects is the code where being wrong is silent and expensive. The rest is below.
+
+## What the device pass found that the suite could not
+
+Recorded because it is the argument for the checklist below existing at all. A round of on-device verification of eight fixes turned up three things no unit test could have:
+
+- **A bug in one of the fixes.** `RestartPolicy` correctly gave up after five restarts — and the supervise loop stays alive after giving up, so `SessionService`'s "already supervising" check saw a live job and made the Retry button inert. The app had no way back short of a force-stop. Reproduced by moving `/usr/bin/code-server` aside and watching the five attempts land in `logcat`.
+- **A gap in another.** `GuestConfig.refreshDns` ran before apt and git only, so an existing guest kept whatever resolvers it was installed with until one of those happened to run. Found by reading `/etc/resolv.conf` on a guest that had been sitting there for weeks. It now also runs at session start.
+- **An overstated claim.** The terminal Activity leak was described as one leaked window per activity recreation. It is not: `create()` runs when a tab is opened and a recreation reuses the views it finds, so the bound is one retained Activity per session created. Measured by reverting the fix and running twelve recreations, which retained nothing extra.
+
+Two of the three are the same shape: a fix that is right in the small and incomplete in the place it meets the rest of the app. That is exactly what a suite of pure functions cannot see.
 
 ## Device checklist
 

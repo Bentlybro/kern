@@ -51,6 +51,16 @@ object CodeServer {
     fun start(context: Context, token: String): Boolean {
         if (serverProcess != null) return true
 
+        // Nothing to start a server in. This is not hypothetical: deleting the guest does
+        // not synchronously stop the supervisor, so a health poll already in flight can
+        // arrive here microseconds after the rootfs has gone - and the mkdirs below would
+        // then recreate a skeleton of directories *inside the tree being deleted*, racing
+        // deleteRecursively and leaving debris behind a guest the user was told was gone.
+        if (!LinuxRuntime.isInstalled(context)) {
+            Log.i(TAG, "start: no guest to start code-server in")
+            return false
+        }
+
         // Made from this side on purpose, rather than with `mkdir -p` in the script below.
         //
         // Ubuntu 26.04 ships uutils coreutils: one Rust multi-call binary with about a

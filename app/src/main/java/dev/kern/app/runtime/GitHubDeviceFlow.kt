@@ -46,6 +46,23 @@ internal object GitHubDeviceFlow {
     /** True while a login is in flight, so nothing else clears the step under it. */
     val running: Boolean get() = loginProcess != null
 
+    /**
+     * A backstop on the whole flow, a minute past the fifteen the script allows itself.
+     *
+     * It should never be what ends a login: the script writes an rc of its own on timeout.
+     * It is here for the case where the script never ran at all.
+     */
+    private const val FLOW_TIMEOUT_MS = 960_000L
+
+    /**
+     * The result file's contents, or null while it is absent or still empty.
+     *
+     * Empty and missing mean the same thing - not finished - and neither may be confused
+     * with a result, because "" fails the EXIT=0 test and reads as a failed sign-in.
+     */
+    private fun readResult(rcFile: File): String? =
+        runCatching { rcFile.readText().trim() }.getOrNull()?.takeIf { it.isNotEmpty() }
+
     /** Anchored on gh's own wording so it cannot match a stray token on screen. */
     private val CODE = Regex("""one-time code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})""")
 
@@ -80,10 +97,17 @@ internal object GitHubDeviceFlow {
         loginProcess = process
 
         // The script says little, but an unread pty eventually fills and would stall it.
-        process.drainInBackground("KernGhAuth")
+        // The drain reaching EIO is also the one honest signal that the script is gone -
+        // see [died] in the loop below.
+        // Atomic rather than a plain local: it is written on the drain thread and read on
+        // this one, and a captured `var` gives no guarantee the read ever sees the write.
+        val died = java.util.concurrent.atomic.AtomicBoolean(false)
+        process.drainInBackground("KernGhAuth") { died.set(true) }
 
         var pane = ""
         var cancelled = false
+        var rc = ""
+        val deadline = android.os.SystemClock.elapsedRealtime() + FLOW_TIMEOUT_MS
         try {
             while (true) {
                 // cancel() drops the handle. That is a deliberate stop, not a failure,
@@ -96,7 +120,24 @@ internal object GitHubDeviceFlow {
                     pane = runCatching { paneFile.readText() }.getOrDefault(pane)
                     CODE.find(pane)?.groupValues?.get(1)?.let(onCode)
                 }
-                if (rcFile.exists()) break
+                // Content, not existence. `echo "EXIT=$?" > rc` creates the file by
+                // truncation before it writes into it, so there is a window where it is
+                // there and empty - and reading it then produced "", which fails the
+                // EXIT=0 test below and told a user whose sign-in had just succeeded that
+                // it had failed. The same race as LinuxRuntime's exit-code file.
+                val result = readResult(rcFile)
+                if (result != null) {
+                    rc = result
+                    break
+                }
+
+                // Nothing else ends this wait. The script self-terminates after fifteen
+                // minutes, but if it never ran - a PRoot that failed to spawn, a guest
+                // with no tmux - the rc file is never written by anyone, and this loop
+                // used to poll a file that would never appear for as long as the app
+                // lived, with the UI on "Contacting GitHub" behind it.
+                if (died.get()) break
+                if (android.os.SystemClock.elapsedRealtime() > deadline) break
                 delay(1_000)
             }
         } finally {
@@ -104,7 +145,9 @@ internal object GitHubDeviceFlow {
             runCatching { process.close() }
         }
 
-        val rc = runCatching { rcFile.readText().trim() }.getOrDefault("")
+        // One last look: the script writes rc immediately before exiting, so a drain that
+        // reported death a moment early would otherwise lose a completed login.
+        if (rc.isEmpty()) rc = readResult(rcFile).orEmpty()
         runCatching { workDir.deleteRecursively() }
         runCatching { File(guestTmp, SCRIPT_NAME).delete() }
 
@@ -135,8 +178,15 @@ internal object GitHubDeviceFlow {
      * prompts stay on the pane after they are answered, so they are filtered out —
      * otherwise a failure gets reported as "Press Enter to open github.com".
      */
-    private fun reasonFor(pane: String, rc: String): String {
+    internal fun reasonFor(pane: String, rc: String): String {
         if (rc.contains("timeout")) return "The code expired before it was approved."
+        // No rc at all means the helper never got as far as writing one - it is not that
+        // GitHub refused, it is that the script did not run. Saying "sign-in did not
+        // complete" there sends the user back to GitHub, which is the wrong place.
+        if (rc.isEmpty()) {
+            return "The sign-in helper stopped before it could ask GitHub. " +
+                "Check that git, gh and tmux are installed on the Status screen."
+        }
         val lines = pane.lines()
             .map { it.trim() }
             .filter {

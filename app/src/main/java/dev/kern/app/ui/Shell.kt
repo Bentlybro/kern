@@ -27,7 +27,8 @@ import dev.kern.app.runtime.RootfsInstaller
 import dev.kern.app.runtime.UsageTracker
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,6 +75,19 @@ sealed interface ShellDestination {
     data object Settings : ShellDestination {
         override val surface = UsageTracker.Surface.Chrome
     }
+
+    companion object {
+        private val all = listOf(Editor, Projects, Cockpit, Status, Settings)
+
+        // Saved by name so the shell's slot can go through rememberSaveable. Restore is
+        // firstOrNull, not first: saved state can outlive an app update that renamed or
+        // removed a destination, and an unrecognised name should fall back to the editor
+        // instead of crashing on relaunch.
+        val Saver = Saver<ShellDestination, String>(
+            save = { it::class.simpleName!! },
+            restore = { name -> all.firstOrNull { it::class.simpleName == name } },
+        )
+    }
 }
 
 /**
@@ -87,10 +101,16 @@ sealed interface ShellDestination {
 @Composable
 fun Shell(state: SessionState) {
     val fold = rememberFoldState()
-    var showTerminal by remember { mutableStateOf(false) }
+    // Saveable, not plain remember: the manifest's configChanges absorbs fold and rotation,
+    // but a font-scale or locale change — or coming back after process death — still
+    // recreates the activity, and plain remember dumped whoever was standing on Projects,
+    // Status, Settings or the cockpit back onto the editor mid-task.
+    var showTerminal by rememberSaveable { mutableStateOf(false) }
     // Always open on the IDE. The cockpit is a place you choose to go (the "agent" chip),
     // not something that greets you.
-    var destination by remember { mutableStateOf<ShellDestination>(ShellDestination.Editor) }
+    var destination by rememberSaveable(stateSaver = ShellDestination.Saver) {
+        mutableStateOf<ShellDestination>(ShellDestination.Editor)
+    }
 
     // The two conditions are each other's negation, so precedence cannot be got wrong.
     // Compose gives priority to the most recently registered enabled handler, and while

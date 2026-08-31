@@ -2,6 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!--
+      Read-only, and only for the active network's DNS servers, which GuestConfig writes
+      into the guest's /etc/resolv.conf. A guest pinned to public resolvers cannot see a
+      network's internal names and is refused outright where outbound 53 is blocked.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

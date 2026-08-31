@@ -35,6 +35,11 @@ object Apt {
         packages: List<String>,
         onLine: ((String) -> Unit)? = null,
     ): Boolean = withContext(Dispatchers.IO) {
+        // The guest's resolv.conf was written whenever it was last set up or repaired, and
+        // a phone changes network several times a day. apt is the thing that most needs DNS
+        // and the thing whose failure says least about why, so re-point it at whatever the
+        // device is using now before asking.
+        GuestConfig.refreshDns(context)
         // Android kills this app whenever it likes, and an apt killed mid-unpack leaves dpkg
         // in a state where every later install refuses to start with "dpkg was interrupted,
         // you must manually run 'dpkg --configure -a'". Nothing in the app used to run it,

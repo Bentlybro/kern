@@ -38,18 +38,23 @@ jobs:
           java-version: '17'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
 
       - name: Assemble debug
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
+      # No continue-on-error, as of 0.1.4. It carried one for the life of the project and
+      # the project carried three lint errors the whole time, which is the same failure
+      # the unit-test guard below exists to prevent: a check nobody can fail is a green
+      # tick that means nothing. Errors now stop the run; warnings still do not, and the
+      # report is uploaded either way.
       - name: Lint
         run: ./gradlew lintDebug --no-daemon
-        continue-on-error: true
 
-      # Deliberately no `continue-on-error`: unlike lint, a failing unit test stops the
-      # run. These cover shell quoting, project-name sanitising and the rootfs the
-      # installer picks, and none of the three has a safe failure mode.
+      # No `continue-on-error` here either. A failing unit test stops the run: these
+      # cover shell quoting, project-name sanitising, the rootfs the installer picks, the
+      # restart policy and the guest exit-code parser, and none of them has a safe
+      # failure mode.
       - name: Unit tests
         id: unit-tests
         run: ./gradlew testDebugUnitTest --no-daemon

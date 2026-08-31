@@ -1,5 +1,6 @@
 package dev.kern.app
 
+import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
@@ -24,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.kern.app.runtime.LinuxRuntime
+import dev.kern.app.runtime.UsageTracker
 import dev.kern.app.session.SessionService
 import dev.kern.app.session.SessionState
 import dev.kern.app.ui.KernTheme
@@ -35,6 +37,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Terminals outlive this Activity - they are process scoped so a fold or a
+        // recreation does not throw away a running shell - so they are built against a
+        // wrapper rather than against `this`, and it has to be pointed at the current
+        // Activity before anything asks for one. Without it every recreation leaked this
+        // whole window. WorkbenchWebView does the same thing at its own acquire().
+        dev.kern.app.ui.TerminalSessions.rebind(this)
 
         // Eager start: once Linux is set up there is nothing to decide, so begin booting
         // code-server the moment the app opens rather than waiting for a button. Starting
@@ -51,10 +60,36 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * Stop and start the usage clock with the window, not with the composition.
+     *
+     * [dev.kern.app.runtime.UsageTracker] measures which surface the user is actually in,
+     * and nothing was stopping it when the app left the screen - so a phone in a pocket
+     * kept banking time against whatever was last open. See UsageTracker.pause.
+     */
+    override fun onStart() {
+        super.onStart()
+        UsageTracker.resume(this)
+    }
+
+    override fun onStop() {
+        UsageTracker.pause(this)
+        super.onStop()
+    }
+
+    /**
      * Hardware-keyboard chords (Ctrl+P, Ctrl+Shift+P, …) are otherwise consumed as system
      * shortcuts before the WebView sees them. Forward them to whichever surface has
      * focus so a Bluetooth keyboard behaves like it does on the desktop.
+     *
+     * The suppression is not a shortcut taken. `dispatchKeyShortcutEvent` is declared on
+     * android.app.Activity, which is where this overrides it and where it is public API;
+     * androidx's ComponentActivity happens to carry a @RestrictTo on its own override, and
+     * lint attributes that to any subclass calling `super`. There is no non-restricted way
+     * to override a platform method whose androidx ancestor is annotated, and not calling
+     * super would swallow every shortcut androidx handles itself. Scoped to this member so
+     * it cannot quietly cover anything else.
      */
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyShortcutEvent(event: KeyEvent): Boolean {
         val target = focusedInputView()
         if (target != null && target.dispatchKeyEvent(event)) return true

@@ -174,42 +174,70 @@ object LinuxRuntime {
         context: Context,
         guestCommand: List<String>,
         workingDir: String = "/root",
-    ): List<String> {
-        val args = mutableListOf(
-            prootBinary(context).absolutePath,
-            "-0",
-            "-l",
-            "-r", rootfsDir(context).absolutePath,
-        )
-        val l2s = l2sDir(context).absolutePath
-        listOf(
-            // The hard-link farm, bound onto itself.
-            //
-            // PRoot replaces a hard link with a symlink and writes the *host* path of the
-            // real file as its target — so that path must also resolve from inside the
-            // guest, where the root is the rootfs and /data/user/0/... otherwise means
-            // nothing. Binding the directory at its own path is what makes it resolve.
-            //
-            // Ubuntu 26.04 makes this fatal rather than cosmetic: its coreutils is a
-            // single multi-call binary sitting behind ~115 hard links, so one dangling
-            // link takes out every core utility at once — `ls`, `cat`, `head`, the lot.
-            "$l2s:$l2s",
-            "/proc", "/sys", "/dev", "/dev/pts",
-            "/proc/self/fd:/dev/fd",
-            "/proc/self/fd/0:/dev/stdin",
-            "/proc/self/fd/1:/dev/stdout",
-            "/proc/self/fd/2:/dev/stderr",
-            "/storage", "/sdcard",
-        ).forEach { bind ->
-            if (File(bind.substringBefore(':')).exists()) {
-                args += "-b"
-                args += bind
-            }
+    ): List<String> = prootArgv(
+        proot = prootBinary(context).absolutePath,
+        rootfs = rootfsDir(context).absolutePath,
+        binds = bindCandidates(l2sDir(context).absolutePath)
+            .filter { File(it.substringBefore(':')).exists() },
+        workingDir = workingDir,
+        guestCommand = guestCommand,
+    )
+
+    /**
+     * Everything we would like bound into the guest, before asking the host what exists.
+     *
+     * Split out, and taking [l2s] as a string rather than reading it from a Context, so the
+     * list and the argv built from it can be checked in a plain unit test. This is the part
+     * with no safe failure mode: a bind that goes missing does not throw, it produces a
+     * guest that is subtly broken minutes later and a long way from here.
+     */
+    internal fun bindCandidates(l2s: String): List<String> = listOf(
+        // The hard-link farm, bound onto itself.
+        //
+        // PRoot replaces a hard link with a symlink and writes the *host* path of the
+        // real file as its target — so that path must also resolve from inside the
+        // guest, where the root is the rootfs and /data/user/0/... otherwise means
+        // nothing. Binding the directory at its own path is what makes it resolve.
+        //
+        // Ubuntu 26.04 makes this fatal rather than cosmetic: its coreutils is a
+        // single multi-call binary sitting behind ~115 hard links, so one dangling
+        // link takes out every core utility at once — `ls`, `cat`, `head`, the lot.
+        "$l2s:$l2s",
+        "/proc", "/sys", "/dev", "/dev/pts",
+        "/proc/self/fd:/dev/fd",
+        "/proc/self/fd/0:/dev/stdin",
+        "/proc/self/fd/1:/dev/stdout",
+        "/proc/self/fd/2:/dev/stderr",
+        "/storage", "/sdcard",
+    )
+
+    /**
+     * The argv itself, from paths that have already been decided.
+     *
+     * Order matters to PRoot and is not obvious from reading it: every option has to
+     * precede the guest command, or PRoot stops parsing at the command and silently hands
+     * the rest to the guest instead — which looks like bash being given nonsense arguments
+     * rather than like a malformed PRoot invocation.
+     */
+    internal fun prootArgv(
+        proot: String,
+        rootfs: String,
+        binds: List<String>,
+        workingDir: String,
+        guestCommand: List<String>,
+    ): List<String> = buildList {
+        add(proot)
+        add("-0")
+        add("-l")
+        add("-r")
+        add(rootfs)
+        binds.forEach {
+            add("-b")
+            add(it)
         }
-        args += "-w"
-        args += workingDir
-        args += guestCommand
-        return args
+        add("-w")
+        add(workingDir)
+        addAll(guestCommand)
     }
 
     /** The one way to start a process inside the guest. */
@@ -288,13 +316,24 @@ object LinuxRuntime {
             val exit = try {
                 withTimeoutOrNull(timeoutMs) {
                     var seen = 0
-                    while (!rcFile.exists()) {
+                    var code: Int? = null
+                    // Wait for a *readable* exit code, not merely for the file to appear.
+                    // The shell creates fc-N.rc by truncation before `echo` writes into
+                    // it, so there is a window where it exists and is empty - and the old
+                    // `toIntOrNull() ?: 0` turned that empty read into exit 0. Every
+                    // caller treats 0 as success, so a failed apt, clone or git config
+                    // was occasionally reported as having worked. Silent, and wrong in
+                    // the worst direction. Polling until it parses closes the window, and
+                    // the enclosing withTimeoutOrNull still bounds the wait.
+                    while (code == null) {
                         if (onLine != null) seen = tail(outFile, seen, onLine)
+                        code = readExitCode(rcFile)
+                        if (code != null) break
                         delay(if (onLine != null) 250 else 100)
                     }
                     // One last pass, or the closing lines are never reported.
                     if (onLine != null) tail(outFile, seen, onLine)
-                    rcFile.readText().trim().toIntOrNull() ?: 0
+                    code
                 }
             } finally {
                 process.close()
@@ -314,6 +353,26 @@ object LinuxRuntime {
     }
 
     /**
+     * The exit code the guest wrapper wrote, or null if it has not written one yet.
+     *
+     * Absent, empty and half-written all mean the same thing here - not finished - and
+     * they must not be confused with zero. See the polling loop in [run] for why that
+     * distinction is load-bearing.
+     */
+    private fun readExitCode(rcFile: File): Int? {
+        if (!rcFile.exists()) return null
+        return parseExitCode(runCatching { rcFile.readText() }.getOrNull())
+    }
+
+    /**
+     * Split out from the file read so the empty-and-half-written cases can be tested
+     * without a guest. `echo $?` only ever writes digits and a newline, so anything that
+     * is not a whole number is a read that arrived too early.
+     */
+    internal fun parseExitCode(text: String?): Int? = text?.trim()?.takeIf { it.isNotEmpty() }
+        ?.toIntOrNull()
+
+    /**
      * Report whole lines appended since [from]; returns the new offset.
      *
      * Only complete lines are emitted, so a half-written line is never shown and is
@@ -322,17 +381,40 @@ object LinuxRuntime {
      */
     private fun tail(file: File, from: Int, onLine: (String) -> Unit): Int {
         if (!file.exists()) return from
-        val text = runCatching { file.readText() }.getOrNull() ?: return from
-        if (text.length <= from) return from
+        val length = file.length()
+        if (length <= from) return from
 
-        val fresh = text.substring(from)
-        val cut = fresh.lastIndexOfAny(charArrayOf('\n', '\r'))
+        // Seek and read only what is new, rather than reading the file whole every pass.
+        // This polls four times a second for as long as the command runs, and a toolchain
+        // apt writes megabytes over fifteen minutes - so re-reading from the top made the
+        // cost of watching a command quadratic in its own output, all of it on the storage
+        // of a phone. The offset is a byte count for the same reason.
+        val fresh = runCatching {
+            java.io.RandomAccessFile(file, "r").use { handle ->
+                handle.seek(from.toLong())
+                val buffer = ByteArray((length - from).toInt())
+                val read = handle.read(buffer)
+                if (read <= 0) null else buffer.copyOf(read)
+            }
+        }.getOrNull() ?: return from
+
+        // Cut at a newline *byte*. UTF-8 continuation bytes are all >= 0x80, so a 0x0A or
+        // 0x0D is always a character boundary - which is what makes it safe to decode only
+        // as far as the cut and leave the remainder for the next pass, even mid-character.
+        val cut = fresh.indexOfLastLineBreak()
         if (cut < 0) return from
 
-        fresh.substring(0, cut)
+        String(fresh, 0, cut, Charsets.UTF_8)
             .split('\n', '\r')
             .forEach { line -> if (line.isNotBlank()) onLine(line) }
         return from + cut + 1
+    }
+
+    private fun ByteArray.indexOfLastLineBreak(): Int {
+        for (i in indices.reversed()) {
+            if (this[i] == '\n'.code.toByte() || this[i] == '\r'.code.toByte()) return i
+        }
+        return -1
     }
 
     /**

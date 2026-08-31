@@ -58,6 +58,16 @@ class SessionService : Service() {
         /** Enough to outlast the toolchain install racing the first start, no more. */
         private const val START_ATTEMPTS = 3
         private const val START_TIMEOUT_MS = 60_000L
+
+        /** How often the server is asked whether it is alive. */
+        private const val HEALTH_TICK_MS = 15_000L
+
+        /**
+         * How long a *restarted* server gets to answer, against [START_TIMEOUT_MS] for a
+         * cold one. Shorter because everything slow about the first start - unpacking,
+         * apt, a cold page cache - has already happened by the time this runs.
+         */
+        private const val RESTART_TIMEOUT_MS = 45_000L
         const val ACTION_START = "dev.kern.app.action.START"
         const val ACTION_STOP = "dev.kern.app.action.STOP"
 
@@ -101,7 +111,7 @@ class SessionService : Service() {
     }
 
     override fun onDestroy() {
-        wakeLock?.let { if (it.isHeld) it.release() }
+        releaseWakeLock()
         scope.cancel()
         super.onDestroy()
     }
@@ -117,13 +127,13 @@ class SessionService : Service() {
             if (!launchWithRetries()) return
         }
         _state.value = SessionState.Healthy
-        updateNotification("Running on 127.0.0.1:${CodeServer.PORT}")
+        updateNotification(running())
 
-        var misses = 0
+        var watch = RestartPolicy.State()
         var wasAwaiting = false
         var agentTick = 0
         while (scope.isActive) {
-            delay(15_000)
+            delay(HEALTH_TICK_MS)
 
             // Pocket workflow (M5): while a session is running, watch for the agent
             // stopping to ask something and raise a notification so the phone can be in
@@ -146,30 +156,62 @@ class SessionService : Service() {
                 }
             }
 
-            if (isHealthy()) {
-                if (misses > 0) {
-                    updateNotification("Running on 127.0.0.1:${CodeServer.PORT}")
+            val wasDegraded = watch != RestartPolicy.State()
+            val (nextWatch, decision) = RestartPolicy.next(watch, isHealthy())
+            watch = nextWatch
+
+            when (decision) {
+                RestartPolicy.Decision.Healthy -> {
+                    // Only when something had gone wrong, or this rewrites the same
+                    // notification every fifteen seconds for the life of the session.
+                    if (wasDegraded) {
+                        acquireWakeLock()
+                        updateNotification(running())
+                    }
+                    _state.value = SessionState.Healthy
                 }
-                misses = 0
-                _state.value = SessionState.Healthy
-            } else {
-                misses++
-                if (misses >= 2) {
+
+                RestartPolicy.Decision.Wait -> Unit
+
+                is RestartPolicy.Decision.Abandoned -> Unit
+
+                is RestartPolicy.Decision.Restart -> {
                     _state.value = SessionState.Reconnecting
-                    updateNotification("Server died - restarting...")
+                    updateNotification(
+                        if (decision.attempt == 1) {
+                            "Server died - restarting..."
+                        } else {
+                            "Server died - restarting (attempt ${decision.attempt})..."
+                        },
+                    )
+                    delay(decision.backoffMs)
                     CodeServer.stop()
                     CodeServer.start(this, Secrets.token(this))
-                    if (awaitHealthy(45_000)) {
-                        misses = 0
+                    if (awaitHealthy(RESTART_TIMEOUT_MS)) {
+                        // Reset here as well as in the policy: awaitHealthy is a whole
+                        // recovery the next tick has no way to learn about otherwise, and
+                        // leaving the restart count standing would spend the budget on a
+                        // server that came back.
+                        watch = RestartPolicy.State()
                         _state.value = SessionState.Healthy
-                        updateNotification(
-                            "Running on 127.0.0.1:${CodeServer.PORT}",
-                        )
+                        updateNotification(running())
                     }
+                }
+
+                is RestartPolicy.Decision.GiveUp -> {
+                    Log.e(TAG, "supervise: ${decision.message}")
+                    _state.value = SessionState.Failed(decision.message)
+                    updateNotification("Server is down - open the app for details")
+                    // Nothing left to keep the CPU awake for. The only way back from here
+                    // is the user running Repair, and they will be looking at the screen
+                    // when they do - at which point a healthy check re-acquires it.
+                    releaseWakeLock()
                 }
             }
         }
     }
+
+    private fun running() = "Running on 127.0.0.1:${CodeServer.PORT}"
 
     /**
      * Start the server, and try again if it dies on the way up.
@@ -240,9 +282,13 @@ class SessionService : Service() {
         superviseJob?.cancel()
         CodeServer.stop()
         _state.value = SessionState.Idle
-        wakeLock?.let { if (it.isHeld) it.release() }
+        releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { if (it.isHeld) it.release() }
     }
 
     private fun acquireWakeLock() {

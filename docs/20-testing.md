@@ -54,6 +54,16 @@ There is no Robolectric, no instrumentation source set, and no Compose UI test. 
 
 The result is that a large majority of the app has no automated coverage at all, and it is better to say that plainly than to inflate the number with tests that would pass whatever happened. What the suite protects is the code where being wrong is silent and expensive. The rest is below.
 
+## What the device pass found that the suite could not
+
+Recorded because it is the argument for the checklist below existing at all. A round of on-device verification of eight fixes turned up three things no unit test could have:
+
+- **A bug in one of the fixes.** `RestartPolicy` correctly gave up after five restarts — and the supervise loop stays alive after giving up, so `SessionService`'s "already supervising" check saw a live job and made the Retry button inert. The app had no way back short of a force-stop. Reproduced by moving `/usr/bin/code-server` aside and watching the five attempts land in `logcat`.
+- **A gap in another.** `GuestConfig.refreshDns` ran before apt and git only, so an existing guest kept whatever resolvers it was installed with until one of those happened to run. Found by reading `/etc/resolv.conf` on a guest that had been sitting there for weeks. It now also runs at session start.
+- **An overstated claim.** The terminal Activity leak was described as one leaked window per activity recreation. It is not: `create()` runs when a tab is opened and a recreation reuses the views it finds, so the bound is one retained Activity per session created. Measured by reverting the fix and running twelve recreations, which retained nothing extra.
+
+Two of the three are the same shape: a fix that is right in the small and incomplete in the place it meets the rest of the app. That is exactly what a suite of pure functions cannot see.
+
 ## Device checklist
 
 Run this on a real phone before tagging a release. Every item here is derived from something that actually broke, and several of them broke *after* the code that caused them looked obviously correct on a laptop. `tools/device.ps1` drives most of it — see [16 — Development](16-development.md) — but read the screen rather than the logs, because several of these were invisible in `logcat` and immediately obvious in a screenshot.

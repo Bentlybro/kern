@@ -1,5 +1,6 @@
 package dev.kern.app
 
+import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
@@ -79,7 +80,16 @@ class MainActivity : ComponentActivity() {
      * Hardware-keyboard chords (Ctrl+P, Ctrl+Shift+P, …) are otherwise consumed as system
      * shortcuts before the WebView sees them. Forward them to whichever surface has
      * focus so a Bluetooth keyboard behaves like it does on the desktop.
+     *
+     * The suppression is not a shortcut taken. `dispatchKeyShortcutEvent` is declared on
+     * android.app.Activity, which is where this overrides it and where it is public API;
+     * androidx's ComponentActivity happens to carry a @RestrictTo on its own override, and
+     * lint attributes that to any subclass calling `super`. There is no non-restricted way
+     * to override a platform method whose androidx ancestor is annotated, and not calling
+     * super would swallow every shortcut androidx handles itself. Scoped to this member so
+     * it cannot quietly cover anything else.
      */
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyShortcutEvent(event: KeyEvent): Boolean {
         val target = focusedInputView()
         if (target != null && target.dispatchKeyEvent(event)) return true

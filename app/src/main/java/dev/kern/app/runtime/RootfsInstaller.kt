@@ -169,6 +169,10 @@ object RootfsInstaller {
      */
     private val TOOLS = listOf(
         "ca-certificates", "git", "gh", "tmux", "curl", "ripgrep", "python3", "python3-pip",
+        // git's pager, and the one every other tool reaches for. The base image has none,
+        // so `git log` dumped the whole history at the terminal and `man`-less help came
+        // out the same way. Found by needing it on device to test the cockpit.
+        "less",
     )
 
     /**

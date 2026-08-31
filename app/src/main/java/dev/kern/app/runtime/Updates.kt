@@ -46,6 +46,16 @@ object Updates {
         val notes: String,
         val apkUrl: String,
         val sizeBytes: Long,
+        /**
+         * Lowercase hex, from the release API's own `digest` for this asset, or null for a
+         * release published before GitHub reported one.
+         *
+         * Not the security boundary - Android's signature check is, and it is the reason
+         * a malicious APK cannot be installed over Kern at all. This is what stops a
+         * *corrupt* one being handed to the installer, and specifically what makes
+         * resuming a partial download safe: see [download].
+         */
+        val sha256: String? = null,
     )
 
     sealed interface State {
@@ -187,11 +197,28 @@ object Updates {
                     notes = json.optString("body").trim(),
                     apkUrl = url,
                     sizeBytes = asset.optLong("size"),
+                    sha256 = digestOf(asset.optString("digest")),
                 )
             }
             return null
         }
     }
+
+    /**
+     * The asset digest GitHub reports, as the lowercase hex [download] expects.
+     *
+     * The API gives it as `sha256:<hex>`. Anything else - an empty string on an older
+     * release, or some future algorithm - is null rather than a guess, because a digest
+     * we cannot check has to be indistinguishable from one that was never offered.
+     *
+     * internal so the parsing can be tested against the real shape without a network.
+     */
+    internal fun digestOf(reported: String?): String? = reported
+        ?.trim()
+        ?.removePrefix("sha256:")
+        ?.lowercase()
+        ?.takeIf { it.length == 64 && it.all { c -> c in "0123456789abcdef" } }
+        ?.takeIf { reported.trim().startsWith("sha256:") }
 
     /**
      * Compare dotted versions numerically, so 0.10.0 is correctly newer than 0.9.0 —
@@ -237,8 +264,16 @@ object Updates {
     suspend fun download(context: Context, release: Release): File? = withContext(Dispatchers.IO) {
         _state.value = State.Downloading(0)
         val target = File(context.cacheDir, "kern-${release.version}.apk")
+        // download() resumes a `.part` with a Range request, and its own documentation is
+        // explicit that resuming is only safe next to a checksum: a fragment left by an
+        // earlier run against an asset that has since been replaced appends into nonsense
+        // that nothing downstream would notice. When GitHub reports no digest we cannot
+        // check the result, so there must be nothing to resume from.
+        if (release.sha256 == null) {
+            runCatching { File(target.parentFile, target.name + ".part").delete() }
+        }
         try {
-            download(release.apkUrl, target) { got, total ->
+            download(release.apkUrl, target, release.sha256) { got, total ->
                 val percent = if (total > 0) (got * 100 / total).toInt() else 0
                 _state.value = State.Downloading(percent)
             }

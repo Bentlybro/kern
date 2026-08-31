@@ -62,7 +62,21 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            /**
+             * On, with the two keep rules that make it safe, both in proguard-rules.pro.
+             *
+             * It was off with the note "no release minification in M1" and nothing saying
+             * why - which by 0.1.3 had stopped being a decision and become a leftover.
+             * The reason to be careful here is real, though: the JNI pty binds statically
+             * by name and the workbench bridge is called from injected JavaScript, so R8
+             * removing either produces a failure that exists only in release builds. The
+             * rules pin both, and the result is verified on device before release rather
+             * than assumed - see docs/17-releases.md.
+             */
+            isMinifyEnabled = true
+            // Resources too. The vendored Termux view brings drawables and strings Kern
+            // never renders, and nothing here loads a resource by name.
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Unsigned rather than broken when built locally without the key.
             signingConfig = if (System.getenv("KEYSTORE_FILE") != null) {

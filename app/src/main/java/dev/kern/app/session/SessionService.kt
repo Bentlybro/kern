@@ -17,6 +17,7 @@ import dev.kern.app.R
 import dev.kern.app.runtime.AgentPrompt
 import dev.kern.app.runtime.AgentRepository
 import dev.kern.app.runtime.CodeServer
+import dev.kern.app.runtime.GuestConfig
 import dev.kern.app.ui.TerminalSessions
 import dev.kern.app.runtime.Secrets
 import java.net.HttpURLConnection
@@ -102,6 +103,17 @@ class SessionService : Service() {
             else -> {
                 goForeground("Starting code-server...")
                 acquireWakeLock()
+                // An explicit start is a request to try again, and it has to be able to
+                // lift a give-up. RestartPolicy stops restarting after five consecutive
+                // failures but the loop stays alive to keep watching - so the "already
+                // supervising" check below saw a live job and did nothing at all, and the
+                // Retry button on the failure screen was inert. Caught on device: the
+                // supervisor gave up as designed, the binary was put back, and there was
+                // no way to get the server started again short of force-stopping the app.
+                if (_state.value is SessionState.Failed) {
+                    superviseJob?.cancel()
+                    superviseJob = null
+                }
                 if (superviseJob?.isActive != true) {
                     superviseJob = scope.launch { supervise() }
                 }
@@ -119,6 +131,14 @@ class SessionService : Service() {
     private suspend fun supervise() {
         _state.value = SessionState.Starting
         Log.i(TAG, "supervise: starting code-server in the Linux guest")
+
+        // Point the guest at this network's resolvers before anything in it asks a
+        // question. Doing it only in front of apt and git left everything else in the
+        // guest - a curl in a terminal, an agent, an extension code-server fetches - on
+        // whatever DNS was current when the guest was installed, which on a phone is
+        // wrong within the day. Verified on device: an existing guest sat on the public
+        // resolvers indefinitely because neither apt nor clone had run since setup.
+        GuestConfig.refreshDns(this)
 
         if (isHealthy()) {
             Log.i(TAG, "supervise: adopted an already-running server")

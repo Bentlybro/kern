@@ -1,6 +1,7 @@
 package dev.kern.app.session
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -88,6 +89,23 @@ class RestartPolicyTest {
 
         val (_, decision) = RestartPolicy.next(state, healthy = false)
         assertEquals(RestartPolicy.Decision.Abandoned, decision)
+    }
+
+    @Test
+    fun `giving up is a state the caller can be got out of`() {
+        // The policy has no reset of its own on purpose - SessionService drops the whole
+        // supervise job and starts a new one, which begins from a fresh State. This pins
+        // the property that makes that work: a fresh State is not given up, so restarting
+        // the loop genuinely lifts it.
+        //
+        // Worth stating because the alternative was shipped and was wrong. The loop stays
+        // alive after giving up, so the service's "already supervising" check saw a live
+        // job and made the Retry button inert - found on device, with no way back short of
+        // force-stopping the app.
+        var state = RestartPolicy.State()
+        repeat(50) { state = RestartPolicy.next(state, healthy = false).first }
+        assertTrue(state.gaveUp)
+        assertFalse("a fresh state must not inherit the give-up", RestartPolicy.State().gaveUp)
     }
 
     @Test

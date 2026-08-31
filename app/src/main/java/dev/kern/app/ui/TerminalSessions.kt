@@ -54,13 +54,21 @@ object TerminalSessions {
      *
      * A View needs an Activity context - it is what backs the IME, the theme and any
      * dialog - but these entries are process scoped and outlive any particular Activity.
-     * Built against the Activity directly, every terminal held a hard reference to it for
-     * the life of the process, so each recreation leaked the whole window: its views, its
-     * Compose tree and everything they in turn hold.
+     * Built against the Activity directly, each terminal held a hard reference for the life
+     * of the process to whichever Activity happened to be current when that session was
+     * created, and with it that whole window: its view tree, its Compose composition, and
+     * everything those hold.
      *
-     * The manifest's `configChanges` absorbs fold and rotation, which is why this was not
-     * obvious, but it does not absorb a locale change, a font-scale change, or coming back
-     * from process death - and a foldable session is long enough for those to add up.
+     * The bound is one retained Activity per session created, not one per recreation -
+     * [create] runs when a tab is opened, and a recreation reuses the views it finds. So it
+     * is a real leak of a large object graph rather than a runaway one, and it accumulates
+     * only when tabs are opened across the life of the app, which is the ordinary way to
+     * use them. Measured on device: with the fix reverted, twelve recreations with a single
+     * terminal open retained nothing extra, which is what first made the shape clear.
+     *
+     * The manifest's `configChanges` absorbs fold and rotation, so a recreation needs a
+     * locale or font-scale change or a return from process death - another reason this
+     * stayed invisible.
      *
      * [WorkbenchWebView] has always done this for the same reason. It is the same fix, and
      * the two now agree.

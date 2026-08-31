@@ -36,6 +36,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Terminals outlive this Activity - they are process scoped so a fold or a
+        // recreation does not throw away a running shell - so they are built against a
+        // wrapper rather than against `this`, and it has to be pointed at the current
+        // Activity before anything asks for one. Without it every recreation leaked this
+        // whole window. WorkbenchWebView does the same thing at its own acquire().
+        dev.kern.app.ui.TerminalSessions.rebind(this)
+
         // Eager start: once Linux is set up there is nothing to decide, so begin booting
         // code-server the moment the app opens rather than waiting for a button. Starting
         // it is what costs seconds, and doing it now overlaps with the UI drawing.

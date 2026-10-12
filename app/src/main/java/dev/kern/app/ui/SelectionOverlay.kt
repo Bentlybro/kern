@@ -19,6 +19,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,15 +51,22 @@ fun SelectionOverlay(modifier: Modifier = Modifier) {
         onDispose { WorkbenchWebView.selectionListener = null }
     }
 
+    // Which handle is under a finger: 0 start, 1 end. The dragged handle is drawn at
+    // [dragNow] rather than at the reported selection, or it sat still under a moving finger
+    // and then jumped on release - nothing to aim with while aiming.
+    var dragging by remember { mutableStateOf<Int?>(null) }
+
     val sel = selection
     Box(modifier = modifier.fillMaxSize()) {
         if (sel != null) {
+            val now = dragNow
             // Handles sit just below each end of the selection, Android-style.
             Handle(
-                xCss = sel.startX,
-                yCss = sel.startBottom,
+                xCss = if (dragging == 0 && now != null) now.first else sel.startX,
+                yCss = if (dragging == 0 && now != null) now.second else sel.startBottom,
                 density = density.density,
                 onDrag = { dx, dy ->
+                    dragging = 0
                     val from = dragStart ?: (sel.startX to sel.startBottom).also { dragStart = it }
                     val cur = dragNow ?: from
                     dragNow = (cur.first + dx / density.density) to (cur.second + dy / density.density)
@@ -67,13 +75,15 @@ fun SelectionOverlay(modifier: Modifier = Modifier) {
                     dragNow?.let { WorkbenchWebView.dragSelect(it.first, it.second, sel.endX, sel.endY + 1) }
                     dragStart = null
                     dragNow = null
+                    dragging = null
                 },
             )
             Handle(
-                xCss = sel.endX,
-                yCss = sel.endBottom,
+                xCss = if (dragging == 1 && now != null) now.first else sel.endX,
+                yCss = if (dragging == 1 && now != null) now.second else sel.endBottom,
                 density = density.density,
                 onDrag = { dx, dy ->
+                    dragging = 1
                     val from = dragStart ?: (sel.endX to sel.endBottom).also { dragStart = it }
                     val cur = dragNow ?: from
                     dragNow = (cur.first + dx / density.density) to (cur.second + dy / density.density)
@@ -82,6 +92,7 @@ fun SelectionOverlay(modifier: Modifier = Modifier) {
                     dragNow?.let { WorkbenchWebView.dragSelect(sel.startX, sel.startY + 1, it.first, it.second) }
                     dragStart = null
                     dragNow = null
+                    dragging = null
                 },
             )
 
@@ -112,6 +123,10 @@ private fun Handle(
     onEnd: () -> Unit,
 ) {
     val sizeDp = 22.dp
+    // Keyed once, with the callbacks read through updated state: keying on the position
+    // restarted the gesture detector every frame the handle moved, cancelling the drag.
+    val drag by rememberUpdatedState(onDrag)
+    val end by rememberUpdatedState(onEnd)
     Box(
         modifier = Modifier
             .offset(
@@ -121,13 +136,13 @@ private fun Handle(
             .size(sizeDp)
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.primary)
-            .pointerInput(xCss, yCss) {
+            .pointerInput(Unit) {
                 detectDragGestures(
-                    onDragEnd = { onEnd() },
-                    onDragCancel = { onEnd() },
+                    onDragEnd = { end() },
+                    onDragCancel = { end() },
                 ) { change, amount ->
                     change.consume()
-                    onDrag(amount.x, amount.y)
+                    drag(amount.x, amount.y)
                 }
             },
     )

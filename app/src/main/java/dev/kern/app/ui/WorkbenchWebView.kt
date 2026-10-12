@@ -165,8 +165,14 @@ object WorkbenchWebView {
                     view: WebView,
                     request: WebResourceRequest,
                 ): Boolean {
+                    // Only the workbench's own origin stays in here. Any localhost used to,
+                    // so tapping a dev server's link (localhost:3000) replaced VS Code with
+                    // that app in this WebView, with no way back short of a restart. Those
+                    // go to the browser instead, which shares the device's loopback and
+                    // so reaches the guest's server exactly as this view would.
                     val host = request.url.host
-                    if (host == "127.0.0.1" || host == "localhost") return false
+                    val local = host == "127.0.0.1" || host == "localhost"
+                    if (local && request.url.port == CodeServer.PORT) return false
                     runCatching {
                         view.context.startActivity(Intent(Intent.ACTION_VIEW, request.url))
                     }
@@ -222,7 +228,10 @@ object WorkbenchWebView {
                 WorkbenchBridge.NAME,
             )
 
-            loadUrl(CodeServer.url(ProjectRepository.currentFolder(activityContext)))
+            val folder = ProjectRepository.currentFolder(activityContext)
+            val file = pendingFile
+            pendingFile = null
+            loadUrl(if (file != null) CodeServer.url(folder, file) else CodeServer.url(folder))
         }
         instance = webView
         return webView
@@ -279,6 +288,21 @@ object WorkbenchWebView {
                 "openFolder: $path (view=${view != null}, attached=${view?.parent != null})",
             )
             view?.loadUrl(CodeServer.url(path))
+        }
+    }
+
+    /**
+     * A file to show when the workbench is first created, for a share that arrives before
+     * there is a workbench to show it in (the app was cold-started by the share).
+     */
+    @Volatile
+    private var pendingFile: String? = null
+
+    /** Open [file] in the editor, keeping [folder] as the workspace. Any thread. */
+    fun openFile(folder: String, file: String) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            val view = instance
+            if (view == null) pendingFile = file else view.loadUrl(CodeServer.url(folder, file))
         }
     }
 

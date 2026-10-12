@@ -1,5 +1,7 @@
 package dev.kern.app.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.kern.app.runtime.AppScope
+import dev.kern.app.runtime.ProjectBackup
 import dev.kern.app.runtime.RootfsInstaller
 import dev.kern.app.runtime.StorageManager
 import kotlinx.coroutines.launch
@@ -65,6 +68,24 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
     // too; the header's refresh arrives as [refreshKey] instead.
     var reload by remember { mutableIntStateOf(0) }
     val installerStage by RootfsInstaller.stage.collectAsStateWithLifecycle()
+
+    // Through the system picker, so the backup can go to Downloads, a USB stick or Drive
+    // without Kern asking for storage permission of any kind.
+    fun runBackup(label: String, block: suspend () -> String) {
+        busy = label
+        val work = AppScope.start { block() }
+        scope.launch {
+            result = work.await()
+            busy = null
+            reload++
+        }
+    }
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/gzip"),
+    ) { uri -> uri?.let { runBackup("Exporting...") { ProjectBackup.export(app, it) } } }
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let { runBackup("Restoring...") { ProjectBackup.restore(app, it) } } }
 
     LaunchedEffect(refreshKey, reload) {
         measuring = true
@@ -176,6 +197,26 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
         )
     }
 
+    SectionTitle("Backup")
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(enabled = busy == null, onClick = { exportLauncher.launch("kern-backup.tar.gz") }) {
+            Text("Export projects")
+        }
+        TextButton(
+            enabled = busy == null,
+            // Any type: providers label .tar.gz half a dozen ways, and the restore checks
+            // the contents itself.
+            onClick = { importLauncher.launch(arrayOf("*/*")) },
+        ) { Text("Restore") }
+    }
+    Text(
+        "Saves ~/projects and your git, shell and editor settings as one file wherever " +
+            "you choose. Rebuildable folders like node_modules are left out, and so are " +
+            "credentials - sign in to GitHub again after a restore.",
+        fontSize = 11.5.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+
     SectionTitle("Reset")
     if (!confirmDelete) {
         TextButton(onClick = { confirmDelete = true }) {
@@ -183,7 +224,8 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
         }
         Text(
             "Removes the whole environment, including anything in ~/projects that " +
-                "you have not pushed. Setup would run again from scratch.",
+                "you have not pushed - export it above first. Setup would run again " +
+                "from scratch.",
             fontSize = 11.5.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -100,9 +101,19 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
             while (true) {
                 status = GitCommands.status(context, project)
                 if (showDiff) diff = GitCommands.diff(context, project)
-                delay(if (showDiff) 6000 else 4000)
+                // Each pass is a PRoot fork. On the output tab the only consumer is the
+                // branch line in the header, which does not need refreshing every four
+                // seconds while an agent is busy forking things of its own.
+                delay(if (showDiff) 4000 else 15000)
             }
         }
+    }
+
+    // Asked once per visit to the diff tab: commits made before signing in to GitHub are
+    // otherwise authored as setup's placeholder, which nobody notices until it is pushed.
+    var identity by remember { mutableStateOf<GitCommands.Identity?>(null) }
+    LaunchedEffect(showDiff) {
+        if (showDiff) identity = GitCommands.identity(context)
     }
 
     ScreenSurface {
@@ -219,7 +230,19 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
             )
         }
 
-        if (showDiff) {
+        if (showDiff && identity?.isPlaceholder == true) {
+            IdentityBar(
+                onSave = { name, email ->
+                    busy = "Saving..."
+                    scope.launch {
+                        val ok = GitCommands.setIdentity(app, name, email)
+                        busy = null
+                        result = if (ok) "Commits will be authored as $name" else "Could not save"
+                        if (ok) identity = GitCommands.Identity(name, email)
+                    }
+                },
+            )
+        } else if (showDiff) {
             CommitBar(
                 message = commitMsg,
                 onMessage = { commitMsg = it },
@@ -234,9 +257,12 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                     // picks the truth back up on return.
                     val work = AppScope.start { GitCommands.commitAll(app, project, text) }
                     scope.launch {
-                        result = work.await()
+                        val outcome = work.await()
+                        result = outcome
                         busy = null
-                        commitMsg = ""
+                        // Kept on failure: retyping a message on a phone keyboard because
+                        // a hook or an empty tree refused it is not a fair price.
+                        if (outcome.startsWith("Committed")) commitMsg = ""
                         refresh++
                     }
                 },
@@ -376,6 +402,48 @@ private fun CommitBar(
             TextButton(enabled = enabled, onClick = onPush) { Text("Push") }
             TextButton(enabled = enabled, onClick = onPull) { Text("Pull") }
         }
+    }
+}
+
+/**
+ * Who you are, before the first commit. Shown in place of the commit bar while git still
+ * has setup's placeholder; signing in to GitHub fills it in automatically instead.
+ */
+@Composable
+private fun IdentityBar(onSave: (String, String) -> Unit) {
+    var name by remember { mutableStateOf("") }
+    var email by remember { mutableStateOf("") }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            "Who should commits be from? Signing in to GitHub (settings) sets this for you.",
+            fontSize = 11.5.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            singleLine = true,
+            label = { Text("name", fontSize = 12.sp) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = email,
+            onValueChange = { email = it },
+            singleLine = true,
+            label = { Text("email", fontSize = 12.sp) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            enabled = name.isNotBlank() && '@' in email,
+            onClick = { onSave(name.trim(), email.trim()) },
+        ) { Text("Save") }
     }
 }
 

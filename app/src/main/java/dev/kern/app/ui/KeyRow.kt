@@ -20,6 +20,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -55,6 +57,25 @@ fun KeyRow() {
         ModifierKeys.clear()
     }
 
+    fun ctrlKey(code: Int) {
+        ModifierKeys.ctrl = true
+        key(code)
+    }
+
+    /** A macro types its text; a newline in it is Enter, sent as a key so both surfaces see one. */
+    fun macro(text: String) {
+        text.split('\n').forEachIndexed { i, part ->
+            if (i > 0) key(KeyEvent.KEYCODE_ENTER)
+            if (part.isNotEmpty()) {
+                if (TerminalSessions.hasFocus()) TerminalSessions.write(part) else part.forEach(::char)
+            }
+        }
+        ModifierKeys.clear()
+    }
+
+    val context = LocalContext.current
+    val layout by KeyLayout.keys(context).collectAsStateWithLifecycle()
+
     Surface(color = MaterialTheme.colorScheme.surface) {
         Row(
             modifier = Modifier
@@ -62,33 +83,36 @@ fun KeyRow() {
                 .horizontalScroll(rememberScrollState())
                 .padding(horizontal = 4.dp, vertical = 2.dp),
         ) {
-            // Explicit IME control: the guaranteed way in, when Monaco will not ask.
-            Key("⌨") { focusedInputView()?.toggleIme() }
-            Key("esc") { key(KeyEvent.KEYCODE_ESCAPE) }
-            Key("tab") { key(KeyEvent.KEYCODE_TAB) }
-            Sticky("ctrl", ModifierKeys.ctrl) { ModifierKeys.ctrl = !ModifierKeys.ctrl }
-            Sticky("alt", ModifierKeys.alt) { ModifierKeys.alt = !ModifierKeys.alt }
-            Sticky("shift", ModifierKeys.shift) { ModifierKeys.shift = !ModifierKeys.shift }
-            Key("←") { key(KeyEvent.KEYCODE_DPAD_LEFT) }
-            Key("↓") { key(KeyEvent.KEYCODE_DPAD_DOWN) }
-            Key("↑") { key(KeyEvent.KEYCODE_DPAD_UP) }
-            Key("→") { key(KeyEvent.KEYCODE_DPAD_RIGHT) }
-            Key("home") { key(KeyEvent.KEYCODE_MOVE_HOME) }
-            Key("end") { key(KeyEvent.KEYCODE_MOVE_END) }
-            Key("pgup") { key(KeyEvent.KEYCODE_PAGE_UP) }
-            Key("pgdn") { key(KeyEvent.KEYCODE_PAGE_DOWN) }
-            Key("^C") {
-                ModifierKeys.ctrl = true
-                key(KeyEvent.KEYCODE_C)
+            (layout ?: KeyLayout.DEFAULT).forEach { id ->
+                val label = KeyLayout.label(id)
+                when (id) {
+                    // Explicit IME control: the guaranteed way in, when Monaco will not ask.
+                    "kbd" -> Key(label) { focusedInputView()?.toggleIme() }
+                    "esc" -> Key(label) { key(KeyEvent.KEYCODE_ESCAPE) }
+                    "tab" -> Key(label) { key(KeyEvent.KEYCODE_TAB) }
+                    "ctrl" -> Sticky(label, ModifierKeys.ctrl) { ModifierKeys.ctrl = !ModifierKeys.ctrl }
+                    "alt" -> Sticky(label, ModifierKeys.alt) { ModifierKeys.alt = !ModifierKeys.alt }
+                    "shift" -> Sticky(label, ModifierKeys.shift) { ModifierKeys.shift = !ModifierKeys.shift }
+                    "left" -> Key(label) { key(KeyEvent.KEYCODE_DPAD_LEFT) }
+                    "down" -> Key(label) { key(KeyEvent.KEYCODE_DPAD_DOWN) }
+                    "up" -> Key(label) { key(KeyEvent.KEYCODE_DPAD_UP) }
+                    "right" -> Key(label) { key(KeyEvent.KEYCODE_DPAD_RIGHT) }
+                    "home" -> Key(label) { key(KeyEvent.KEYCODE_MOVE_HOME) }
+                    "end" -> Key(label) { key(KeyEvent.KEYCODE_MOVE_END) }
+                    "pgup" -> Key(label) { key(KeyEvent.KEYCODE_PAGE_UP) }
+                    "pgdn" -> Key(label) { key(KeyEvent.KEYCODE_PAGE_DOWN) }
+                    "ctrl-c" -> Key(label) { ctrlKey(KeyEvent.KEYCODE_C) }
+                    "ctrl-d" -> Key(label) { ctrlKey(KeyEvent.KEYCODE_D) }
+                    "ctrl-z" -> Key(label) { ctrlKey(KeyEvent.KEYCODE_Z) }
+                    "ctrl-l" -> Key(label) { ctrlKey(KeyEvent.KEYCODE_L) }
+                    "save" -> Key(label) { WorkbenchWebView.Commands.save(); ModifierKeys.clear() }
+                    "find" -> Key(label) { WorkbenchWebView.Commands.find(); ModifierKeys.clear() }
+                    else -> when {
+                        id.startsWith("m:") -> Key(label) { macro(id.removePrefix("m:")) }
+                        id.length == 1 -> Key(label) { char(id[0]) }
+                    }
+                }
             }
-            Key("^D") {
-                ModifierKeys.ctrl = true
-                key(KeyEvent.KEYCODE_D)
-            }
-            Key("save") { WorkbenchWebView.Commands.save(); ModifierKeys.clear() }
-            Key("find") { WorkbenchWebView.Commands.find(); ModifierKeys.clear() }
-
-            "|/\\-_=+;:'\"`{}[]()<>$#%&*!?~^@".forEach { c -> Key(c.toString()) { char(c) } }
         }
     }
 }

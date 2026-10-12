@@ -63,6 +63,9 @@ class SessionService : Service() {
         /** How often the server is asked whether it is alive. */
         private const val HEALTH_TICK_MS = 15_000L
 
+        /** How often the agent's screen is read for a question. No fork; just memory. */
+        private const val AGENT_TICK_MS = 3_000L
+
         /**
          * How long a *restarted* server gets to answer, against [START_TIMEOUT_MS] for a
          * cold one. Shorter because everything slow about the first start - unpacking,
@@ -90,6 +93,7 @@ class SessionService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var superviseJob: Job? = null
+    private var agentWatch: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -149,20 +153,21 @@ class SessionService : Service() {
         _state.value = SessionState.Healthy
         updateNotification(running())
 
-        var watch = RestartPolicy.State()
-        var wasAwaiting = false
-        var agentTick = 0
-        while (scope.isActive) {
-            delay(HEALTH_TICK_MS)
-
-            // Pocket workflow (M5): while a session is running, watch for the agent
-            // stopping to ask something and raise a notification so the phone can be in
-            // a pocket. Polled every other health tick - cheap, and tool-agnostic.
-            //
-            // Reads the rendered screen rather than a byte stream, because a TUI agent
-            // repaints in place: the last thing written and the last thing shown are
-            // routinely different, and only the second one is the question.
-            if (++agentTick % 2 == 0) {
+        // Pocket workflow (M5): while a session is running, watch for the agent stopping to
+        // ask something and raise a notification so the phone can be in a pocket.
+        //
+        // Reads the rendered screen rather than a byte stream, because a TUI agent repaints
+        // in place: the last thing written and the last thing shown are routinely
+        // different, and only the second one is the question. Its own loop, not the health
+        // tick's: this is an in-memory read with no fork behind it, and riding every other
+        // health tick made "agent needs you" arrive up to half a minute after it did.
+        // Held and replaced, because Retry restarts supervise() and each pass would
+        // otherwise leave another watcher behind, each raising its own notification.
+        agentWatch?.cancel()
+        agentWatch = scope.launch {
+            var wasAwaiting = false
+            while (isActive) {
+                delay(AGENT_TICK_MS)
                 runCatching {
                     val screen = TerminalSessions.agentScreen()
                     val awaiting = screen != null && AgentPrompt.awaitingInput(screen)
@@ -175,6 +180,11 @@ class SessionService : Service() {
                     wasAwaiting = awaiting
                 }
             }
+        }
+
+        var watch = RestartPolicy.State()
+        while (scope.isActive) {
+            delay(HEALTH_TICK_MS)
 
             val wasDegraded = watch != RestartPolicy.State()
             val (nextWatch, decision) = RestartPolicy.next(watch, isHealthy())
@@ -300,6 +310,7 @@ class SessionService : Service() {
 
     private fun shutdown() {
         superviseJob?.cancel()
+        agentWatch?.cancel()
         CodeServer.stop()
         _state.value = SessionState.Idle
         releaseWakeLock()

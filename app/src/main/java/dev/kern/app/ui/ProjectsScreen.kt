@@ -1,5 +1,6 @@
 package dev.kern.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -78,8 +79,11 @@ fun ProjectsScreen(
     // On by default: nearly every project wants one eventually, and starting a repo at
     // creation is the difference between having history and wishing you had.
     var initGit by remember { mutableStateOf(true) }
+    var shallow by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var reloadToken by remember { mutableIntStateOf(0) }
+    // Non-null while the folder browser is up, holding the directory it shows.
+    var browsePath by remember { mutableStateOf<String?>(null) }
 
     /** One guest command at a time; every action writes to the same directory. */
     val busy = cloning || creating || deleting
@@ -115,6 +119,17 @@ fun ProjectsScreen(
                 is ProjectRepository.Outcome.Failure -> message = outcome.message
             }
         }
+    }
+
+    browsePath?.let { path ->
+        BackHandler { browsePath = parentOf(path) }
+        FolderBrowser(
+            path = path,
+            onNavigate = { browsePath = it },
+            onOpen = { open(it) },
+            onClose = { browsePath = null },
+        )
+        return
     }
 
     ScreenSurface {
@@ -223,6 +238,7 @@ fun ProjectsScreen(
                             val outcome = ProjectRepository.clone(
                                 app,
                                 url,
+                                shallow = shallow,
                                 onProgress = { cloneProgress.value = it },
                             )
                             // Opening the result travels with the work, not with the
@@ -264,6 +280,19 @@ fun ProjectsScreen(
                         }
                     },
                 ) { Text(if (cloning) "Cloning..." else "Clone") }
+
+                if (!cloning) {
+                    Checkbox(
+                        checked = shallow,
+                        onCheckedChange = { shallow = it },
+                        enabled = !busy,
+                    )
+                    Text(
+                        "shallow",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
 
                 if (cloning) {
                     TextButton(
@@ -396,6 +425,97 @@ fun ProjectsScreen(
                     isRepo = false,
                     onClick = { open(ProjectRepository.HOME) },
                 )
+            }
+            // "Open any folder" was promised and missing: only ~/projects' direct children
+            // could be opened, so a package inside a monorepo, or anything outside
+            // ~/projects, could not be a workspace at all.
+            item {
+                FolderRow(
+                    name = "browse…",
+                    subtitle = "open any folder",
+                    isRepo = false,
+                    onClick = { browsePath = ProjectRepository.HOME },
+                )
+            }
+            item { Spacer(Modifier.height(24.dp)) }
+        }
+    }
+}
+
+/** `/a/b` → `/a`, `/a` → `/`, and `/` stays itself (null means "leave the browser"). */
+private fun parentOf(path: String): String? =
+    if (path == "/") null else path.substringBeforeLast('/').ifEmpty { "/" }
+
+/**
+ * Walk the guest's filesystem and open any directory as the workspace. One level at a
+ * time, through the same one-round-trip listing Projects uses.
+ */
+@Composable
+private fun FolderBrowser(
+    path: String,
+    onNavigate: (String) -> Unit,
+    onOpen: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    val context = LocalContext.current
+    var entries by remember { mutableStateOf<List<ProjectRepository.Entry>?>(null) }
+    LaunchedEffect(path) {
+        entries = null
+        entries = ProjectRepository.list(context, path)
+    }
+
+    ScreenSurface {
+        ScreenHeader("browse") {
+            HeaderAction("close", onClose)
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                path,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.weight(1f),
+            )
+            Button(onClick = { onOpen(path) }) { Text("Open here") }
+        }
+
+        LazyColumn(modifier = Modifier.fillMaxSize()) {
+            parentOf(path)?.let { parent ->
+                item {
+                    FolderRow(name = "..", subtitle = parent, isRepo = false, onClick = { onNavigate(parent) })
+                }
+            }
+            val list = entries
+            when {
+                list == null -> item {
+                    Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                list.isEmpty() -> item {
+                    Text(
+                        "No folders in here.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    )
+                }
+                else -> items(list) { entry ->
+                    FolderRow(
+                        name = entry.name,
+                        subtitle = entry.path,
+                        isRepo = entry.isRepo,
+                        onClick = { onNavigate(entry.path) },
+                    )
+                }
             }
             item { Spacer(Modifier.height(24.dp)) }
         }

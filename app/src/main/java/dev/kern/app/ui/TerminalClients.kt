@@ -113,7 +113,12 @@ internal class KernTerminalSessionClient(
         view.onScreenUpdated()
     }
 
-    override fun onTitleChanged(changedSession: TerminalSession) {}
+    // tmux reports what is running as the terminal title (see LinuxRuntime.spawnShell),
+    // which is what lets a tab say "vim · api" instead of "sh 2".
+    override fun onTitleChanged(changedSession: TerminalSession) {
+        val title = changedSession.title
+        view.post { TerminalSessions.setTitle(id, title) }
+    }
 
     override fun onSessionFinished(finishedSession: TerminalSession) {
         // The status and the last thing on screen, because a shell that dies at birth

@@ -57,6 +57,24 @@ class MainActivity : ComponentActivity() {
                 AppRoot()
             }
         }
+
+        // Only a fresh launch: a recreation re-delivers the original intent, and the file
+        // it carried was already imported the first time round.
+        if (savedInstanceState == null) importFrom(intent)
+    }
+
+    /** singleTask: a share while Kern is already open arrives here, not in onCreate. */
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        importFrom(intent)
+    }
+
+    private fun importFrom(intent: android.content.Intent?) {
+        if (!dev.kern.app.runtime.IncomingFiles.accepts(intent)) return
+        val app = applicationContext
+        dev.kern.app.runtime.AppScope.start {
+            dev.kern.app.runtime.IncomingFiles.handle(app, intent!!)
+        }
     }
 
     /**

@@ -53,7 +53,7 @@ object GuestConfig {
             git config --global --get user.name >/dev/null 2>&1 || \
               git config --global user.name Kern
             git config --global --get user.email >/dev/null 2>&1 || \
-              git config --global user.email kern@localhost
+              git config --global user.email ${GitCommands.PLACEHOLDER_EMAIL}
             """.trimIndent(),
             timeoutMs = 60_000,
         )

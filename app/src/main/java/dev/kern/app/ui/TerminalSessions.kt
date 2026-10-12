@@ -182,7 +182,22 @@ object TerminalSessions {
     private val _focused = MutableStateFlow(false)
     val focused: StateFlow<Boolean> = _focused.asStateFlow()
 
+    /**
+     * Live titles by session id, from the terminal's own title escape. A separate flow
+     * because [Entry] is compared by identity: changing a field on one would republish a
+     * list equal to the last, and StateFlow would drop it.
+     */
+    private val _titles = MutableStateFlow<Map<Int, String>>(emptyMap())
+    val titles: StateFlow<Map<Int, String>> = _titles.asStateFlow()
+
+    fun setTitle(id: Int, title: String?) {
+        if (entries.none { it.id == id }) return
+        val clean = title?.trim()?.take(32)
+        _titles.value = if (clean.isNullOrEmpty()) _titles.value - id else _titles.value + (id to clean)
+    }
+
     private fun publish() {
+        _titles.value = _titles.value.filterKeys { id -> entries.any { it.id == id } }
         _sessions.value = entries.toList()
     }
 
@@ -269,7 +284,11 @@ object TerminalSessions {
      * stream of bytes is the only thing that works for a TUI: it repaints in place, so
      * the last thing *written* and the last thing *shown* are frequently different.
      */
-    fun agentScreen(): String? = agent()?.let { entry ->
+    //
+    // Called from the session service's IO thread, so it reads the published snapshot, an
+    // immutable copy, not [entries]: iterating that while the main thread opened or closed
+    // a tab threw, runCatching swallowed it, and the notification was silently skipped.
+    fun agentScreen(): String? = _sessions.value.firstOrNull { it.kind == Kind.Agent }?.let { entry ->
         runCatching { entry.session.emulator?.screen?.transcriptText }.getOrNull()
     }
 
@@ -465,6 +484,12 @@ object TerminalSessions {
         current()?.toggleIme()
     }
 
+    // applyDimension, not sp * scaledDensity: Android 14 scales large fonts non-linearly,
+    // and only the platform's own conversion knows the curve.
     private fun spToPx(context: Context, sp: Float): Int =
-        (sp * context.resources.displayMetrics.scaledDensity).toInt()
+        android.util.TypedValue.applyDimension(
+            android.util.TypedValue.COMPLEX_UNIT_SP,
+            sp,
+            context.resources.displayMetrics,
+        ).toInt()
 }

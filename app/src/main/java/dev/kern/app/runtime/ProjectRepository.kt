@@ -1,6 +1,7 @@
 package dev.kern.app.runtime
 
 import android.content.Context
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -96,6 +97,12 @@ object ProjectRepository {
         context: Context,
         url: String,
         nameOverride: String? = null,
+        /**
+         * `--depth 1`. Off by default: a shallow clone has one commit of history, so the
+         * Git panel, blame and `git log` all show nothing - which reads as a broken repo.
+         * Offered for the huge repository on a slow connection, where it is worth it.
+         */
+        shallow: Boolean = false,
         onProgress: ((String) -> Unit)? = null,
     ): Outcome {
         val name = sanitise(nameOverride?.takeIf { it.isNotBlank() } ?: deriveName(url))
@@ -122,7 +129,7 @@ object ProjectRepository {
         // terminal, and both streams here are files the runtime tails.
         val script = """
             command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }
-            git clone --progress --depth 1 ${sq(url)} ${sq(target)} 2>&1
+            git clone --progress ${if (shallow) "--depth 1 " else ""}${sq(url)} ${sq(target)} 2>&1
         """.trimIndent()
 
         // Clones can be slow on mobile networks; give them room.
@@ -146,7 +153,10 @@ object ProjectRepository {
                 // git clears up after itself when it fails cleanly, but not when the
                 // failure lands mid-checkout, and never when it was killed.
                 removePartial(context, target)
-                Outcome.Failure(result.lastLine() ?: "git clone failed (exit ${result.exitCode})")
+                Outcome.Failure(
+                    GitCommands.explain(result.lastLine())
+                        ?: "git clone failed (exit ${result.exitCode})",
+                )
             }
         }
     }
@@ -276,8 +286,12 @@ object ProjectRepository {
 
     fun currentFolder(context: Context): String {
         val saved = Prefs.of(context).getString(Prefs.KEY_CURRENT_FOLDER, null)
-        // Paths from before the move to an in-app Linux no longer exist; falling back
-        // avoids the workbench opening on a missing workspace.
-        return saved?.takeIf { it.startsWith("/root") } ?: HOME
+        // Any folder that still exists in the guest, now that any folder can be opened. The
+        // test used to be "starts with /root", which also caught paths from before the move
+        // to an in-app Linux - existence catches those too, and a folder deleted from the
+        // terminal besides, without reopening a workbench on a workspace that is gone.
+        return saved
+            ?.takeIf { it.startsWith("/") && File(LinuxRuntime.rootfsDir(context), it).isDirectory }
+            ?: HOME
     }
 }

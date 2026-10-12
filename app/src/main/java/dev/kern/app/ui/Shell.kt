@@ -124,6 +124,17 @@ fun Shell(state: SessionState) {
         WorkbenchWebView.Commands.escape()
     }
 
+    // A file shared to Kern opens in the editor, so the editor is where to be. Skipping
+    // the initial value is what stops every recomposition after one share doing this.
+    val arrivals by dev.kern.app.runtime.IncomingFiles.arrivals.collectAsStateWithLifecycle()
+    var seenArrivals by rememberSaveable { mutableStateOf(arrivals) }
+    LaunchedEffect(arrivals) {
+        if (arrivals != seenArrivals) {
+            seenArrivals = arrivals
+            destination = ShellDestination.Editor
+        }
+    }
+
     // M5a: record where session time actually goes, so decision D12 can be settled with
     // a number instead of a hunch.
     val context = LocalContext.current

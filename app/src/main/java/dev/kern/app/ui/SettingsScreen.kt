@@ -60,6 +60,9 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
             SectionTitle("Agent")
             AgentSection()
 
+            SectionTitle("Key row")
+            KeyRowSection()
+
             SectionTitle("Linux")
             when (val name = guestOs) {
                 null -> Text(

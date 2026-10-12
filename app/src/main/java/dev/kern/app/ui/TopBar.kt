@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
@@ -45,6 +46,7 @@ internal fun TopBar(
     onQuit: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    var confirmQuit by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val agentCommand by AgentRepository.commandFlow(context).collectAsStateWithLifecycle()
 
@@ -145,9 +147,30 @@ internal fun TopBar(
                 MenuAction("settings", { menuOpen = false }) {
                     onNavigate(ShellDestination.Settings)
                 }
-                MenuAction("quit", { menuOpen = false }, onQuit)
+                MenuAction("quit", { menuOpen = false }) { confirmQuit = true }
             }
         }
+    }
+
+    // One stray tap in the overflow used to end every shell and whatever was building in
+    // them. tmux does not survive this - it is a child of the guest that quit stops.
+    if (confirmQuit) {
+        AlertDialog(
+            onDismissRequest = { confirmQuit = false },
+            title = { Text("Quit Kern?") },
+            text = {
+                Text(
+                    "This stops the Linux environment. Anything running in a terminal " +
+                        "stops with it. Saved files are kept.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmQuit = false; onQuit() }) { Text("Quit") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmQuit = false }) { Text("Cancel") }
+            },
+        )
     }
 }
 

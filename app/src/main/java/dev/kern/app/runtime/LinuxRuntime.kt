@@ -303,8 +303,16 @@ object LinuxRuntime {
             // exited, so a command that leaves anything running in the background would
             // block forever — and a blocking native wait cannot be cancelled by a
             // coroutine timeout.
+            //
+            // stdin is detached and git's prompts are off because this runs on a pty that
+            // is its controlling terminal: a private clone while signed out, or an ssh
+            // remote's host-key question, otherwise sat on a prompt nobody could see until
+            // the whole timeout ran out - ten minutes for a clone - and then reported it
+            // as "took too long".
             val wrapper =
-                "bash /tmp/fc-$id.sh > /tmp/fc-$id.out 2> /tmp/fc-$id.err; " +
+                "export GIT_TERMINAL_PROMPT=0 " +
+                    "GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new'; " +
+                    "bash /tmp/fc-$id.sh < /dev/null > /tmp/fc-$id.out 2> /tmp/fc-$id.err; " +
                     "echo \$? > /tmp/fc-$id.rc"
 
             val process = spawnInGuest(
@@ -485,8 +493,17 @@ object LinuxRuntime {
             if (passwd.isFile && passwd.readLines().none { it.startsWith("kernhost:") }) {
                 passwd.appendText("kernhost:x:$uid:$uid::/root:/bin/bash\n")
             }
-            File(rootfsDir(context), "etc/tmux.conf")
-                .writeText("server-access -a kernhost\n")
+            // Appended when missing rather than written whole on every spawn, which wiped
+            // anything else put in the system-wide conf each time a tab opened.
+            val conf = File(rootfsDir(context), "etc/tmux.conf")
+            val existing = if (conf.isFile) conf.readLines().map { it.trim() } else emptyList()
+            listOf(
+                "server-access -a kernhost",
+                // The status bar is off, so the native tab is the only place left to say
+                // what a shell is doing. tmux sends it as the outer terminal's title.
+                "set -g set-titles on",
+                "set -g set-titles-string '#{pane_current_command} · #{b:pane_current_path}'",
+            ).filter { it !in existing }.forEach { conf.appendText("$it\n") }
         }
 
         return spawnInGuest(

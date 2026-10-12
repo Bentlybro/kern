@@ -45,6 +45,7 @@ fun TerminalPane(modifier: Modifier = Modifier) {
     val activeId by TerminalSessions.activeId.collectAsStateWithLifecycle()
     val detached by TerminalSessions.detached.collectAsStateWithLifecycle()
     val stuck by TerminalSessions.shellStuck.collectAsStateWithLifecycle()
+    val titles by TerminalSessions.titles.collectAsStateWithLifecycle()
 
     val shells = sessions.filter { it.kind == TerminalSessions.Kind.Shell }
     val active = shells.firstOrNull { it.id == activeId } ?: shells.firstOrNull()
@@ -71,7 +72,7 @@ fun TerminalPane(modifier: Modifier = Modifier) {
             ) {
                 shells.forEach { shell ->
                     Tab(
-                        title = shell.title,
+                        title = titles[shell.id] ?: shell.title,
                         selected = shell.id == active?.id,
                         closable = shells.size > 1,
                         onSelect = { TerminalSessions.select(shell.id) },
@@ -140,13 +141,6 @@ internal fun TerminalSurface(entry: TerminalSessions.Entry, modifier: Modifier =
             },
         )
     }
-}
-
-/** A new shell. Lives in the top bar's overflow, next to the terminal toggle. */
-@Composable
-fun rememberNewShell(): () -> Unit {
-    val context = LocalContext.current
-    return { TerminalSessions.openShell(context) }
 }
 
 @Composable

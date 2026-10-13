@@ -142,7 +142,7 @@ internal fun TopBar(
                 MenuAction("redo", { menuOpen = false }) { InputTargets.redo(context) }
                 MenuAction("find", { menuOpen = false }) { InputTargets.find(context) }
                 // Python only for now: jedi answers it (see PythonIntel).
-                if (native && NativeEditor.active.value?.endsWith(".py") == true) {
+                if (native && activeFile?.endsWith(".py") == true) {
                     MenuAction("go to definition", { menuOpen = false }) {
                         AppScope.start { NativeEditor.goToDefinition(context.applicationContext) }
                     }

@@ -130,21 +130,43 @@ object GitCommands {
             timeoutMs = 20_000,
         )?.ok == true
 
-    suspend fun commitAll(context: Context, projectPath: String, message: String): String {
-        val script = """
-            set -o pipefail
-            cd ${sq(projectPath)} 2>/dev/null || exit 1
-            command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }
-            git add -A 2>&1
-            git commit -m ${sq(message)} 2>&1
-        """.trimIndent()
-        val r = LinuxRuntime.run(context, script, timeoutMs = 60_000)
-            ?: return "Timed out"
-        // Without this the cockpit's status text becomes "bash: line 3: git: command not found".
-        if (r.exitCode == 3) return "git is not installed yet — check Status."
-        if (r.ok) return "Committed — ${r.lastLine() ?: "done"}"
-        return "Commit failed: ${reason(r)}"
+    /**
+     * The guard every git script starts with: be in the project, and have git. Exit 3 is
+     * reserved for "git is missing", which [GIT_MISSING] turns into words - without it the
+     * status text became "bash: line 3: git: command not found".
+     */
+    internal const val REQUIRE_GIT = "command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }"
+    internal const val GIT_MISSING_EXIT = 3
+    const val GIT_MISSING = "git is not installed yet — check Status, it may still be setting up."
+
+    /**
+     * Run [commands] in [projectPath] and say how it went: [done] for a success with nothing
+     * to show, otherwise [verb] + " failed: " + the reason in words.
+     */
+    private suspend fun runGit(
+        context: Context,
+        projectPath: String,
+        commands: String,
+        verb: String,
+        done: String,
+        timeoutMs: Long = 120_000,
+        success: (LinuxRuntime.Result) -> String = { it.lastLine() ?: done },
+    ): String {
+        val script = "set -o pipefail\ncd ${sq(projectPath)} 2>/dev/null || exit 1\n" +
+            "$REQUIRE_GIT\n$commands"
+        val r = LinuxRuntime.run(context, script, timeoutMs = timeoutMs) ?: return "Timed out"
+        if (r.exitCode == GIT_MISSING_EXIT) return GIT_MISSING
+        if (r.ok) return success(r)
+        return "$verb failed: ${reason(r)}"
     }
+
+    suspend fun commitAll(context: Context, projectPath: String, message: String): String =
+        runGit(
+            context, projectPath,
+            "git add -A 2>&1\ngit commit -m ${sq(message)} 2>&1",
+            verb = "Commit", done = "done", timeoutMs = 60_000,
+            success = { "Committed — ${it.lastLine() ?: "done"}" },
+        )
 
     /**
      * Fast-forward only, deliberately. A merge stopped halfway on conflicts leaves the
@@ -153,29 +175,9 @@ object GitCommands {
      * this fails in one line, which the cockpit shows, and resolving belongs in the
      * terminal or the workbench.
      */
-    suspend fun pull(context: Context, projectPath: String): String {
-        val script = """
-            cd ${sq(projectPath)} 2>/dev/null || exit 1
-            command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }
-            git pull --ff-only 2>&1
-        """.trimIndent()
-        val r = LinuxRuntime.run(context, "set -o pipefail\n$script", timeoutMs = 120_000)
-            ?: return "Timed out"
-        if (r.exitCode == 3) return "git is not installed yet — check Status."
-        if (r.ok) return r.lastLine() ?: "Pulled"
-        return "Pull failed: ${reason(r)}"
-    }
+    suspend fun pull(context: Context, projectPath: String): String =
+        runGit(context, projectPath, "git pull --ff-only 2>&1", verb = "Pull", done = "Pulled")
 
-    suspend fun push(context: Context, projectPath: String): String {
-        val script = """
-            cd ${sq(projectPath)} 2>/dev/null || exit 1
-            command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }
-            git push 2>&1
-        """.trimIndent()
-        val r = LinuxRuntime.run(context, "set -o pipefail\n$script", timeoutMs = 120_000)
-            ?: return "Timed out"
-        if (r.exitCode == 3) return "git is not installed yet — check Status."
-        if (r.ok) return r.lastLine() ?: "Pushed"
-        return "Push failed: ${reason(r)}"
-    }
+    suspend fun push(context: Context, projectPath: String): String =
+        runGit(context, projectPath, "git push 2>&1", verb = "Push", done = "Pushed")
 }

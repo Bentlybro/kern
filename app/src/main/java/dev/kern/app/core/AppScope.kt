@@ -5,6 +5,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 
 /**
  * Where guest work runs when it has to finish whether or not the screen that asked for it
@@ -35,4 +36,15 @@ object AppScope {
      * `context.applicationContext` rather than the activity's - it runs for minutes.
      */
     fun <T> start(work: suspend () -> T): Deferred<T> = scope.async { work() }
+}
+
+/**
+ * [AppScope.start] plus the usual reporting half: [work] runs to completion on the app
+ * scope, and [report] runs in this (screen) scope with its result - or never, if the
+ * screen has gone. Every screen that starts guest work wants exactly this pair.
+ */
+fun <T> CoroutineScope.runDetached(work: suspend () -> T, report: (T) -> Unit): Deferred<T> {
+    val deferred = AppScope.start(work)
+    launch { report(deferred.await()) }
+    return deferred
 }

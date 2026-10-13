@@ -1,13 +1,11 @@
 package dev.kern.app.session
 
-import dev.kern.app.MainActivity
 import dev.kern.app.agent.AgentPrompt
 import dev.kern.app.core.Secrets
 import dev.kern.app.guest.GuestConfig
 import dev.kern.app.terminal.TerminalSessions
 import dev.kern.app.workbench.CodeServer
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
@@ -19,6 +17,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import dev.kern.app.R
+import dev.kern.app.core.Notifications
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.CoroutineScope
@@ -332,21 +331,9 @@ class SessionService : Service() {
 
     /** Separate, higher-importance channel so "agent needs you" actually buzzes. */
     private fun notifyAgent(title: String, text: String) {
-        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        nm.createNotificationChannel(
-            NotificationChannel(
-                AGENT_CHANNEL_ID,
-                "Agent attention",
-                NotificationManager.IMPORTANCE_HIGH,
-            ),
-        )
-        val openIntent = PendingIntent.getActivity(
-            this,
-            2,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE,
-        )
-        nm.notify(
+        Notifications.channel(this, AGENT_CHANNEL_ID, "Agent attention", NotificationManager.IMPORTANCE_HIGH)
+        val openIntent = Notifications.openApp(this, 2)
+        Notifications.manager(this).notify(
             NOTIF_AGENT_ID,
             Notification.Builder(this, AGENT_CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_chat)
@@ -360,13 +347,8 @@ class SessionService : Service() {
     }
 
     private fun goForeground(text: String) {
-        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        nm.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID,
-                getString(R.string.notif_channel_session),
-                NotificationManager.IMPORTANCE_LOW,
-            ),
+        Notifications.channel(
+            this, CHANNEL_ID, getString(R.string.notif_channel_session), NotificationManager.IMPORTANCE_LOW,
         )
         val notification = buildNotification(text)
         if (Build.VERSION.SDK_INT >= 34) {
@@ -381,17 +363,11 @@ class SessionService : Service() {
     }
 
     private fun updateNotification(text: String) {
-        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIF_ID, buildNotification(text))
+        Notifications.manager(this).notify(NOTIF_ID, buildNotification(text))
     }
 
     private fun buildNotification(text: String): Notification {
-        val openIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE,
-        )
+        val openIntent = Notifications.openApp(this, 0)
         val stopIntent = PendingIntent.getService(
             this,
             1,

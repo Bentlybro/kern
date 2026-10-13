@@ -93,7 +93,7 @@ class RootfsResolveTest {
         assertEquals(image(RELEASE), source.name)
         assertEquals(
             "the fallback must not borrow another series' digest",
-            RootfsInstaller.ROOTFS_FALLBACK_SHA256,
+            RootfsCatalog.ROOTFS_FALLBACK_SHA256,
             source.sha256,
         )
     }
@@ -113,7 +113,7 @@ class RootfsResolveTest {
         // install failing as "corrupted in transit", with nothing the user can do about it.
         val chosen = image("$RELEASE.2")
         val document = sums(image("$RELEASE.1"), chosen, image("$RELEASE.2", "amd64"))
-        val source = RootfsInstaller.selectRootfs(document)
+        val source = RootfsCatalog.selectRootfs(document)
         assertEquals(chosen, source.name)
         assertEquals(digestFor(chosen), source.sha256)
     }
@@ -126,7 +126,7 @@ class RootfsResolveTest {
         // verified install into an unverified one, and 400 MB went in unchecked.
         val source = resolve(null)
         assertEquals(image(RELEASE), source.name)
-        assertEquals(RootfsInstaller.ROOTFS_FALLBACK_SHA256, source.sha256)
+        assertEquals(RootfsCatalog.ROOTFS_FALLBACK_SHA256, source.sha256)
         assertFalse("the digest did not come from SHA256SUMS", source.fromSums)
     }
 
@@ -144,7 +144,7 @@ class RootfsResolveTest {
             sums(image("$NEXT_SERIES.1")),
         )
         for (document in documents) {
-            val source = RootfsInstaller.selectRootfs(document)
+            val source = RootfsCatalog.selectRootfs(document)
             assertTrue(
                 "unverifiable source from <$document>",
                 source.sha256.matches(Regex("[0-9a-f]{64}")),
@@ -169,11 +169,11 @@ class RootfsResolveTest {
         for (document in garbage) {
             // Not resolve(): its digest cross-check would read the near-miss lines above as
             // if they had been accepted.
-            val source = RootfsInstaller.selectRootfs(document)
+            val source = RootfsCatalog.selectRootfs(document)
             assertEquals("accepted <$document>", image(RELEASE), source.name)
             assertEquals(
                 "accepted <$document>",
-                RootfsInstaller.ROOTFS_FALLBACK_SHA256,
+                RootfsCatalog.ROOTFS_FALLBACK_SHA256,
                 source.sha256,
             )
         }
@@ -185,7 +185,7 @@ class RootfsResolveTest {
         // by a character nobody would think to preserve.
         val name = image("$RELEASE.1")
         for (document in listOf("${digestFor(name)} *$name", "${digestFor(name)}  $name")) {
-            assertEquals(name, RootfsInstaller.selectRootfs(document).name)
+            assertEquals(name, RootfsCatalog.selectRootfs(document).name)
         }
     }
 
@@ -195,7 +195,7 @@ class RootfsResolveTest {
         // A stray CR left on the end of each line must not cost the whole verification.
         val name = image("$RELEASE.1")
         val document = sums(name).replace("\n", "\r\n")
-        val source = RootfsInstaller.selectRootfs(document)
+        val source = RootfsCatalog.selectRootfs(document)
         assertEquals(name, source.name)
         assertEquals(digestFor(name), source.sha256)
     }
@@ -205,7 +205,7 @@ class RootfsResolveTest {
         // The digest is text from a third party, and download() documents the hex it is
         // given as lowercase.
         val name = image("$RELEASE.1")
-        val source = RootfsInstaller.selectRootfs("${digestFor(name).uppercase()} *$name")
+        val source = RootfsCatalog.selectRootfs("${digestFor(name).uppercase()} *$name")
         assertEquals(name, source.name)
         assertEquals(digestFor(name), source.sha256)
     }
@@ -246,11 +246,11 @@ class RootfsResolveTest {
         Integer.toHexString(file.hashCode()).padStart(8, '0').repeat(8)
 
     /**
-     * [RootfsInstaller.selectRootfs], with the two invariants every caller depends on
+     * [RootfsCatalog.selectRootfs], with the two invariants every caller depends on
      * checked on the way through.
      */
-    private fun resolve(document: String?): RootfsInstaller.RootfsSource {
-        val source = RootfsInstaller.selectRootfs(document)
+    private fun resolve(document: String?): RootfsCatalog.RootfsSource {
+        val source = RootfsCatalog.selectRootfs(document)
         // The URL is built from the name rather than returned with it, and only the name is
         // ever shown, so a mismatch here downloads one image while reporting another.
         assertEquals(

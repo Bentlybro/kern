@@ -1,9 +1,8 @@
 package dev.kern.app.ui
 
 import dev.kern.app.guest.LinuxRuntime
+import dev.kern.app.core.Clipboard
 import dev.kern.app.guest.RootfsInstaller
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
 import android.os.StatFs
@@ -71,12 +70,7 @@ object Diagnostics {
     }
 
     fun copy(context: Context): Boolean {
-        // The platform clipboard rather than Compose's: LocalClipboardManager is
-        // deprecated, and this is the same call the terminal already makes.
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-            ?: return false
-        clipboard.setPrimaryClip(ClipData.newPlainText("Kern diagnostics", build(context)))
-        return true
+        return Clipboard.copy(context, "Kern diagnostics", build(context))
     }
 
     /**

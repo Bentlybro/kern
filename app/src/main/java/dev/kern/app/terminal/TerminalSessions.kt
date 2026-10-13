@@ -1,7 +1,6 @@
 package dev.kern.app.terminal
 
 import dev.kern.app.core.Prefs
-import dev.kern.app.guest.LinuxRuntime
 import dev.kern.app.input.imeVisible
 import dev.kern.app.input.toggleIme
 import dev.kern.app.ui.Shell
@@ -331,9 +330,9 @@ object TerminalSessions {
                     // One tmux session per slot, or they all attach to the same one - and
                     // per slot rather than per view, so a respawned or reopened tab comes
                     // back to the session it had instead of naming a brand new one.
-                    LinuxRuntime.spawnShell(appContext, columns, rows, "kern-$slot")
+                    GuestShells.spawnShell(appContext, columns, rows, "kern-$slot")
                 } else {
-                    LinuxRuntime.spawnCommand(appContext, command, columns, rows)
+                    GuestShells.spawnCommand(appContext, command, columns, rows)
                 }
             },
             2000,

@@ -270,7 +270,7 @@ object WorkbenchWebView {
     /**
      * Switch the workbench to a different workspace folder.
      *
-     * Callable from any thread: clone and create finish on [dev.kern.app.core.AppScope]'s
+     * Callable from any thread: clone and create finish on [AppScope]'s
      * IO dispatcher, and the switch is their consequence, so it has to be safe to issue from
      * there. A WebView only accepts calls on the main thread, hence the hop — the process
      * main looper rather than `view.post`, because a detached view (the editor is not on

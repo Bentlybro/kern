@@ -72,7 +72,7 @@ object ProjectRepository {
         val script = """
             mkdir -p ${sq(PROJECTS_DIR)}
             if [ -e ${sq(target)} ]; then echo EXISTS >&2; exit 2; fi
-            ${if (initGit) "command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }" else ""}
+            ${if (initGit) GitCommands.REQUIRE_GIT else ""}
             mkdir -p ${sq(target)} || exit 1
             ${if (initGit) "cd ${sq(target)} && git init -q 2>&1 || { rmdir ${sq(target)} 2>/dev/null; exit 4; }" else ""}
         """.trimIndent()
@@ -82,9 +82,7 @@ object ProjectRepository {
 
         return when {
             result.exitCode == 2 -> Outcome.Failure("A folder named \"$safe\" already exists")
-            result.exitCode == 3 -> Outcome.Failure(
-                "git is not installed yet — check Status, it may still be setting up.",
-            )
+            result.exitCode == GitCommands.GIT_MISSING_EXIT -> Outcome.Failure(GitCommands.GIT_MISSING)
             result.exitCode == 4 -> Outcome.Failure("Created the folder, but git init failed")
             result.ok -> Outcome.Success(target, safe)
             else -> Outcome.Failure(result.lastLine() ?: "Could not create the folder")
@@ -133,7 +131,7 @@ object ProjectRepository {
         // --progress or git says nothing at all: it only draws progress when stderr is a
         // terminal, and both streams here are files the runtime tails.
         val script = """
-            command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }
+            ${GitCommands.REQUIRE_GIT}
             git clone --progress ${if (shallow) "--depth 1 " else ""}${sq(url)} ${sq(target)} 2>&1
         """.trimIndent()
 
@@ -150,9 +148,7 @@ object ProjectRepository {
         }
 
         return when {
-            result.exitCode == 3 -> Outcome.Failure(
-                "git is not installed yet — check Status, it may still be setting up.",
-            )
+            result.exitCode == GitCommands.GIT_MISSING_EXIT -> Outcome.Failure(GitCommands.GIT_MISSING)
             result.ok -> Outcome.Success(target, name)
             else -> {
                 // git clears up after itself when it fails cleanly, but not when the

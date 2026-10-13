@@ -1,6 +1,6 @@
 package dev.kern.app.settings
 
-import dev.kern.app.core.AppScope
+import dev.kern.app.core.runDetached
 import dev.kern.app.guest.RootfsInstaller
 import dev.kern.app.guest.StorageManager
 import dev.kern.app.projects.ProjectBackup
@@ -77,9 +77,8 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
     fun runBackup(label: String, block: suspend () -> String) {
         busy = label
         backupStatus = label
-        val work = AppScope.start { block() }
-        scope.launch {
-            backupStatus = work.await()
+        scope.runDetached(block) {
+            backupStatus = it
             busy = null
             reload++
         }
@@ -165,9 +164,8 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
                 busy = "Cleaning up..."
                 // On the app scope for the same reason as Repair beside it: closing
                 // settings used to kill the guest command partway through.
-                val work = AppScope.start { StorageManager.cleanUp(app) }
-                scope.launch {
-                    result = work.await()
+                scope.runDetached({ StorageManager.cleanUp(app) }) {
+                    result = it
                     busy = null
                     reload++
                 }
@@ -250,9 +248,7 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
                     // happen, or the app returns to a guest the user was told was gone.
                     // deleteGuest tells the routing itself, so the callback below is only
                     // the fast path back to setup.
-                    val work = AppScope.start { StorageManager.deleteGuest(app) }
-                    scope.launch {
-                        work.await()
+                    scope.runDetached({ StorageManager.deleteGuest(app) }) {
                         busy = null
                         onGuestDeleted()
                     }

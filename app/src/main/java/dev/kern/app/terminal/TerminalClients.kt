@@ -1,8 +1,7 @@
 package dev.kern.app.terminal
 
 import dev.kern.app.input.ModifierKeys
-import android.content.ClipData
-import android.content.ClipboardManager
+import dev.kern.app.core.Clipboard
 import android.content.Context
 import android.util.Log
 import android.view.KeyEvent
@@ -114,7 +113,7 @@ internal class KernTerminalSessionClient(
         view.onScreenUpdated()
     }
 
-    // tmux reports what is running as the terminal title (see LinuxRuntime.spawnShell),
+    // tmux reports what is running as the terminal title (see GuestShells.spawnShell),
     // which is what lets a tab say "vim · api" instead of "sh 2".
     override fun onTitleChanged(changedSession: TerminalSession) {
         val title = changedSession.title
@@ -141,13 +140,11 @@ internal class KernTerminalSessionClient(
     }
 
     override fun onCopyTextToClipboard(session: TerminalSession, text: String?) {
-        val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        cm.setPrimaryClip(ClipData.newPlainText("terminal", text ?: ""))
+        Clipboard.copy(appContext, "terminal", text ?: "")
     }
 
     override fun onPasteTextFromClipboard(session: TerminalSession?) {
-        val cm = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val text = cm.primaryClip?.getItemAt(0)?.coerceToText(appContext)?.toString() ?: return
+        val text = Clipboard.paste(appContext) ?: return
         TerminalSessions.write(text)
     }
 

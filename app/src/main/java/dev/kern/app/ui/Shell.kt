@@ -136,7 +136,7 @@ fun Shell(state: SessionState) {
 
     // A file shared to Kern opens in the editor, so the editor is where to be. Skipping
     // the initial value is what stops every recomposition after one share doing this.
-    val arrivals by dev.kern.app.projects.IncomingFiles.arrivals.collectAsStateWithLifecycle()
+    val arrivals by IncomingFiles.arrivals.collectAsStateWithLifecycle()
     var seenArrivals by rememberSaveable { mutableStateOf(arrivals) }
     LaunchedEffect(arrivals) {
         if (arrivals != seenArrivals) {

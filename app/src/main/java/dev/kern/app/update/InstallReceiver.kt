@@ -1,6 +1,7 @@
 package dev.kern.app.update
 
 import dev.kern.app.core.Prefs
+import dev.kern.app.core.Notifications
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -111,20 +112,8 @@ class UpdateRelaunchReceiver : BroadcastReceiver() {
     }
 
     private fun postUpdatedNotification(context: Context, launch: Intent) {
-        val nm = context.getSystemService(android.app.NotificationManager::class.java)
-        nm.createNotificationChannel(
-            android.app.NotificationChannel(
-                CHANNEL_ID,
-                "Updates",
-                android.app.NotificationManager.IMPORTANCE_HIGH,
-            ),
-        )
-        val tap = PendingIntent.getActivity(
-            context,
-            0,
-            launch,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        Notifications.channel(context, CHANNEL_ID, "Updates", android.app.NotificationManager.IMPORTANCE_HIGH)
+        val tap = Notifications.openApp(context, 0, launch)
         val version = runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName
         }.getOrNull()
@@ -137,7 +126,7 @@ class UpdateRelaunchReceiver : BroadcastReceiver() {
             // Gone on its own once it has clearly not been needed.
             .setTimeoutAfter(10 * 60 * 1000)
             .build()
-        runCatching { nm.notify(NOTIFICATION_ID, notification) }
+        runCatching { Notifications.manager(context).notify(NOTIFICATION_ID, notification) }
     }
 
     private companion object {

@@ -8,7 +8,7 @@ A long usability pass, all verified on the Pixel 7a. The native editor is now th
 
 New open items that pass created:
 
-- **Language intelligence in the native editor.** It highlights, completes words from the file, and underlines syntax errors on save (Python, JavaScript, shell, JSON, via each language's own checker in the guest), but has no type-aware completion, lint or go-to-definition. The workbench has those. The route is D13's extension bridge rather than sora's experimental `editor-lsp`.
+- **Language intelligence beyond Python.** Python has real completion and go-to-definition through jedi (PythonIntel); every language gets syntax errors underlined on save. JavaScript, TypeScript, Rust and the rest still have only words from the file. The general route is D13's bridge, or a language server per language over the same warm-process approach PythonIntel uses. The route is D13's extension bridge rather than sora's experimental `editor-lsp`.
 - **Folding and multi-cursor** are absent from sora (issues #85 and #798) and need either upstream work or a fork.
 - **Per-project tabs start empty the first time** after this update, because the old single tab list is not migrated. Opening files once fixes it for good.
 

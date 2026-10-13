@@ -47,7 +47,10 @@ object NativeEditor {
 
         @Volatile
         var savedRevision: Long = 0
-        var language: TextMateLanguage? = null
+        var language: io.github.rosemoe.sora.lang.Language? = null
+
+        /** Library code reached by go-to-definition: shown, never edited or saved. */
+        val readOnly: Boolean get() = path.startsWith("/usr/")
 
         /** The file's mtime when last read or written by us; see [DiskSync]. */
         @Volatile
@@ -145,6 +148,14 @@ object NativeEditor {
         val language = withContext(Dispatchers.IO) {
             Grammars.scopeFor(path.substringAfterLast('/'))?.let { scope ->
                 runCatching { TextMateLanguage.create(scope, true) }.getOrNull()
+            }?.let { tm ->
+                // Python gets jedi's completions on top of the TextMate language.
+                if (path.endsWith(".py")) {
+                    PythonIntel.warm(context)
+                    PythonLanguage(tm, context.applicationContext, path)
+                } else {
+                    tm
+                }
             }
         }
         withContext(Dispatchers.Main) {
@@ -203,6 +214,7 @@ object NativeEditor {
         if (themed) view.colorScheme.kernAccents()
         view.setEditorLanguage(file.language)
         view.setText(file.content, true, null)
+        view.isEditable = !file.readOnly
         showProblem(file)
     }
 
@@ -239,6 +251,7 @@ object NativeEditor {
     internal fun saveNow(path: String) {
         val context = appContext ?: return
         val file = files[path] ?: return
+        if (file.readOnly) return
         val version = file.content.documentVersion
         if (version == file.savedRevision) return
         val text = file.content.toString()
@@ -369,5 +382,27 @@ object NativeEditor {
     private fun showProblem(file: OpenFile) {
         val view = instance ?: return
         view.diagnostics = SyntaxCheck.diagnostics(file.content, file.problem)
+    }
+
+    /**
+     * Jump to where the name under the caret is defined - in this file, another file in the
+     * project, or a library. Python only, through jedi. Returns whether it found anywhere.
+     */
+    suspend fun goToDefinition(context: Context): Boolean {
+        val path = _active.value ?: return false
+        if (!path.endsWith(".py")) return false
+        val (source, line, column) = withContext(Dispatchers.Main) {
+            val view = instance ?: return@withContext null
+            Triple(view.text.toString(), view.cursor.leftLine + 1, view.cursor.leftColumn)
+        } ?: return false
+        val target = withContext(Dispatchers.IO) { PythonIntel.definition(context, path, source, line, column) } ?: return false
+        if (target.path != path) open(context, target.path)
+        withContext(Dispatchers.Main) {
+            val view = instance ?: return@withContext
+            val l = (target.line - 1).coerceAtLeast(0)
+            runCatching { view.setSelection(l, target.column) }
+            view.ensurePositionVisible(l, target.column)
+        }
+        return true
     }
 }

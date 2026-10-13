@@ -141,6 +141,12 @@ internal fun TopBar(
                 // likeliest person to open this menu at all.
                 MenuAction("redo", { menuOpen = false }) { InputTargets.redo(context) }
                 MenuAction("find", { menuOpen = false }) { InputTargets.find(context) }
+                // Python only for now: jedi answers it (see PythonIntel).
+                if (native && NativeEditor.active.value?.endsWith(".py") == true) {
+                    MenuAction("go to definition", { menuOpen = false }) {
+                        AppScope.start { NativeEditor.goToDefinition(context.applicationContext) }
+                    }
+                }
                 MenuAction("go to file", { menuOpen = false }) {
                     if (native) EditorChrome.quickOpen.value = true else WorkbenchWebView.Commands.quickOpen()
                 }

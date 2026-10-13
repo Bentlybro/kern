@@ -141,6 +141,8 @@ object RootfsInstaller {
         // so `git log` dumped the whole history at the terminal and `man`-less help came
         // out the same way. Found by needing it on device to test the cockpit.
         "less",
+        // Python completion and go-to-definition in the native editor (PythonIntel).
+        "python3-jedi",
     )
 
     /**

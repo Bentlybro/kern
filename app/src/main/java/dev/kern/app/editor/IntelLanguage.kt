@@ -38,6 +38,7 @@ object CodeIntel {
     fun forPath(path: String): IntelProvider? = when {
         path.endsWith(".py") || path.endsWith(".pyi") -> python
         TsIntel.handles(path) -> typescript
+        LspIntel.handles(path) -> LspIntel.provider
         else -> null
     }
 }

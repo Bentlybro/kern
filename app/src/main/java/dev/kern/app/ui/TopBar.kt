@@ -10,7 +10,7 @@ import kotlinx.coroutines.withContext
 import dev.kern.app.editor.CodeIntel
 import dev.kern.app.editor.EditorChrome
 import dev.kern.app.editor.EditorMode
-import dev.kern.app.workbench.WorkbenchFiles
+import dev.kern.app.editor.EditorSwitch
 import dev.kern.app.editor.NativeEditor
 import dev.kern.app.terminal.Runner
 import dev.kern.app.input.InputTargets
@@ -110,9 +110,10 @@ internal fun TopBar(
                 // Wait for the save: running the moment after typing otherwise ran the
                 // version still on disk.
                 val file = activeFile!!
+                // And not at all if the save failed: running the old file looks like the
+                // edit did nothing. The editor already shows why.
                 AppScope.start {
-                    NativeEditor.flush()
-                    withContext(Dispatchers.Main) { Runner.run(context, file) }
+                    if (NativeEditor.flush()) withContext(Dispatchers.Main) { Runner.run(context, file) }
                 }
             }, tint = KernColors.Ok)
         }
@@ -190,16 +191,12 @@ internal fun TopBar(
                 MenuAction(if (native) "open VS Code" else "native editor", { menuOpen = false }) {
                     if (native) {
                         // Carry the file being edited across, so the switch lands where
-                        // the user was rather than on an empty workbench - saved first, so
-                        // the workbench reads what was typed.
+                        // the user was rather than on an empty workbench.
                         val file = NativeEditor.active.value
-                        val app = context.applicationContext
-                        AppScope.start {
-                            NativeEditor.flush()
-                            if (file != null) WorkbenchFiles.open(app, file)
-                        }
+                        EditorSwitch.toWorkbench(context, file)
+                    } else {
+                        EditorMode.set(context, EditorMode.Kind.Native)
                     }
-                    EditorMode.set(context, if (native) EditorMode.Kind.Workbench else EditorMode.Kind.Native)
                 }
                 MenuAction("status", { menuOpen = false }) {
                     onNavigate(ShellDestination.Status)

@@ -56,7 +56,7 @@ object Grammars {
     suspend fun ensureLoaded(context: Context): Boolean {
         if (loaded) return true
         return loading.withLock {
-            if (!loaded && extensionsDir(context).isDirectory) {
+            if (!loaded && codeServerInstalled(context)) {
                 loaded = withContext(Dispatchers.IO) {
                     runCatching { load(context.applicationContext) }.getOrElse { Log.w(TAG, "grammars: failed", it); false }
                 }
@@ -66,6 +66,34 @@ object Grammars {
     }
 
     fun isLoaded(): Boolean = loaded
+
+    @Volatile
+    private var statusStamp = 0L
+
+    /**
+     * Whether dpkg has finished installing code-server - not merely started: mid-unpack
+     * the extensions directory exists half full, and loading then would leave most
+     * languages without a grammar for the rest of the process. Read from dpkg's status
+     * file, and only when that has changed, since the editor asks every second or two.
+     */
+    private fun codeServerInstalled(context: Context): Boolean {
+        val status = File(LinuxRuntime.rootfsDir(context), "var/lib/dpkg/status")
+        val stamp = status.lastModified()
+        if (stamp == 0L || stamp == statusStamp) return false
+        val done = runCatching {
+            status.useLines { lines ->
+                var inCodeServer = false
+                lines.any { line ->
+                    if (line.startsWith("Package: ")) inCodeServer = line == "Package: code-server"
+                    inCodeServer && line == "Status: install ok installed"
+                }
+            }
+        }.getOrDefault(false)
+        // Remembered either way: a load that fails over a finished install is retried
+        // when dpkg next changes something, not on every call.
+        statusStamp = stamp
+        return done
+    }
 
     /** The grammar scope for a file name, or null to show it as plain text. */
     fun scopeFor(fileName: String): String? {

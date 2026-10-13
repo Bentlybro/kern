@@ -41,7 +41,7 @@ object DiskSync {
             val host = GuestFiles.host(context, file.path)
             val edited = file.path in NativeEditor._unsaved.value
             if (!host.exists()) {
-                if (edited) conflict(file.path) else withContext(Dispatchers.Main) { NativeEditor.close(file.path) }
+                if (edited) conflict(file.path) else withContext(Dispatchers.Main) { NativeEditor.forget(file.path) }
                 continue
             }
             if (host.lastModified() == file.diskStamp) continue
@@ -59,7 +59,7 @@ object DiskSync {
         _conflicts.value = _conflicts.value - path
         NativeEditor._unsaved.value = NativeEditor._unsaved.value - path
         if (!GuestFiles.host(context, path).exists()) {
-            withContext(Dispatchers.Main) { NativeEditor.close(path) }
+            withContext(Dispatchers.Main) { NativeEditor.forget(path) }
             return
         }
         reload(context, file)

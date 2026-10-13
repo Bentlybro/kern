@@ -1,0 +1,75 @@
+package dev.kern.app.editor
+
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import dev.kern.app.core.AppScope
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+/**
+ * Writing the native editor's tabs to disk.
+ *
+ * One writer per file at a time, so an older revision can never land after a newer one,
+ * and a revision counts as saved only once it is on disk: a failed write leaves the tab
+ * unsaved, says so, and is tried again by the next edit or flush. The syntax check of
+ * what was written runs after the lock is released - it can take seconds, and nothing
+ * waiting on the save should wait on it too.
+ */
+internal object EditorSaves {
+
+    private val locks = ConcurrentHashMap<String, Mutex>()
+    private val main = Handler(Looper.getMainLooper())
+
+    /** Start saving [file] if it has unsaved edits. Main thread. The job ends once the write has. */
+    fun save(context: Context, file: NativeEditor.OpenFile): Job? {
+        if (file.readOnly || file.dropped) return null
+        val version = file.content.documentVersion
+        if (version == file.savedRevision) return null
+        val text = file.content.toString()
+        // On the app scope: a save must finish even if the screen that triggered it has gone.
+        return AppScope.start {
+            val wrote = locks.getOrPut(file.path) { Mutex() }.withLock { write(context, file, version, text) }
+            if (wrote) AppScope.start { check(context, file, version) }
+        }
+    }
+
+    private fun write(context: Context, file: NativeEditor.OpenFile, version: Long, text: String): Boolean {
+        // Closed without saving, or a later save of this file already wrote newer text.
+        if (file.dropped || file.savedRevision >= version) return false
+        val host = GuestFiles.host(context, file.path)
+        // Never over the top of a change made outside the editor - a git pull, a terminal
+        // edit, an agent - since this tab last read the file. DiskSync shows the conflict
+        // and lets the user choose.
+        if (host.exists() && host.lastModified() != file.diskStamp && !file.forceNextSave) {
+            DiskSync.conflict(file.path)
+            return false
+        }
+        file.forceNextSave = false
+        file.writing = true
+        val ok = GuestFiles.write(context, file.path, text)
+        if (ok) file.diskStamp = host.lastModified()
+        file.writing = false
+        val failure = "Couldn't save ${file.name}"
+        if (!ok) {
+            NativeEditor.report("$failure - check free space")
+            return false
+        }
+        file.savedRevision = version
+        NativeEditor.clearReport(failure)
+        main.post {
+            if (file.content.documentVersion == version) NativeEditor._unsaved.value = NativeEditor._unsaved.value - file.path
+        }
+        return true
+    }
+
+    /** Underline the error in what was just saved, unless something newer was saved since. */
+    private suspend fun check(context: Context, file: NativeEditor.OpenFile, version: Long) {
+        val problem = SyntaxCheck.check(context, file.path)
+        if (file.savedRevision != version) return
+        file.problem = problem
+        main.post { NativeEditor.showProblemIfActive(file) }
+    }
+}

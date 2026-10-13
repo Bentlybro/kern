@@ -59,7 +59,7 @@ object HealthCheck {
         }
 
         items += guestItem(context)
-        items += toolchainItem(context)
+        items += toolchainItems(context)
         items += githubItem(context)
 
         items += Item(
@@ -98,20 +98,49 @@ object HealthCheck {
         }
     }
 
-    private suspend fun toolchainItem(context: Context): Item {
+    /**
+     * Optional languages, each with its own Install: Rust alone is gigabytes, and one
+     * button that installed every missing language would fetch them all to get one.
+     */
+    private val LANGUAGES = listOf(
+        "C and C++" to listOf("clangd"),
+        "Go" to listOf("go", "gopls"),
+        "Rust" to listOf("cargo", "rust-analyzer"),
+    )
+
+    private suspend fun toolchainItems(context: Context): List<Item> {
         val result = LinuxRuntime.run(
             context,
             """
-            for b in code-server git tmux python3 node rg cc clangd go gopls cargo rust-analyzer; do
+            for b in code-server git tmux python3 node rg cc ${LANGUAGES.flatMap { it.second }.joinToString(" ")}; do
               command -v ${'$'}b >/dev/null 2>&1 && echo "HAVE=${'$'}b" || echo "MISS=${'$'}b"
             done
             """.trimIndent(),
             timeoutMs = 30_000,
-        ) ?: return Item("Toolchain", Level.Warn, "Could not query the guest.")
+        ) ?: return listOf(Item("Toolchain", Level.Warn, "Could not query the guest."))
 
-        val missing = result.lines
+        val allMissing = result.lines
             .filter { it.startsWith("MISS=") }
             .map { it.removePrefix("MISS=") }
+        val optional = LANGUAGES.flatMap { it.second }
+        val missing = allMissing - optional.toSet()
+        return listOf(coreItem(missing)) + LANGUAGES.map { (name, tools) ->
+            val absent = tools.filter { it in allMissing }
+            if (absent.isEmpty()) {
+                Item(name, Level.Ok, "Completion and go-to-definition ready.")
+            } else {
+                Item(
+                    name,
+                    Level.Ok,
+                    "Optional. Not installed: ${absent.joinToString(", ")} - the editor offers words from the file until it is.",
+                    remedy = Remedy.Install(packagesFor(absent)),
+                    remedyLabel = "Install",
+                )
+            }
+        }
+    }
+
+    private fun coreItem(missing: List<String>): Item {
         val required = listOf("code-server", "git")
         val missingRequired = missing.filter { it in required }
 
@@ -181,9 +210,13 @@ object HealthCheck {
         if (RUST_ANALYZER in packages) {
             val rc = LinuxRuntime.run(
                 context,
-                "curl -fsSL https://github.com/rust-lang/rust-analyzer/releases/latest/download/" +
-                    "rust-analyzer-aarch64-unknown-linux-gnu.gz | gunzip > /usr/local/bin/rust-analyzer " +
-                    "&& chmod +x /usr/local/bin/rust-analyzer 2>&1",
+                // Into a temp file and renamed over only once it runs, so a dropped
+                // download never replaces a working binary with half of one.
+                """
+                set -o pipefail
+                tmp=${'$'}(mktemp /usr/local/bin/.rust-analyzer.XXXXXX) || exit 1
+                curl -fsSL https://github.com/rust-lang/rust-analyzer/releases/latest/download/rust-analyzer-aarch64-unknown-linux-gnu.gz                   | gunzip > "${'$'}tmp" && chmod +x "${'$'}tmp" && "${'$'}tmp" --version                   && mv -f "${'$'}tmp" /usr/local/bin/rust-analyzer || { rm -f "${'$'}tmp"; exit 1; }
+                """.trimIndent() + " 2>&1",
                 timeoutMs = 300_000,
             )
             if (rc == null || rc.exitCode != 0) return false

@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
 import android.util.Log
+import dev.kern.app.core.copyCapped
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -63,7 +64,7 @@ object IncomingFiles {
                 val name = unique(inbox, safeName(displayName(context, stream) ?: "shared-file"))
                 val target = File(inbox, name)
                 val copied = context.contentResolver.openInputStream(stream)?.use { src ->
-                    target.outputStream().use { copyCapped(src, it) }
+                    target.outputStream().use { src.copyCapped(it, MAX_IMPORT_BYTES) }
                 } ?: return@runCatching null
                 // Any app can share to us; an endless stream must not fill the guest's disk.
                 if (!copied) {
@@ -83,19 +84,6 @@ object IncomingFiles {
     }
 
     private const val MAX_IMPORT_BYTES = 64L * 1024 * 1024
-
-    /** Copy at most [MAX_IMPORT_BYTES]; false if the stream had more. */
-    private fun copyCapped(src: java.io.InputStream, dst: java.io.OutputStream): Boolean {
-        val buffer = ByteArray(64 * 1024)
-        var total = 0L
-        while (true) {
-            val n = src.read(buffer)
-            if (n < 0) return true
-            total += n
-            if (total > MAX_IMPORT_BYTES) return false
-            dst.write(buffer, 0, n)
-        }
-    }
 
     private fun streamOf(intent: Intent): Uri? = when (intent.action) {
         Intent.ACTION_VIEW -> intent.data

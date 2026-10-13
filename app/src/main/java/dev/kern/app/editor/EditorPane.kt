@@ -101,7 +101,7 @@ fun NativeEditorPane(modifier: Modifier = Modifier) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 DiskSync.check(context.applicationContext)
-                NativeEditor.attachLanguages(context.applicationContext)
+                EditorLanguages.attach(context.applicationContext)
                 delay(1500)
             }
         }

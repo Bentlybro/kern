@@ -8,26 +8,24 @@ import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
 import android.view.ViewGroup
-import dev.kern.app.core.AppScope
 import dev.kern.app.core.Prefs
 import io.github.rosemoe.sora.event.ContentChangeEvent
 import io.github.rosemoe.sora.langs.textmate.TextMateColorScheme
-import io.github.rosemoe.sora.langs.textmate.TextMateLanguage
 import io.github.rosemoe.sora.langs.textmate.registry.ThemeRegistry
 import io.github.rosemoe.sora.text.Content
 import io.github.rosemoe.sora.widget.CodeEditor
 import io.github.rosemoe.sora.widget.EditorSearcher
 import io.github.rosemoe.sora.widget.schemes.EditorColorScheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.joinAll
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The native editing surface: one sora-editor view for the whole process, and the files
@@ -69,6 +67,13 @@ object NativeEditor {
         @Volatile
         var writing: Boolean = false
 
+        /** Closed without saving: any write still queued for it must not land. */
+        @Volatile
+        var dropped: Boolean = false
+
+        /** Whether [language] has its grammar yet; see [EditorLanguages.attach]. */
+        var highlighted: Boolean = false
+
         /** Set when the user chose "keep mine" over an outside change. */
         @Volatile
         var forceNextSave: Boolean = false
@@ -95,6 +100,7 @@ object NativeEditor {
     private var appContext: Context? = null
     private val main = Handler(Looper.getMainLooper())
     private val autosave = Runnable { saveAll() }
+    private val ui = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     fun acquire(activityContext: Context): CodeEditor {
         appContext = activityContext.applicationContext
@@ -149,9 +155,12 @@ object NativeEditor {
                 "${path.substringAfterLast('/')} is ${read.bytes / 1024 / 1024} MB - open it in the terminal",
             )
         }
-        val language = languageFor(context, path)
+        val (language, highlighted) = EditorLanguages.forPath(context, path)
         withContext(Dispatchers.Main) {
-            val file = OpenFile(path, Content(text)).also { it.language = language }
+            val file = OpenFile(path, Content(text)).also {
+                it.language = language
+                it.highlighted = highlighted
+            }
             file.savedRevision = file.content.documentVersion
             file.diskStamp = GuestFiles.host(context, path).lastModified()
             files[path] = file
@@ -160,48 +169,18 @@ object NativeEditor {
         }
     }
 
-    /** Set when a tab opened with no grammars to colour it; see [attachLanguages]. */
-    @Volatile
-    private var languagesPending = false
-
-    private suspend fun languageFor(context: Context, path: String): io.github.rosemoe.sora.lang.Language? {
-        if (!Grammars.ensureLoaded(context)) {
-            languagesPending = true
-            return null
-        }
-        return withContext(Dispatchers.IO) {
-            Grammars.scopeFor(path.substringAfterLast('/'))?.let { scope ->
-                runCatching { TextMateLanguage.create(scope, true) }.getOrNull()
-            }?.let { tm ->
-                // Languages with a provider get its completions on top of the TextMate
-                // language.
-                CodeIntel.forPath(path)?.let { provider ->
-                    provider.warm(context, path)
-                    IntelLanguage(tm, context.applicationContext, path, provider)
-                } ?: tm
-            }
-        }
-    }
-
-    /**
-     * Give highlighting to tabs opened before the grammars existed - on first run, files
-     * opened while code-server was still installing. Cheap when there is nothing to do.
-     */
-    suspend fun attachLanguages(context: Context) {
-        if (!languagesPending || !Grammars.ensureLoaded(context)) return
-        languagesPending = false
-        val bare = withContext(Dispatchers.Main) { files.values.filter { it.language == null }.map { it.path } }
-        for (path in bare) {
-            val language = languageFor(context, path) ?: continue
-            withContext(Dispatchers.Main) {
-                files[path]?.language = language
-                if (_active.value == path) show(path)
-            }
-        }
-    }
-
     private fun fail(message: String) {
         _problem.value = message
+    }
+
+    /** Show [message] over the editor until the next open or [clearReport]. */
+    internal fun report(message: String) {
+        _problem.value = message
+    }
+
+    /** Clear the shown message if it starts with [prefix]. */
+    internal fun clearReport(prefix: String) {
+        if (_problem.value?.startsWith(prefix) == true) _problem.value = null
     }
 
     private fun activate(path: String) {
@@ -250,26 +229,35 @@ object NativeEditor {
         showProblem(file)
     }
 
+    /**
+     * Close a tab - once its edits are on disk. A tab whose save failed or hit an outside
+     * change stays open, since closing it would throw away the only copy of the edits.
+     */
     fun close(path: String) {
-        saveNow(path)
-        files.remove(path)
-        if (_active.value == path) {
-            val next = files.keys.lastOrNull()
-            _active.value = next
-            if (next != null) show(next) else instance?.setText("")
+        ui.launch {
+            if (flush(listOf(path))) {
+                drop(path)
+            } else {
+                report("${path.substringAfterLast('/')} isn't saved, so it stays open")
+            }
         }
-        publish()
     }
 
     /**
-     * Close tabs whose files are gone, after a delete or a rename in the tree. Main thread
-     * only, and without saving: the caller flushed first, and a save now would write the
-     * file back to the path that was just deleted or renamed away.
+     * Close tabs without saving - after a delete or rename in the tree, or when the user
+     * took the disk's version. Main thread. Any write still queued for them is cancelled:
+     * it would put the file back at a path that was just deleted or renamed away.
      */
-    fun forget(pathPrefix: String) {
-        files.keys.filter { it == pathPrefix || it.startsWith("$pathPrefix/") }.forEach {
-            files.remove(it)
-            if (_active.value == it) _active.value = null
+    fun forget(pathPrefix: String) = drop(*under(pathPrefix).toTypedArray())
+
+    /** Open tabs at [pathPrefix] or inside it. */
+    fun under(pathPrefix: String): List<String> =
+        files.keys.filter { it == pathPrefix || it.startsWith("$pathPrefix/") }
+
+    private fun drop(vararg paths: String) {
+        for (path in paths) {
+            files.remove(path)?.dropped = true
+            if (_active.value == path) _active.value = null
         }
         if (_active.value == null) {
             val next = files.keys.lastOrNull()
@@ -292,59 +280,33 @@ object NativeEditor {
     fun saveAll(): List<Job> = files.keys.toList().mapNotNull { saveNow(it) }
 
     /**
-     * Save every open file and wait for the writes to land - before anything reads the
-     * files from disk, like Run or the VS Code workbench. False if any write failed.
+     * Save [paths] (every open file by default) and wait for the writes to land - before
+     * anything reads the files from disk, like Run or the VS Code workbench. False if any
+     * is still unsaved: a failed write, or an outside change waiting on the user.
      */
-    suspend fun flush(): Boolean {
-        val jobs = withContext(Dispatchers.Main) { saveAll() }
-        jobs.joinAll()
-        return withContext(Dispatchers.Main) { files.keys.none { it in _unsaved.value } }
+    suspend fun flush(paths: Collection<String>? = null): Boolean {
+        repeat(3) {
+            val (jobs, targets) = withContext(Dispatchers.Main) {
+                val targets = paths?.filter { it in files } ?: files.keys.toList()
+                targets.mapNotNull { saveNow(it) } to targets
+            }
+            jobs.joinAll()
+            // Back on Main after the writes' own posts, so _unsaved is current. Retried:
+            // typing during the write leaves a newer revision that is unsaved but fine.
+            val left = withContext(Dispatchers.Main) { targets.filter { it in _unsaved.value } }
+            if (left.isEmpty()) return true
+            if (left.any { it in DiskSync.conflicts.value || files[it]?.dropped == true }) return false
+        }
+        return false
     }
-
-    /** One writer per file at a time, so an older revision can never land after a newer one. */
-    private val saveLocks = ConcurrentHashMap<String, Mutex>()
 
     internal fun saveNow(path: String): Job? {
         val context = appContext ?: return null
-        val file = files[path] ?: return null
-        if (file.readOnly) return null
-        val version = file.content.documentVersion
-        if (version == file.savedRevision) return null
-        val text = file.content.toString()
-        // Off the main thread, but on the app scope: a save must finish even if the
-        // screen that triggered it has gone.
-        return AppScope.start {
-            saveLocks.getOrPut(path) { Mutex() }.withLock {
-                // A later save of this file already wrote newer text.
-                if (file.savedRevision >= version) return@withLock
-                val host = GuestFiles.host(context, path)
-                // Never over the top of a change made outside the editor - a git pull, a
-                // terminal edit, an agent - since this tab last read the file. DiskSync
-                // shows the conflict and lets the user choose.
-                if (host.exists() && host.lastModified() != file.diskStamp && !file.forceNextSave) {
-                    DiskSync.conflict(path)
-                    return@withLock
-                }
-                file.forceNextSave = false
-                file.writing = true
-                val ok = GuestFiles.write(context, path, text)
-                if (ok) file.diskStamp = host.lastModified()
-                file.writing = false
-                if (!ok) {
-                    // Left marked unsaved, so the next edit or flush tries again.
-                    _problem.value = "Couldn't save ${file.name} - check free space"
-                    return@withLock
-                }
-                file.savedRevision = version
-                if (_problem.value?.startsWith("Couldn't save ${file.name}") == true) _problem.value = null
-                main.post {
-                    if (files[path]?.content?.documentVersion == version) _unsaved.value = _unsaved.value - path
-                }
-                // Check what was just saved, and underline the error if there is one.
-                file.problem = SyntaxCheck.check(context, path)
-                main.post { if (_active.value == path) showProblem(file) }
-            }
-        }
+        return EditorSaves.save(context, files[path] ?: return null)
+    }
+
+    internal fun showProblemIfActive(file: OpenFile) {
+        if (_active.value == file.path) showProblem(file)
     }
 
     private fun publish() {
@@ -391,11 +353,12 @@ object NativeEditor {
         // Language servers are rooted at the project they started in; the next request
         // starts them again at this one.
         if (project != null) LspIntel.stopAll()
+        // Tabs that cannot be saved stay open into the new project rather than vanish.
+        flush()
         withContext(Dispatchers.Main) {
-            saveAll()
-            files.keys.toList().forEach { files.remove(it) }
-            _active.value = null
-            instance?.setText("")
+            val kept = files.keys.filter { it in _unsaved.value }
+            drop(*files.keys.filter { it !in kept }.toTypedArray())
+            if (kept.isNotEmpty()) report("${kept.joinToString { it.substringAfterLast('/') }} couldn't be saved, so stayed open")
             project = root
             publish()
         }

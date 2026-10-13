@@ -105,6 +105,10 @@ for line in sys.stdin:
         // clangd answers C and C++; --background-index off, so a phone does not index
         // every header on the system the first time a file opens.
         Server(setOf("c", "h", "cc", "cpp", "cxx", "hpp", "hh"), "clangd --background-index=false", "Clangd"),
+        // Each answers only once its server is installed in the guest; until then the
+        // bridge gets no reply and the editor falls back to words from the file.
+        Server(setOf("go"), "gopls", "Gopls"),
+        Server(setOf("rs"), "rust-analyzer", "RustAnalyzer"),
     )
 
     private fun serverFor(path: String): Server? {

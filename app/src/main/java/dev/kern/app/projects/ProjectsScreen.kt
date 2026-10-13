@@ -55,7 +55,11 @@ fun ProjectsScreen(
     var confirmDelete by remember { mutableStateOf<ProjectRepository.Entry?>(null) }
     // Non-null while the folder browser is up, holding the directory it shows.
     var browsePath by remember { mutableStateOf<String?>(null) }
-    val recents = remember(model.reload) { ProjectRepository.recents(context) }
+    // Where you have been, minus where you are: the open project is already on screen.
+    val recents = remember(model.reload) {
+        val current = ProjectRepository.currentFolder(context)
+        ProjectRepository.recents(context).filter { it != current }.take(5)
+    }
 
     LaunchedEffect(model.reload) {
         entries = ProjectRepository.list(context)

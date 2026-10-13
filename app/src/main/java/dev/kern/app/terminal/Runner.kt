@@ -1,0 +1,61 @@
+package dev.kern.app.terminal
+
+import android.content.Context
+import dev.kern.app.guest.sq
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+/**
+ * Run the file being edited, in a terminal - the one-tap loop of edit, run, read.
+ *
+ * The command comes from the file's type; it is typed into the active shell rather than run
+ * hidden, so its output, its errors and any input it asks for are all in a real terminal,
+ * and pressing up re-runs it. Unknown types return null, and the Run control hides.
+ */
+object Runner {
+
+    /** Asks the shell to show the terminal pane; the shell resets it once handled. */
+    private val _showTerminal = MutableStateFlow(0)
+    val showTerminal: StateFlow<Int> = _showTerminal.asStateFlow()
+
+    /** The command that runs [path], from the directory it is in. Internal for tests. */
+    internal fun commandFor(path: String): String? {
+        val name = path.substringAfterLast('/')
+        val file = sq(name)
+        return when (name.substringAfterLast('.', "").lowercase()) {
+            "py" -> "python3 $file"
+            "js", "mjs", "cjs" -> "node $file"
+            "ts" -> "npx --yes tsx $file"
+            "sh", "bash" -> "bash $file"
+            "rb" -> "ruby $file"
+            "pl" -> "perl $file"
+            "php" -> "php $file"
+            "lua" -> "lua $file"
+            "go" -> "go run $file"
+            "c" -> "cc $file -o /tmp/kern-run && /tmp/kern-run"
+            "cpp", "cc", "cxx" -> "c++ $file -o /tmp/kern-run && /tmp/kern-run"
+            "rs" -> "rustc $file -o /tmp/kern-run && /tmp/kern-run"
+            "java" -> "java $file"
+            "kt", "kts" -> if (name.endsWith(".kts")) "kotlin $file" else null
+            else -> when (name) {
+                "Makefile", "makefile" -> "make"
+                "package.json" -> "npm start"
+                "Cargo.toml" -> "cargo run"
+                else -> null
+            }
+        }
+    }
+
+    fun canRun(path: String?): Boolean = path != null && commandFor(path) != null
+
+    /** Type the run command for [path] into the active shell, and bring the terminal up. */
+    fun run(context: Context, path: String) {
+        val command = commandFor(path) ?: return
+        val dir = path.substringBeforeLast('/').ifEmpty { "/" }
+        if (TerminalSessions.shells().isEmpty()) TerminalSessions.openShell(context)
+        // `clear` first so the output on screen is this run's, not the last one's.
+        TerminalSessions.writeToActive("clear; cd ${sq(dir)} && $command\n")
+        _showTerminal.value++
+    }
+}

@@ -84,7 +84,9 @@ internal class KernTerminalViewClient(
     override fun onCodePoint(codePoint: Int, ctrlDown: Boolean, session: TerminalSession?): Boolean =
         false
 
-    override fun onEmulatorSet() {}
+    override fun onEmulatorSet() {
+        TerminalSessions.flushPending(view)
+    }
 
     override fun logError(tag: String?, message: String?) { TerminalLog.error(tag, message) }
 

@@ -9,6 +9,7 @@ import dev.kern.app.editor.EditorChrome
 import dev.kern.app.editor.EditorMode
 import dev.kern.app.workbench.WorkbenchFiles
 import dev.kern.app.editor.NativeEditor
+import dev.kern.app.terminal.Runner
 import dev.kern.app.input.InputTargets
 import dev.kern.app.session.SessionState
 import dev.kern.app.terminal.TerminalSessions
@@ -97,6 +98,15 @@ internal fun TopBar(
         // Only what gets tapped repeatedly WHILE editing; everything else is one tap away
         // behind the overflow. Icons, because five words across a phone's width left no
         // room for anything else and read as a sentence rather than as controls.
+        // Run the file being edited, when Kern knows how. The edit-run loop is most of
+        // programming on a phone, and it should be one tap.
+        val activeFile by NativeEditor.active.collectAsStateWithLifecycle()
+        if (native && Runner.canRun(activeFile)) {
+            HeaderIcon(KernIcons.Play, "Run", {
+                NativeEditor.saveAll()
+                Runner.run(context, activeFile!!)
+            }, tint = KernColors.Ok)
+        }
         HeaderIcon(KernIcons.Folder, "Files", { InputTargets.toggleFiles(context) })
         // The native editor has no source-control view of its own; the cockpit's diff and
         // commit is the same job, already native.

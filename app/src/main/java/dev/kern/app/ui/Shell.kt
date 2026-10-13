@@ -8,6 +8,7 @@ import dev.kern.app.editor.EditorChrome
 import dev.kern.app.editor.EditorMode
 import dev.kern.app.editor.NativeEditorPane
 import dev.kern.app.projects.IncomingFiles
+import dev.kern.app.terminal.Runner
 import dev.kern.app.projects.ProjectsScreen
 import dev.kern.app.session.SessionService
 import dev.kern.app.session.SessionState
@@ -157,6 +158,17 @@ fun Shell(state: SessionState) {
             // On a phone the terminal covers the editor, and the file opened unseen behind
             // it - caught on device.
             showTerminal = false
+        }
+    }
+
+    // Run asks for the terminal: the output of what was just started is the point.
+    val runs by Runner.showTerminal.collectAsStateWithLifecycle()
+    var seenRuns by rememberSaveable { mutableStateOf(runs) }
+    LaunchedEffect(runs) {
+        if (runs != seenRuns) {
+            seenRuns = runs
+            destination = ShellDestination.Editor
+            showTerminal = true
         }
     }
 

@@ -443,6 +443,34 @@ object TerminalSessions {
         entry.session.write(bytes, 0, bytes.size)
     }
 
+    /**
+     * Input for sessions whose emulator does not exist yet - a shell opened a moment ago has
+     * no process to write to until its view is laid out and the pty spawned. Flushed by
+     * [flushPending] when the emulator arrives, so a command sent to a brand-new terminal
+     * is run rather than dropped.
+     */
+    private val pending = mutableMapOf<Int, String>()
+
+    /** Type [text] into the active shell, now or as soon as it can take input. */
+    fun writeToActive(text: String) {
+        val entry = entries.firstOrNull { it.id == _activeId.value && it.kind == Kind.Shell }
+            ?: shells().lastOrNull() ?: return
+        if (entry.session.emulator == null) {
+            pending[entry.id] = pending[entry.id].orEmpty() + text
+            return
+        }
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        entry.session.write(bytes, 0, bytes.size)
+    }
+
+    /** Called once a view's emulator exists; sends whatever was queued for its session. */
+    fun flushPending(view: TerminalView) {
+        val entry = entries.firstOrNull { it.view === view } ?: return
+        val text = pending.remove(entry.id) ?: return
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        entry.session.write(bytes, 0, bytes.size)
+    }
+
     /** Send a line to a specific session, which is how the cockpit replies to an agent. */
     fun writeTo(id: Int, text: String) {
         val entry = entries.firstOrNull { it.id == id } ?: return

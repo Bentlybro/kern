@@ -89,7 +89,10 @@ fun TerminalPane(modifier: Modifier = Modifier) {
 
         Box(Modifier.fillMaxSize()) {
             when {
-                active != null -> TerminalSurface(active, Modifier.fillMaxSize())
+                active != null -> {
+                    TerminalSurface(active, Modifier.fillMaxSize())
+                    TerminalLinkChip(active, Modifier.align(Alignment.BottomEnd))
+                }
                 stuck -> ShellStuck { TerminalSessions.retryShell(context) }
             }
         }

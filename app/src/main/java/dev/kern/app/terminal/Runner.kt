@@ -54,8 +54,18 @@ object Runner {
         val command = commandFor(path) ?: return
         val dir = path.substringBeforeLast('/').ifEmpty { "/" }
         if (TerminalSessions.shells().isEmpty()) TerminalSessions.openShell(context)
-        // `clear` first so the output on screen is this run's, not the last one's.
-        TerminalSessions.writeToActive("clear; cd ${sq(dir)} && $command\n")
+        // Ctrl+C first: Run while the last run is still going - a server, say - means run it
+        // again, and without this the command was typed into that program's input. Then
+        // `clear`, so the output on screen is this run's, not the last one's.
+        TerminalSessions.writeToActive("\u0003")
+        // A beat before the command: bash resets its prompt after the interrupt, and input
+        // that arrives during that ate the first character ("lear: command not found",
+        // caught on device).
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ typeCommand(dir, command) }, 200)
         _showTerminal.value++
+    }
+
+    private fun typeCommand(dir: String, command: String) {
+        TerminalSessions.writeToActive("clear; cd ${sq(dir)} && $command\n")
     }
 }

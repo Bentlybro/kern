@@ -159,7 +159,8 @@ object HealthCheck {
         binaries.flatMap { PACKAGES_FOR[it] ?: listOf(it) }.distinct()
 
     private val PACKAGES_FOR = mapOf(
-        "node" to listOf("nodejs"),
+        // npm too: Ubuntu packages it separately, and node without npm installs nothing.
+        "node" to listOf("nodejs", "npm"),
         "rg" to listOf("ripgrep"),
         "gh" to listOf("gh", "ca-certificates"),
     )

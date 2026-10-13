@@ -21,7 +21,7 @@ class PackagesForTest {
     fun `node is installed from the package apt actually calls it`() {
         // Ubuntu has no package named "node" - the name belongs to an unrelated one in
         // some Debian releases, which is worse than nothing.
-        assertEquals(listOf("nodejs"), HealthCheck.packagesFor(listOf("node")))
+        assertEquals(listOf("nodejs", "npm"), HealthCheck.packagesFor(listOf("node")))
     }
 
     @Test

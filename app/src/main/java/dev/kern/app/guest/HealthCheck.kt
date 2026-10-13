@@ -102,7 +102,7 @@ object HealthCheck {
         val result = LinuxRuntime.run(
             context,
             """
-            for b in code-server git tmux python3 node rg cc clangd; do
+            for b in code-server git tmux python3 node rg cc clangd go gopls cargo rust-analyzer; do
               command -v ${'$'}b >/dev/null 2>&1 && echo "HAVE=${'$'}b" || echo "MISS=${'$'}b"
             done
             """.trimIndent(),
@@ -165,11 +165,29 @@ object HealthCheck {
         // A C compiler for Run, and clangd for C/C++ completion in the editor (LspIntel).
         "cc" to listOf("build-essential"),
         "gh" to listOf("gh", "ca-certificates"),
+        // Go and Rust, with the language servers the native editor asks for (LspIntel).
+        "go" to listOf("golang-go"),
+        "cargo" to listOf("cargo", "rustc"),
+        // Not packaged by Ubuntu; [install] fetches the upstream build instead.
+        "rust-analyzer" to listOf(RUST_ANALYZER),
     )
+
+    private const val RUST_ANALYZER = "rust-analyzer"
 
     /** Run an [Remedy.Install]. Returns true when every requested binary is present. */
     suspend fun install(context: Context, packages: List<String>): Boolean {
-        if (!Apt.install(context, packages)) return false
+        val fromApt = (packages - RUST_ANALYZER) + if (RUST_ANALYZER in packages) listOf("curl") else emptyList()
+        if (fromApt.isNotEmpty() && !Apt.install(context, fromApt)) return false
+        if (RUST_ANALYZER in packages) {
+            val rc = LinuxRuntime.run(
+                context,
+                "curl -fsSL https://github.com/rust-lang/rust-analyzer/releases/latest/download/" +
+                    "rust-analyzer-aarch64-unknown-linux-gnu.gz | gunzip > /usr/local/bin/rust-analyzer " +
+                    "&& chmod +x /usr/local/bin/rust-analyzer 2>&1",
+                timeoutMs = 300_000,
+            )
+            if (rc == null || rc.exitCode != 0) return false
+        }
         // With npm comes what the native editor needs for JavaScript and TypeScript
         // intelligence (TsIntel). TypeScript 5, not latest: 7 is the native rewrite and has
         // no JavaScript language-service API. Best effort - node works without it.

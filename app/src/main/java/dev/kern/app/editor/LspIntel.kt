@@ -137,9 +137,13 @@ for line in sys.stdin:
 
     fun handles(path: String): Boolean = serverFor(path) != null
 
+    /** Stop every server, to be started again on the next request - at a new project's root. */
+    fun stopAll() = servers.forEach { it.process.stop() }
+
     val provider = object : IntelProvider {
-        override fun warm(context: Context) {
-            servers.forEach { it.process.warm(context) }
+        // Only this file's server: rust-analyzer alone can take a gigabyte.
+        override fun warm(context: Context, path: String) {
+            serverFor(path)?.process?.warm(context)
         }
 
         override fun complete(context: Context, path: String, source: String, line: Int, column: Int) =

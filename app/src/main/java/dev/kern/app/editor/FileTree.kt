@@ -130,7 +130,12 @@ fun FileTree(root: String, onOpen: (String) -> Unit, modifier: Modifier = Modifi
         TreePromptDialog(p, onDismiss = { prompt = null }) { value ->
             prompt = null
             scope.launch {
-                withContext(Dispatchers.IO) { p.apply(context, value) }
+                // Rename and delete move files out from under open tabs: write the tabs
+                // out first, and only drop them once the move really happened.
+                val moving = p is TreePrompt.Rename || p is TreePrompt.Delete
+                if (moving) NativeEditor.flush()
+                val ok = withContext(Dispatchers.IO) { p.apply(context, value) }
+                if (moving && ok) NativeEditor.forget(p.node.path)
                 if (p.node.isDirectory) expanded = expanded + p.node.path
                 reload++
                 // A file just made is a file about to be written in.
@@ -192,33 +197,26 @@ private fun TreeRow(
 
 /** What a long-press offers. Everything except delete asks for a name first. */
 private sealed class TreePrompt(val node: GuestFiles.Node, val title: String, val initial: String) {
-    abstract fun apply(context: android.content.Context, value: String)
+    abstract fun apply(context: android.content.Context, value: String): Boolean
 
     class NewFile(node: GuestFiles.Node) : TreePrompt(node, "New file", "") {
-        override fun apply(context: android.content.Context, value: String) {
+        override fun apply(context: android.content.Context, value: String) =
             GuestFiles.createFile(context, "${dirOf(node)}/${value.trim()}")
-        }
     }
 
     class NewFolder(node: GuestFiles.Node) : TreePrompt(node, "New folder", "") {
-        override fun apply(context: android.content.Context, value: String) {
+        override fun apply(context: android.content.Context, value: String) =
             GuestFiles.createDirectory(context, "${dirOf(node)}/${value.trim()}")
-        }
     }
 
     class Rename(node: GuestFiles.Node) : TreePrompt(node, "Rename", node.name) {
-        override fun apply(context: android.content.Context, value: String) {
-            val target = "${node.path.substringBeforeLast('/')}/${value.trim()}"
-            NativeEditor.forget(node.path)
-            GuestFiles.rename(context, node.path, target)
-        }
+        override fun apply(context: android.content.Context, value: String) =
+            GuestFiles.rename(context, node.path, "${node.path.substringBeforeLast('/')}/${value.trim()}")
     }
 
     class Delete(node: GuestFiles.Node) : TreePrompt(node, "Delete ${node.name}?", "") {
-        override fun apply(context: android.content.Context, value: String) {
-            NativeEditor.forget(node.path)
+        override fun apply(context: android.content.Context, value: String) =
             GuestFiles.delete(context, node.path)
-        }
     }
 
     companion object {

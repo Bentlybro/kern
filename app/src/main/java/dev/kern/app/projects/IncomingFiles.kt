@@ -61,9 +61,16 @@ object IncomingFiles {
             val stream = streamOf(intent)
             if (stream != null) {
                 val name = unique(inbox, safeName(displayName(context, stream) ?: "shared-file"))
-                context.contentResolver.openInputStream(stream)?.use { src ->
-                    File(inbox, name).outputStream().use { src.copyTo(it) }
+                val target = File(inbox, name)
+                val copied = context.contentResolver.openInputStream(stream)?.use { src ->
+                    target.outputStream().use { copyCapped(src, it) }
                 } ?: return@runCatching null
+                // Any app can share to us; an endless stream must not fill the guest's disk.
+                if (!copied) {
+                    target.delete()
+                    Log.w(TAG, "shared file over ${MAX_IMPORT_BYTES / 1024 / 1024} MB, not imported")
+                    return@runCatching null
+                }
                 "$INBOX/$name"
             } else {
                 val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
@@ -73,6 +80,21 @@ object IncomingFiles {
                 "$INBOX/$name"
             }
         }.onFailure { Log.w(TAG, "could not import a shared file", it) }.getOrNull()
+    }
+
+    private const val MAX_IMPORT_BYTES = 64L * 1024 * 1024
+
+    /** Copy at most [MAX_IMPORT_BYTES]; false if the stream had more. */
+    private fun copyCapped(src: java.io.InputStream, dst: java.io.OutputStream): Boolean {
+        val buffer = ByteArray(64 * 1024)
+        var total = 0L
+        while (true) {
+            val n = src.read(buffer)
+            if (n < 0) return true
+            total += n
+            if (total > MAX_IMPORT_BYTES) return false
+            dst.write(buffer, 0, n)
+        }
     }
 
     private fun streamOf(intent: Intent): Uri? = when (intent.action) {

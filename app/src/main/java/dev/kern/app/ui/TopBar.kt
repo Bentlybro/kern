@@ -5,6 +5,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.clickable
 import dev.kern.app.agent.AgentRepository
 import dev.kern.app.core.AppScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import dev.kern.app.editor.CodeIntel
 import dev.kern.app.editor.EditorChrome
 import dev.kern.app.editor.EditorMode
@@ -105,8 +107,13 @@ internal fun TopBar(
         val activeFile by NativeEditor.active.collectAsStateWithLifecycle()
         if (native && Runner.canRun(activeFile)) {
             HeaderIcon(KernIcons.Play, "Run", {
-                NativeEditor.saveAll()
-                Runner.run(context, activeFile!!)
+                // Wait for the save: running the moment after typing otherwise ran the
+                // version still on disk.
+                val file = activeFile!!
+                AppScope.start {
+                    NativeEditor.flush()
+                    withContext(Dispatchers.Main) { Runner.run(context, file) }
+                }
             }, tint = KernColors.Ok)
         }
         HeaderIcon(KernIcons.Folder, "Files", { InputTargets.toggleFiles(context) })
@@ -182,12 +189,15 @@ internal fun TopBar(
                 // VS Code for language servers and extensions, native for speed and touch.
                 MenuAction(if (native) "open VS Code" else "native editor", { menuOpen = false }) {
                     if (native) {
-                        NativeEditor.saveAll()
                         // Carry the file being edited across, so the switch lands where
-                        // the user was rather than on an empty workbench.
+                        // the user was rather than on an empty workbench - saved first, so
+                        // the workbench reads what was typed.
                         val file = NativeEditor.active.value
                         val app = context.applicationContext
-                        if (file != null) AppScope.start { WorkbenchFiles.open(app, file) }
+                        AppScope.start {
+                            NativeEditor.flush()
+                            if (file != null) WorkbenchFiles.open(app, file)
+                        }
                     }
                     EditorMode.set(context, if (native) EditorMode.Kind.Workbench else EditorMode.Kind.Native)
                 }

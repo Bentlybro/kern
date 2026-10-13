@@ -10,10 +10,16 @@
 
 .EXAMPLE
   .\tools\smoke.ps1
+
+.EXAMPLE
+  .\tools\smoke.ps1 -Device emulator-5554 -Adb adb
 #>
+param(
+    [string]$Adb = $(if (Test-Path 'C:\adb\adb.exe') { 'C:\adb\adb.exe' } else { 'adb' }),
+    [string]$Device = '192.168.0.233:5555'
+)
 $ErrorActionPreference = 'Continue'
-$Adb = 'C:\adb\adb.exe'
-$Device = '192.168.0.233:5555'
+$null = New-Item -ItemType Directory -Force "$PSScriptRoot\shots"
 $Pkg = 'dev.kern.app'
 $script:pass = 0
 $script:fail = @()
@@ -34,6 +40,14 @@ function Find([string]$text) {
     $hit = $nodes | Where-Object { $_.text -eq $text -or $_.'content-desc' -eq $text } | Select-Object -First 1
     if (-not $hit) { $hit = $nodes | Where-Object { $_.text -like "$text*" } | Select-Object -First 1 }
     $hit
+}
+
+function HideKeyboard {
+    # Back closes only the keyboard while it is up; when it is down, Back would leave the screen.
+    if ((& $Adb -s $Device shell dumpsys input_method) -match 'mInputShown=true') {
+        & $Adb -s $Device shell input keyevent 4 | Out-Null
+        Start-Sleep -Milliseconds 600
+    }
 }
 
 function Tap([string]$text) {
@@ -149,6 +163,8 @@ Step 'status' {
 }
 
 Step 'quit confirm' {
+    # An open keyboard swallowed the tap on More (seen in a run), so put it away first.
+    HideKeyboard
     $null = Tap 'More'; $null = Tap 'Quit'; Expect 'quit dialog' @('Quit Kern?'); $null = Tap 'Cancel'
 }
 

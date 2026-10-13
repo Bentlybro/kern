@@ -1,6 +1,6 @@
 # 15 — Projects
 
-The implementation lives in `runtime/ProjectRepository.kt` and `ui/ProjectsScreen.kt`.
+The implementation lives in `projects/ProjectRepository.kt` and `projects/ProjectsScreen.kt`.
 
 ## Native, not through the editor
 

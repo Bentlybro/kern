@@ -2,6 +2,7 @@ package dev.kern.app.editor
 
 import android.content.Context
 import android.util.Base64
+import android.os.SystemClock
 import android.util.Log
 import dev.kern.app.guest.LinuxRuntime
 import dev.kern.app.guest.PtyProcess
@@ -38,16 +39,25 @@ class WarmProcess(
     private val ids = AtomicInteger()
     private val waiting = ConcurrentHashMap<Int, CompletableFuture<JSONArray>>()
 
+    /** When the last process started, and the earliest the next may; see [read]. */
+    @Volatile
+    private var startedAt = 0L
+
+    @Volatile
+    private var retryAfter = 0L
+
     private fun ensure(context: Context): PtyProcess? {
         process?.let { return it }
         synchronized(this) {
             process?.let { return it }
+            if (SystemClock.elapsedRealtime() < retryAfter) return null
             val file = File(LinuxRuntime.rootfsDir(context), "root/.kern/$scriptName")
             runCatching { file.parentFile?.mkdirs(); file.writeText(script) }
             val run = command.replace("{}", "/root/.kern/$scriptName")
             val p = LinuxRuntime.spawnInGuest(context, listOf("/bin/bash", "-lc", "stty raw -echo; exec $run"))
                 ?: return null
             Thread({ read(p) }, "Kern$name").apply { isDaemon = true }.start()
+            startedAt = SystemClock.elapsedRealtime()
             process = p
             return p
         }
@@ -63,8 +73,15 @@ class WarmProcess(
                 waiting.remove(json.optInt("i", -1))?.complete(json.optJSONArray("r") ?: JSONArray())
             }
         }
-        // Ended - killed with the guest, or crashed. The next request starts a new one.
-        if (process === p) process = null
+        // Ended - killed with the guest, crashed, or the server is not installed. The next
+        // request starts a new one - but not straight away if this one died at once, or a
+        // missing gopls would be respawned on every keystroke.
+        // A deliberate [stop] has already cleared [process], and is no reason to wait.
+        if (process === p) {
+            process = null
+            if (SystemClock.elapsedRealtime() - startedAt < 10_000) retryAfter = SystemClock.elapsedRealtime() + 60_000
+        }
+        runCatching { p.close() }
         waiting.values.forEach { it.complete(JSONArray()) }
         waiting.clear()
     }
@@ -89,6 +106,13 @@ class WarmProcess(
             Log.d("Kern", "$name: no answer (${it.javaClass.simpleName})")
             JSONArray()
         }
+    }
+
+    /** End the process, if running; the next request starts a fresh one. */
+    fun stop() {
+        val p = synchronized(this) { process.also { process = null } } ?: return
+        retryAfter = 0
+        runCatching { p.close() }
     }
 
     /** Start ahead of the first request, so the first completion is not the slow one. */

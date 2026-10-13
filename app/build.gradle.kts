@@ -24,13 +24,13 @@ kotlin {
  * tag, and the in-app updater compares it against the latest GitHub release, so it must
  * not be duplicated anywhere else.
  */
-val appVersionName = "0.1.4"
+val appVersionName = "0.2.0"
 
 /**
  * Overridable so CI can guarantee a monotonically increasing code without anyone having
  * to remember to bump it: `-PversionCode=<run number>`.
  */
-val appVersionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 4
+val appVersionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 5
 
 android {
     namespace = "dev.kern.app"

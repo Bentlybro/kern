@@ -60,10 +60,12 @@ object GuestFiles {
     fun write(context: Context, guestPath: String, text: String): Boolean = runCatching {
         val target = host(context, guestPath)
         target.parentFile?.mkdirs()
-        val temp = File(target.parentFile, ".${target.name}.kern-tmp")
-        temp.writeText(text)
-        if (!temp.renameTo(target)) {
-            target.writeText(text)
+        // Unique per write: two writers sharing one temp name could rename half of each.
+        val temp = File.createTempFile(".${target.name}.", ".kern-tmp", target.parentFile)
+        try {
+            temp.writeText(text)
+            if (!temp.renameTo(target)) target.writeText(text)
+        } finally {
             temp.delete()
         }
         true

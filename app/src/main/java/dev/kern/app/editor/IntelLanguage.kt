@@ -11,7 +11,8 @@ import io.github.rosemoe.sora.text.ContentReference
 
 /** A source of completions and definitions for some file types. */
 interface IntelProvider {
-    fun warm(context: Context)
+    /** Start the helper for [path] ahead of the first request. */
+    fun warm(context: Context, path: String)
     fun complete(context: Context, path: String, source: String, line: Int, column: Int): List<IntelCompletion>
     fun definition(context: Context, path: String, source: String, line: Int, column: Int): IntelLocation?
 }
@@ -20,7 +21,7 @@ interface IntelProvider {
 object CodeIntel {
 
     private val python = object : IntelProvider {
-        override fun warm(context: Context) = PythonIntel.warm(context)
+        override fun warm(context: Context, path: String) = PythonIntel.warm(context)
         override fun complete(context: Context, path: String, source: String, line: Int, column: Int) =
             PythonIntel.complete(context, path, source, line, column)
         override fun definition(context: Context, path: String, source: String, line: Int, column: Int) =
@@ -28,7 +29,7 @@ object CodeIntel {
     }
 
     private val typescript = object : IntelProvider {
-        override fun warm(context: Context) = TsIntel.warm(context)
+        override fun warm(context: Context, path: String) = TsIntel.warm(context)
         override fun complete(context: Context, path: String, source: String, line: Int, column: Int) =
             TsIntel.complete(context, path, source, line, column)
         override fun definition(context: Context, path: String, source: String, line: Int, column: Int) =

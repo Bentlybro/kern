@@ -12,8 +12,9 @@ import io.github.rosemoe.sora.langs.textmate.registry.model.GrammarDefinition
 import io.github.rosemoe.sora.langs.textmate.registry.model.ThemeModel
 import io.github.rosemoe.sora.langs.textmate.registry.provider.FileResolver
 import java.io.File
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.eclipse.tm4e.core.registry.IGrammarSource
 import org.eclipse.tm4e.core.registry.IThemeSource
@@ -43,28 +44,28 @@ object Grammars {
     private val byExtension = HashMap<String, String>()
     private val byFileName = HashMap<String, String>()
 
-    private val loaded = CompletableDeferred<Boolean>()
-
     @Volatile
-    private var started = false
+    private var loaded = false
+    private val loading = Mutex()
 
-    /** Load everything once. Safe to call repeatedly; later calls wait on the first. */
+    /**
+     * Load everything once. Safe to call repeatedly; concurrent calls wait on one load.
+     * A load that found nothing is not final: on first run the editor opens before
+     * code-server (and so the grammars) has installed, and the next call tries again.
+     */
     suspend fun ensureLoaded(context: Context): Boolean {
-        if (!started) {
-            synchronized(this) {
-                if (!started) {
-                    started = true
-                    val app = context.applicationContext
-                    Thread({ loaded.complete(runCatching { load(app) }.getOrElse {
-                        Log.w(TAG, "grammars: failed", it); false
-                    }) }, "KernGrammars").start()
+        if (loaded) return true
+        return loading.withLock {
+            if (!loaded && extensionsDir(context).isDirectory) {
+                loaded = withContext(Dispatchers.IO) {
+                    runCatching { load(context.applicationContext) }.getOrElse { Log.w(TAG, "grammars: failed", it); false }
                 }
             }
+            loaded
         }
-        return withContext(Dispatchers.IO) { loaded.await() }
     }
 
-    fun isLoaded(): Boolean = loaded.isCompleted
+    fun isLoaded(): Boolean = loaded
 
     /** The grammar scope for a file name, or null to show it as plain text. */
     fun scopeFor(fileName: String): String? {
@@ -79,11 +80,16 @@ object Grammars {
         return null
     }
 
+    private var providerAdded = false
+
     private fun load(context: Context): Boolean {
         val started = SystemClock.elapsedRealtime()
         val root = extensionsDir(context)
         val extensions = root.listFiles()?.filter { it.isDirectory } ?: return false
-        FileProviderRegistry.getInstance().addFileProvider(FileResolver.DEFAULT)
+        if (!providerAdded) {
+            FileProviderRegistry.getInstance().addFileProvider(FileResolver.DEFAULT)
+            providerAdded = true
+        }
 
         val definitions = ArrayList<GrammarDefinition>()
         for (ext in extensions) {

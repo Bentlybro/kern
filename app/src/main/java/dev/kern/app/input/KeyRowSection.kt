@@ -1,6 +1,6 @@
 package dev.kern.app.input
 
-import dev.kern.app.settings.SectionTitle
+import dev.kern.app.ui.SectionTitle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi

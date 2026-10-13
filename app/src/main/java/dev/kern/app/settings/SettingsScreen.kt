@@ -1,10 +1,14 @@
 package dev.kern.app.settings
 
+import dev.kern.app.editor.EditorSection
+import dev.kern.app.ui.SectionTitle
+import dev.kern.app.ui.Panel
+import dev.kern.app.ui.KernIcons
+import dev.kern.app.ui.HeaderIcon
 import dev.kern.app.agent.AgentSection
 import dev.kern.app.guest.GuestConfig
 import dev.kern.app.guest.LinuxRuntime
 import dev.kern.app.input.KeyRowSection
-import dev.kern.app.ui.HeaderAction
 import dev.kern.app.ui.ScreenHeader
 import dev.kern.app.ui.ScreenSurface
 import dev.kern.app.update.UpdateSection
@@ -28,9 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 /**
  * Settings: what the Linux guest is using, how much it is allowed to use before the app
@@ -46,55 +48,55 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
     LaunchedEffect(refresh) { guestOs = LinuxRuntime.osPrettyName(context) }
 
     ScreenSurface {
-        ScreenHeader("settings") {
-            HeaderAction("refresh") { refresh++ }
-            HeaderAction("close", onDismiss)
+        ScreenHeader("Settings", onBack = onDismiss) {
+            HeaderIcon(KernIcons.Refresh, "Refresh", { refresh++ })
         }
 
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SectionTitle("Updates")
-            UpdateSection()
+            SectionTitle("Editor")
+            Panel { EditorSection() }
 
             SectionTitle("GitHub")
-            GitHubSection()
+            Panel { GitHubSection() }
 
             SectionTitle("Agent")
-            AgentSection()
+            Panel { AgentSection() }
 
             SectionTitle("Key row")
-            KeyRowSection()
+            Panel { KeyRowSection() }
+
+            SectionTitle("Updates")
+            Panel { UpdateSection() }
 
             SectionTitle("Linux")
-            when (val name = guestOs) {
-                null -> Text(
-                    "Checking...",
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                else -> {
-                    Text(
-                        name,
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onBackground,
+            Panel {
+                when (val name = guestOs) {
+                    null -> Text(
+                        "Checking...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    // An environment set up by an older build stays on the release it
-                    // was built from; say so, rather than leaving the version looking
-                    // like a bug.
-                    if (!name.contains(GuestConfig.UBUNTU_RELEASE)) {
-                        Text(
-                            "New setups now use Ubuntu ${GuestConfig.UBUNTU_RELEASE}. " +
-                                "Existing environments are left alone, so this one stays " +
-                                "as it is - delete it below and run setup again to move " +
-                                "over. Push anything in ~/projects first.",
-                            fontSize = 11.5.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                    else -> {
+                        Text(name, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+                        // An environment set up by an older build stays on the release it
+                        // was built from; say so, rather than leaving the version looking
+                        // like a bug.
+                        if (!name.contains(GuestConfig.UBUNTU_RELEASE)) {
+                            Text(
+                                "New setups now use Ubuntu ${GuestConfig.UBUNTU_RELEASE}. " +
+                                    "Existing environments are left alone, so this one stays " +
+                                    "as it is - delete it below and run setup again to move " +
+                                    "over. Push anything in ~/projects first.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -104,16 +106,4 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
             Spacer(Modifier.height(24.dp))
         }
     }
-}
-
-// internal, not private: the sections that live in their own files label themselves with it.
-@Composable
-internal fun SectionTitle(text: String) {
-    Text(
-        text.lowercase(),
-        fontFamily = FontFamily.Monospace,
-        fontSize = 10.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 6.dp),
-    )
 }

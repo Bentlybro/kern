@@ -51,7 +51,7 @@ import kotlin.math.abs
  * The app background (`Theme.kt`, and `android:windowBackground`), as an ARGB int.
  * Kept in step with those by hand: a WebView cannot read the Compose theme.
  */
-private const val WORKBENCH_BACKGROUND = 0xFF0A0B0D.toInt()
+private const val WORKBENCH_BACKGROUND = 0xFF111316.toInt()
 
 private class WorkbenchWeb(context: Context) : WebView(context) {
 

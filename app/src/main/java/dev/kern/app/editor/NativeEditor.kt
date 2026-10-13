@@ -9,6 +9,7 @@ import android.os.Looper
 import android.view.KeyEvent
 import android.view.ViewGroup
 import dev.kern.app.core.AppScope
+import dev.kern.app.core.Prefs
 import io.github.rosemoe.sora.event.ContentChangeEvent
 import io.github.rosemoe.sora.langs.textmate.TextMateColorScheme
 import io.github.rosemoe.sora.langs.textmate.TextMateLanguage
@@ -93,8 +94,8 @@ object NativeEditor {
         themed = false
         val view = KernCodeEditor(w).apply {
             typefaceText = Typeface.MONOSPACE
-            setTextSize(12f)
-            isWordwrap = true
+            setTextSize(EditorPrefs.fontSp(activityContext))
+            isWordwrap = EditorPrefs.wrap(activityContext)
             setLineNumberEnabled(true)
             setPinLineNumber(true)
             props.apply {
@@ -153,6 +154,7 @@ object NativeEditor {
     private fun activate(path: String) {
         _active.value = path
         show(path)
+        remember()
     }
 
     /**
@@ -235,6 +237,39 @@ object NativeEditor {
     private fun publish() {
         _open.value = files.keys.toList()
         _unsaved.value = _unsaved.value.filter { it in files }.toSet()
+        remember()
+    }
+
+    // ---- surviving a restart -------------------------------------------------
+    //
+    // Android ends this process whenever it likes, and an editor that comes back empty
+    // makes every return to the app start with finding your files again. The tab list and
+    // the active tab are kept in prefs and reopened on the next launch; the contents need
+    // no keeping, since autosave already put them on disk.
+
+    private fun remember() {
+        val context = appContext ?: return
+        Prefs.of(context).edit()
+            .putString(Prefs.KEY_EDITOR_TABS, files.keys.joinToString("\n"))
+            .putString(Prefs.KEY_EDITOR_ACTIVE, _active.value)
+            .apply()
+    }
+
+    @Volatile
+    private var restored = false
+
+    /** Reopen last session's tabs, once per process. Files that have gone are skipped. */
+    suspend fun restore(context: Context) {
+        if (restored) return
+        restored = true
+        appContext = context.applicationContext
+        val prefs = Prefs.of(context)
+        val tabs = prefs.getString(Prefs.KEY_EDITOR_TABS, null)?.split('\n')?.filter { it.isNotBlank() }.orEmpty()
+        val active = prefs.getString(Prefs.KEY_EDITOR_ACTIVE, null)
+        for (path in tabs) {
+            if (GuestFiles.host(context, path).isFile) open(context, path)
+        }
+        if (active != null && active in files) withContext(Dispatchers.Main) { activate(active) }
     }
 
     // ---- commands the native chrome drives -----------------------------------

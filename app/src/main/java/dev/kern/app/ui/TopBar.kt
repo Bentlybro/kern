@@ -1,5 +1,8 @@
 package dev.kern.app.ui
 
+import dev.kern.app.projects.ProjectRepository
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.clickable
 import dev.kern.app.agent.AgentRepository
 import dev.kern.app.core.AppScope
 import dev.kern.app.editor.EditorChrome
@@ -11,8 +14,6 @@ import dev.kern.app.session.SessionState
 import dev.kern.app.terminal.TerminalSessions
 import dev.kern.app.workbench.WorkbenchWebView
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -38,9 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
@@ -60,12 +59,13 @@ internal fun TopBar(
     val editorMode by EditorMode.flow(context).collectAsStateWithLifecycle()
     val native = editorMode == EditorMode.Kind.Native
 
-
+    val project = ProjectRepository.currentFolder(context).substringAfterLast('/').ifEmpty { "/" }
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .height(52.dp)
             .background(MaterialTheme.colorScheme.surface)
-            .padding(horizontal = 8.dp, vertical = 2.dp),
+            .padding(start = 14.dp, end = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val dot = when (state) {
@@ -75,55 +75,52 @@ internal fun TopBar(
         }
         Box(
             modifier = Modifier
-                .size(7.dp)
+                .size(8.dp)
                 .clip(CircleShape)
                 .background(dot),
         )
-        Spacer(Modifier.width(8.dp))
-
-        // Only what gets tapped repeatedly WHILE editing. The bar had grown to eight chips
-        // by accretion, one per feature, which is how a toolbar stops being scannable: past
-        // about four the eye reads it as a wall and stops picking anything out. The test
-        // applied here is frequency during a session, not importance in the abstract -
-        // opening a project happens once, so it moved to the menu, while toggling the file
-        // tree happens constantly, so it stayed. Everything dropped is still one tap away
-        // behind "more".
-        Row(
+        Spacer(Modifier.width(10.dp))
+        // Where you are, which nothing else on screen says: the project, tappable to switch.
+        Text(
+            project,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .weight(1f)
-                .horizontalScroll(rememberScrollState()),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ActionChip("files") { InputTargets.toggleFiles(context) }
-            // The native editor has no source-control view of its own; the cockpit's diff
-            // and commit is the same job, already native.
-            ActionChip("git") {
-                if (native) onNavigate(ShellDestination.Cockpit) else WorkbenchWebView.Commands.toggleSourceControl()
-            }
-            if (mode != DisplayMode.Tabletop) {
-                ActionChip(
-                    label = if (terminalShown) "editor" else "term",
-                    highlighted = terminalShown,
-                    onClick = onToggleTerminal,
-                )
-            }
-            // Undo keeps a chip while redo does not, and the asymmetry is deliberate. It is
-            // the most frequent action in any editor, it is what you reach for the instant
-            // the soft keyboard autocorrects an identifier, and without it there is no way
-            // to send Ctrl+Z at all. Redo is comparatively rare, so it went to the menu.
-            ActionChip("undo") { InputTargets.undo(context) }
-            // Only when there is an agent to open. Someone who never wanted one should
-            // not be carrying a permanent chip for it, and the cockpit's diff and commit
-            // half is still reachable through "more".
-            if (agentCommand.isNotBlank()) {
-                ActionChip("agent") { onNavigate(ShellDestination.Cockpit) }
-            }
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onNavigate(ShellDestination.Projects) }
+                .padding(vertical = 8.dp),
+        )
+
+        // Only what gets tapped repeatedly WHILE editing; everything else is one tap away
+        // behind the overflow. Icons, because five words across a phone's width left no
+        // room for anything else and read as a sentence rather than as controls.
+        HeaderIcon(KernIcons.Folder, "Files", { InputTargets.toggleFiles(context) })
+        // The native editor has no source-control view of its own; the cockpit's diff and
+        // commit is the same job, already native.
+        HeaderIcon(KernIcons.Branch, "Source control", {
+            if (native) onNavigate(ShellDestination.Cockpit) else WorkbenchWebView.Commands.toggleSourceControl()
+        })
+        if (mode != DisplayMode.Tabletop) {
+            HeaderIcon(
+                if (terminalShown) KernIcons.Code else KernIcons.Terminal,
+                if (terminalShown) "Show editor" else "Show terminal",
+                onToggleTerminal,
+                tint = if (terminalShown) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        // Undo keeps a place on the bar and redo does not: it is what you reach for the
+        // instant the soft keyboard autocorrects an identifier.
+        HeaderIcon(KernIcons.Undo, "Undo", { InputTargets.undo(context) })
+        // Only when there is an agent to open; the diff half is in the menu regardless.
+        if (agentCommand.isNotBlank()) {
+            HeaderIcon(KernIcons.Agent, "Agent", { onNavigate(ShellDestination.Cockpit) })
         }
 
-        Spacer(Modifier.width(6.dp))
-
         Box {
-            ActionChip("more") { menuOpen = true }
+            HeaderIcon(KernIcons.More, "More", { menuOpen = true })
             DropdownMenu(
                 expanded = menuOpen,
                 onDismissRequest = { menuOpen = false },
@@ -214,9 +211,8 @@ private fun MenuAction(label: String, dismiss: () -> Unit, onClick: () -> Unit) 
     DropdownMenuItem(
         text = {
             Text(
-                label,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 13.sp,
+                label.replaceFirstChar { it.uppercase() },
+                style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurface,
             )
         },
@@ -225,26 +221,4 @@ private fun MenuAction(label: String, dismiss: () -> Unit, onClick: () -> Unit) 
             onClick()
         },
     )
-}
-
-@Composable
-internal fun ActionChip(
-    label: String,
-    highlighted: Boolean = false,
-    onClick: () -> Unit,
-) {
-    TextButton(
-        onClick = onClick,
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.height(36.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
-    ) {
-        Text(
-            label,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 12.sp,
-            color = if (highlighted) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurface,
-        )
-    }
 }

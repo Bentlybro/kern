@@ -1,6 +1,5 @@
 package dev.kern.app.projects
 
-import dev.kern.app.ui.HeaderAction
 import dev.kern.app.ui.KernColors
 import dev.kern.app.ui.ScreenHeader
 import dev.kern.app.ui.ScreenSurface
@@ -62,9 +61,7 @@ internal fun FolderBrowser(
     }
 
     ScreenSurface {
-        ScreenHeader("browse") {
-            HeaderAction("close", onClose)
-        }
+        ScreenHeader("Open folder", onBack = onClose)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -117,17 +114,6 @@ internal fun FolderBrowser(
             item { Spacer(Modifier.height(24.dp)) }
         }
     }
-}
-
-@Composable
-internal fun SectionLabel(text: String) {
-    Text(
-        text,
-        fontFamily = FontFamily.Monospace,
-        fontSize = 10.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 4.dp),
-    )
 }
 
 @Composable

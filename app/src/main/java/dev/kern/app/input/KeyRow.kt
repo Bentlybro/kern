@@ -1,9 +1,12 @@
 package dev.kern.app.input
 
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.clickable
 import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,7 +16,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -70,7 +72,7 @@ fun KeyRow() {
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 4.dp, vertical = 2.dp),
+                .padding(horizontal = 6.dp, vertical = 2.dp),
         ) {
             (layout ?: KeyLayout.DEFAULT).forEach { id ->
                 val label = KeyLayout.label(id)
@@ -107,42 +109,33 @@ fun KeyRow() {
 }
 
 @Composable
-private fun Key(label: String, onTap: () -> Unit) {
-    TextButton(
-        onClick = onTap,
-        modifier = Modifier.defaultMinSize(minWidth = 44.dp, minHeight = 44.dp),
-        shape = RoundedCornerShape(8.dp),
-        contentPadding = PaddingValues(horizontal = 6.dp),
-    ) {
-        Text(
-            label,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 13.sp,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-    }
-}
+private fun Key(label: String, onTap: () -> Unit) = KeyCap(label, active = false, onTap = onTap)
 
 @Composable
-private fun Sticky(label: String, active: Boolean, onTap: () -> Unit) {
-    TextButton(
-        onClick = onTap,
+private fun Sticky(label: String, active: Boolean, onTap: () -> Unit) = KeyCap(label, active, onTap)
+
+/**
+ * One key: a rounded cap a step above the bar, so each reads as something to press rather
+ * than as a word in a sentence. A sticky modifier that is on takes the accent.
+ */
+@Composable
+private fun KeyCap(label: String, active: Boolean, onTap: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Box(
         modifier = Modifier
-            .defaultMinSize(minWidth = 44.dp, minHeight = 44.dp)
-            .background(
-                if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
-                else MaterialTheme.colorScheme.surface,
-                RoundedCornerShape(8.dp),
-            ),
-        shape = RoundedCornerShape(8.dp),
-        contentPadding = PaddingValues(horizontal = 6.dp),
+            .padding(horizontal = 2.dp, vertical = 4.dp)
+            .defaultMinSize(minWidth = 40.dp, minHeight = 38.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(if (active) colors.primaryContainer else colors.surfaceContainerHighest)
+            .clickable(onClick = onTap)
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             label,
             fontFamily = FontFamily.Monospace,
             fontSize = 13.sp,
-            color = if (active) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurface,
+            color = if (active) colors.onPrimaryContainer else colors.onSurface,
         )
     }
 }

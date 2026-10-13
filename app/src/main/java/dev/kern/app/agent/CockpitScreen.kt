@@ -1,5 +1,7 @@
 package dev.kern.app.agent
 
+import dev.kern.app.ui.KernIcons
+import dev.kern.app.ui.HeaderIcon
 import dev.kern.app.core.runDetached
 import dev.kern.app.git.GitCommands
 import dev.kern.app.projects.ProjectRepository
@@ -147,7 +149,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                     )
                 }
             }
-            onDismiss?.let { HeaderAction("close", it) }
+            onDismiss?.let { HeaderIcon(KernIcons.Close, "Close", it) }
         }
 
         // Start and stop, or say plainly that no agent is set.
@@ -166,7 +168,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 )
 
                 agent != null -> {
-                    HeaderAction("stop") { TerminalSessions.stopAgent() }
+                    HeaderAction("Stop") { TerminalSessions.stopAgent() }
                     Text(
                         command,
                         fontFamily = FontFamily.Monospace,

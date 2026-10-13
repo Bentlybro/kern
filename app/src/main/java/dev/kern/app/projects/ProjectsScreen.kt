@@ -1,7 +1,7 @@
 package dev.kern.app.projects
 
+import dev.kern.app.ui.SectionTitle
 import dev.kern.app.core.AppScope
-import dev.kern.app.ui.HeaderAction
 import dev.kern.app.ui.ScreenHeader
 import dev.kern.app.ui.ScreenSurface
 import dev.kern.app.workbench.WorkbenchWebView
@@ -131,9 +131,7 @@ fun ProjectsScreen(
     }
 
     ScreenSurface {
-        ScreenHeader("projects") {
-            HeaderAction("close", onDismiss)
-        }
+        ScreenHeader("Projects", onBack = onDismiss)
 
         Column(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -351,7 +349,7 @@ fun ProjectsScreen(
 
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             if (recents.isNotEmpty()) {
-                item { SectionLabel("recent") }
+                item { SectionTitle("Recent", Modifier.padding(start = 16.dp)) }
                 items(recents) { path ->
                     FolderRow(
                         name = path.substringAfterLast('/'),
@@ -362,7 +360,7 @@ fun ProjectsScreen(
                 }
             }
 
-            item { SectionLabel("~/projects") }
+            item { SectionTitle("~/projects", Modifier.padding(start = 16.dp)) }
 
             if (!loading && entries.isEmpty()) {
                 item {
@@ -415,7 +413,7 @@ fun ProjectsScreen(
                 )
             }
 
-            item { SectionLabel("other") }
+            item { SectionTitle("Other", Modifier.padding(start = 16.dp)) }
             item {
                 FolderRow(
                     name = "home",

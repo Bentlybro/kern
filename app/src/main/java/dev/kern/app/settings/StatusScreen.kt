@@ -1,5 +1,7 @@
 package dev.kern.app.settings
 
+import dev.kern.app.ui.KernIcons
+import dev.kern.app.ui.HeaderIcon
 import dev.kern.app.core.AppScope
 import dev.kern.app.core.BatteryOptimization
 import dev.kern.app.core.UsageTracker
@@ -10,7 +12,6 @@ import dev.kern.app.ui.KernColors
 import dev.kern.app.ui.ScreenHeader
 import dev.kern.app.ui.ScreenSurface
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -101,10 +102,9 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
     }
 
     ScreenSurface {
-        ScreenHeader("status") {
-            HeaderAction("settings", onOpenSettings)
-            HeaderAction("recheck") { refresh++ }
-            HeaderAction("close", onDismiss)
+        ScreenHeader("Status", onBack = onDismiss) {
+            HeaderAction("Settings", onOpenSettings)
+            HeaderIcon(KernIcons.Refresh, "Recheck", { refresh++ })
         }
 
         if (loading) {

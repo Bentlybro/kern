@@ -1,5 +1,9 @@
 package dev.kern.app.editor
 
+import dev.kern.app.ui.KernIcons
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.foundation.background
 import androidx.compose.material3.TextButton
 import kotlinx.coroutines.delay
@@ -33,7 +37,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -90,6 +93,8 @@ fun NativeEditorPane(modifier: Modifier = Modifier) {
     val conflicts by DiskSync.conflicts.collectAsStateWithLifecycle()
     val root = ProjectRepository.currentFolder(context)
 
+    LaunchedEffect(Unit) { NativeEditor.restore(context.applicationContext) }
+
     // Follow the disk while on screen: one stat per open tab, so cheap enough to poll.
     val lifecycle = LocalLifecycleOwner.current
     LaunchedEffect(lifecycle) {
@@ -139,7 +144,10 @@ fun NativeEditorPane(modifier: Modifier = Modifier) {
                         factory = { ctx -> NativeEditor.acquire(ctx) },
                     )
                     if (open.isEmpty()) {
-                        EmptyState(problem, onBrowse = { EditorChrome.treeOpen.value = true })
+                        EmptyState(
+                            onBrowse = { EditorChrome.treeOpen.value = true },
+                            onGoTo = { EditorChrome.quickOpen.value = true },
+                        )
                     }
                 }
             }
@@ -223,25 +231,25 @@ private fun Tabs(
 }
 
 @Composable
-private fun EmptyState(problem: String?, onBrowse: () -> Unit) {
+private fun EmptyState(onBrowse: () -> Unit, onGoTo: () -> Unit) {
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(
-            problem ?: "No file open",
-            fontSize = 15.sp,
-            color = if (problem != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onBackground,
+        Icon(
+            KernIcons.Code,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+            modifier = Modifier.size(48.dp),
         )
-        Spacer(Modifier.size(10.dp))
-        Text(
-            "Browse files",
-            fontSize = 14.sp,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.clip(CircleShape).clickable(onClick = onBrowse).padding(horizontal = 14.dp, vertical = 8.dp),
-        )
+        Spacer(Modifier.size(14.dp))
+        Text("No file open", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onBackground)
+        Spacer(Modifier.size(18.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            FilledTonalButton(onClick = onBrowse) { Text("Browse files") }
+            OutlinedButton(onClick = onGoTo) { Text("Go to file") }
+        }
     }
 }
 

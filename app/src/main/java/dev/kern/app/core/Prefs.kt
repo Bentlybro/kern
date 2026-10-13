@@ -34,4 +34,8 @@ object Prefs {
     const val KEY_RELAUNCH_AFTER_UPDATE = "relaunch_after_update"
     const val KEY_KEY_ROW = "key_row"
     const val KEY_EDITOR_MODE = "editor_mode"
+    const val KEY_EDITOR_FONT_SP = "editor_font_sp"
+    const val KEY_EDITOR_WRAP = "editor_wrap"
+    const val KEY_EDITOR_TABS = "editor_tabs"
+    const val KEY_EDITOR_ACTIVE = "editor_active"
 }

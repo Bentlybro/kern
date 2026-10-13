@@ -103,7 +103,7 @@ internal fun ReplyBar(
 @Composable
 internal fun QuickKey(label: String, onTap: () -> Unit) {
     TextButton(onClick = onTap) {
-        Text(label, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+        Text(label, fontSize = 13.sp)
     }
 }
 

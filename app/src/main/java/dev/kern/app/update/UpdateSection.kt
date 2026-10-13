@@ -19,7 +19,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -66,7 +65,6 @@ fun UpdateSection() {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             "Version ${Updates.currentVersion}",
-            fontFamily = FontFamily.Monospace,
             fontSize = 12.5.sp,
             color = MaterialTheme.colorScheme.onBackground,
         )
@@ -168,7 +166,7 @@ private fun CheckAgain(
 ) {
     // includeSkipped, because pressing this is asking again on purpose.
     TextButton(onClick = { scope.launch { Updates.check(context, includeSkipped = true) } }) {
-        Text("Check for updates", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+        Text("Check for updates", fontSize = 12.sp)
     }
 }
 

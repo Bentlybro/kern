@@ -73,9 +73,11 @@ fun EditorSection() {
         Slider(
             value = size,
             onValueChange = { size = it },
-            onValueChangeFinished = { EditorPrefs.setFontSp(context, size) },
+            onValueChangeFinished = {
+                size = Math.round(size).toFloat()
+                EditorPrefs.setFontSp(context, size)
+            },
             valueRange = EditorPrefs.MIN_SP..EditorPrefs.MAX_SP,
-            steps = (EditorPrefs.MAX_SP - EditorPrefs.MIN_SP).toInt() - 1,
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Wrap long lines", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))

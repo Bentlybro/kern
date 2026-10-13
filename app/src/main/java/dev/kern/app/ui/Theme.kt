@@ -1,12 +1,15 @@
 package dev.kern.app.ui
 
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 
 /**
@@ -57,9 +60,9 @@ private val Type = Typography().let { base ->
         titleLarge = base.titleLarge.copy(fontSize = 20.sp, fontWeight = FontWeight.SemiBold),
         titleMedium = base.titleMedium.copy(fontSize = 17.sp, fontWeight = FontWeight.SemiBold),
         titleSmall = base.titleSmall.copy(fontSize = 15.sp, fontWeight = FontWeight.Medium),
-        bodyLarge = base.bodyLarge.copy(fontSize = 15.sp),
-        bodyMedium = base.bodyMedium.copy(fontSize = 14.sp),
-        bodySmall = base.bodySmall.copy(fontSize = 12.5.sp),
+        bodyLarge = base.bodyLarge.copy(fontSize = 15.sp, lineHeight = 1.4.em),
+        bodyMedium = base.bodyMedium.copy(fontSize = 14.sp, lineHeight = 1.4.em),
+        bodySmall = base.bodySmall.copy(fontSize = 12.5.sp, lineHeight = 1.4.em),
         labelLarge = base.labelLarge.copy(fontSize = 14.sp, fontWeight = FontWeight.Medium),
         // Section labels: small caps-style, tracked out, quiet.
         labelSmall = TextStyle(fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.9.sp),
@@ -81,5 +84,10 @@ object KernColors {
 
 @Composable
 fun KernTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = Scheme, typography = Type, content = content)
+    // Text with no colour of its own takes the content colour, which nothing set: it was
+    // black on a black screen wherever a composable forgot a colour (caught on device in
+    // Settings). Providing it here fixes every such place at once.
+    MaterialTheme(colorScheme = Scheme, typography = Type) {
+        CompositionLocalProvider(LocalContentColor provides Scheme.onBackground, content = content)
+    }
 }

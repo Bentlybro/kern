@@ -26,7 +26,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -111,7 +110,6 @@ private fun ShellStuck(onRetry: () -> Unit) {
     ) {
         Text(
             "The shell keeps exiting.",
-            fontFamily = FontFamily.Monospace,
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.primary,
         )
@@ -167,7 +165,6 @@ private fun Tab(
     ) {
         Text(
             title,
-            fontFamily = FontFamily.Monospace,
             fontSize = 11.sp,
             color = if (selected) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -184,7 +181,6 @@ private fun Tab(
             ) {
                 Text(
                     "x",
-                    fontFamily = FontFamily.Monospace,
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -213,13 +209,11 @@ private fun DetachedTab(slot: Int, onReattach: () -> Unit) {
     ) {
         Text(
             "sh $slot",
-            fontFamily = FontFamily.Monospace,
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
             "reopen",
-            fontFamily = FontFamily.Monospace,
             fontSize = 10.sp,
             color = MaterialTheme.colorScheme.primary,
         )

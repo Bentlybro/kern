@@ -39,7 +39,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -132,7 +131,6 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
             Spacer(Modifier.width(8.dp))
             Text(
                 if (running) "running" else "idle",
-                fontFamily = FontFamily.Monospace,
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurface,
             )
@@ -141,7 +139,6 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 if (it.isRepo) {
                     Text(
                         "${it.branch} · ${it.changed} changed",
-                        fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
                         maxLines = 1,
                         softWrap = false,
@@ -171,7 +168,6 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                     HeaderAction("Stop") { TerminalSessions.stopAgent() }
                     Text(
                         command,
-                        fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
                         maxLines = 1,
                         softWrap = false,
@@ -194,7 +190,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
             Tab("output", !showDiff) { showDiff = false }
             Tab("diff", showDiff) { showDiff = true }
             TextButton(onClick = { refresh++ }) {
-                Text("refresh", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+                Text("refresh", fontSize = 12.sp)
             }
         }
 

@@ -2,7 +2,6 @@ package dev.kern.app.input
 
 import dev.kern.app.ui.SectionTitle
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -23,7 +22,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -54,7 +52,7 @@ fun KeyRowSection() {
             InputChip(
                 selected = selected == i,
                 onClick = { selected = if (selected == i) null else i },
-                label = { Text(KeyLayout.label(id), fontFamily = FontFamily.Monospace, fontSize = 12.sp) },
+                label = { Text(KeyLayout.label(id), fontSize = 12.sp) },
             )
         }
     }
@@ -86,7 +84,7 @@ fun KeyRowSection() {
             missing.forEach { id ->
                 AssistChip(
                     onClick = { save(withAdded(row, id)) },
-                    label = { Text(KeyLayout.label(id), fontFamily = FontFamily.Monospace, fontSize = 12.sp) },
+                    label = { Text(KeyLayout.label(id), fontSize = 12.sp) },
                 )
             }
         }
@@ -111,7 +109,6 @@ fun KeyRowSection() {
     }
     TextButton(onClick = { KeyLayout.reset(context); selected = null }) { Text("Reset to default") }
 }
-
 
 /**
  * [id] placed just before the run of single-character symbols, not after it. Appended, a

@@ -1,5 +1,7 @@
 package dev.kern.app.settings
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import dev.kern.app.ui.SectionTitle
 import dev.kern.app.ui.KernIcons
 import dev.kern.app.ui.HeaderIcon
 import dev.kern.app.core.AppScope
@@ -43,7 +45,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -195,7 +196,6 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                             ) {
                                 Text(
                                     item.remedyLabel ?: "Fix",
-                                    fontFamily = FontFamily.Monospace,
                                     fontSize = 11.5.sp,
                                 )
                             }
@@ -205,13 +205,7 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
             }
 
             item {
-                Text(
-                    "where your time goes",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, top = 18.dp, bottom = 4.dp),
-                )
+                SectionTitle("Where your time goes", Modifier.padding(start = 16.dp, top = 12.dp))
             }
             items(UsageTracker.Surface.entries) { surface ->
                 val ms = totals[surface] ?: 0L
@@ -223,15 +217,16 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        surface.name.lowercase().padEnd(9),
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
+                        surface.name,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.width(90.dp),
                     )
                     Box(
                         Modifier
                             .weight(1f)
                             .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant),
                     ) {
                         Box(
@@ -244,7 +239,6 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                     Spacer(Modifier.width(10.dp))
                     Text(
                         UsageTracker.format(ms),
-                        fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -255,9 +249,8 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                     if (totalMs <= 0) {
                         "No usage recorded yet."
                     } else {
-                        "Editor is ${"%.0f".format(UsageTracker.editorShare(context) * 100)}% " +
-                            "of tracked time. Decision D12 says a native editor rewrite only " +
-                            "earns its keep well above ~15%."
+                        "Time spent in each part of Kern, on this device only. Nothing leaves " +
+                            "the phone."
                     },
                     fontSize = 11.5.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

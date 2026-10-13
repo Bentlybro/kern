@@ -38,7 +38,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -194,7 +193,6 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
     (installerStage as? RootfsInstaller.Stage.Working)?.let {
         Text(
             "${it.what}...",
-            fontFamily = FontFamily.Monospace,
             fontSize = 11.5.sp,
             color = MaterialTheme.colorScheme.primary,
         )
@@ -285,7 +283,6 @@ private fun UsageBar(u: StorageManager.Usage) {
         Text(
             "${StorageManager.format(u.guestMb)} of " +
                 "${StorageManager.format(u.limitMb.toLong())} budget",
-            fontFamily = FontFamily.Monospace,
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -315,7 +312,6 @@ private fun LimitChooser(selected: Int, onSelect: (Int) -> Unit) {
             ) {
                 Text(
                     StorageManager.format(choice.toLong()),
-                    fontFamily = FontFamily.Monospace,
                     fontSize = 12.sp,
                     color = if (active) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -336,7 +332,6 @@ private fun UsageRow(label: String, value: String) {
         Spacer(Modifier.weight(1f))
         Text(
             value,
-            fontFamily = FontFamily.Monospace,
             fontSize = 12.5.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

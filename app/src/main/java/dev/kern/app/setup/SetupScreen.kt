@@ -42,7 +42,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -120,7 +119,6 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
     ) {
         Text(
             "Kern",
-            fontFamily = FontFamily.Monospace,
             fontSize = 28.sp,
             color = MaterialTheme.colorScheme.primary,
         )
@@ -275,7 +273,6 @@ private fun LogView(lines: List<String>) {
         items(lines) { line ->
             Text(
                 line,
-                fontFamily = FontFamily.Monospace,
                 fontSize = 9.5.sp,
                 maxLines = 2,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -300,7 +297,6 @@ private fun StageView(stage: RootfsInstaller.Stage) {
                 } else {
                     "Downloading ${stage.what} — $mb MB"
                 },
-                fontFamily = FontFamily.Monospace,
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -319,7 +315,6 @@ private fun StageView(stage: RootfsInstaller.Stage) {
         ) {
             Text(
                 "${stage.what}…",
-                fontFamily = FontFamily.Monospace,
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -328,7 +323,6 @@ private fun StageView(stage: RootfsInstaller.Stage) {
 
         is RootfsInstaller.Stage.Done -> Text(
             "Ready.",
-            fontFamily = FontFamily.Monospace,
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.primary,
         )

@@ -31,7 +31,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -125,7 +124,6 @@ fun GitHubSection() {
                 current.email?.let {
                     Text(
                         "Commits are authored as $it",
-                        fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -218,7 +216,6 @@ private fun DeviceCodeCard(
         )
         Text(
             code,
-            fontFamily = FontFamily.Monospace,
             fontWeight = FontWeight.Bold,
             fontSize = 30.sp,
             color = MaterialTheme.colorScheme.primary,

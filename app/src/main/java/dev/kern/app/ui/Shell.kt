@@ -46,7 +46,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -326,7 +325,6 @@ private fun SetupStrip() {
     Column(Modifier.fillMaxWidth()) {
         Text(
             failure ?: "$label — you can keep working",
-            fontFamily = FontFamily.Monospace,
             fontSize = 10.sp,
             color = if (failure != null) {
                 MaterialTheme.colorScheme.error

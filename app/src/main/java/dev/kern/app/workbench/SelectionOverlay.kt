@@ -26,7 +26,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -151,6 +150,6 @@ private fun Handle(
 @Composable
 private fun Action(label: String, onClick: () -> Unit) {
     TextButton(onClick = onClick) {
-        Text(label, fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+        Text(label, fontSize = 12.sp)
     }
 }

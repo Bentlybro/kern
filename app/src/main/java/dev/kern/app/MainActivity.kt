@@ -33,7 +33,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -178,7 +177,6 @@ private fun BootingScreen(state: SessionState) {
         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         Text(
             if (state is SessionState.Reconnecting) "reconnecting" else "starting VS Code",
-            fontFamily = FontFamily.Monospace,
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 16.dp),

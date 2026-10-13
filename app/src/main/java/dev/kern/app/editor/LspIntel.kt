@@ -48,9 +48,26 @@ def reader():
             pending[msg["id"]][1] = msg.get("result")
             pending[msg["id"]][0].set()
 threading.Thread(target=reader, daemon=True).start()
-request("initialize", {"processId": os.getpid(), "rootUri": None, "capabilities": {
-    "textDocument": {"completion": {"completionItem": {"snippetSupport": False}}}}}, timeout=30)
-send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+# Initialised on the first request, rooted at the nearest folder that looks like a project:
+# rust-analyzer does nothing without the Cargo.toml it hangs a workspace on, and gopls
+# wants go.mod. Started rootless, rust-analyzer answered every request empty (on device).
+MARKERS = ("Cargo.toml", "go.mod", "compile_commands.json", "package.json", ".git")
+started = [False]
+def start(path):
+    d = os.path.dirname(path)
+    root = d
+    while d and d != "/":
+        if any(os.path.exists(os.path.join(d, m)) for m in MARKERS):
+            root = d
+            break
+        d = os.path.dirname(d)
+    uri = "file://" + root
+    request("initialize", {"processId": os.getpid(), "rootUri": uri,
+        "workspaceFolders": [{"uri": uri, "name": os.path.basename(root)}],
+        "capabilities": {"textDocument": {"completion": {"completionItem": {"snippetSupport": False}}}}},
+        timeout=60)
+    send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+    started[0] = True
 versions = {}
 KIND = {2: "method", 3: "function", 4: "function", 5: "property", 6: "var", 7: "class",
         8: "interface", 9: "module", 10: "property", 13: "enum", 14: "keyword", 22: "class"}
@@ -59,6 +76,8 @@ for line in sys.stdin:
     out = []
     try:
         r = json.loads(line)
+        if not started[0]:
+            start(r["p"])
         uri = "file://" + r["p"]
         text = base64.b64decode(r["s"]).decode("utf-8", "replace")
         if uri not in versions:

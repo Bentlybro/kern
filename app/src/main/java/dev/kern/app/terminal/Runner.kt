@@ -35,7 +35,10 @@ object Runner {
             "go" -> "go run $file"
             "c" -> "cc $file -o /tmp/kern-run && /tmp/kern-run"
             "cpp", "cc", "cxx" -> "c++ $file -o /tmp/kern-run && /tmp/kern-run"
-            "rs" -> "rustc $file -o /tmp/kern-run && /tmp/kern-run"
+            // Inside a cargo project, cargo: a lone rustc cannot see the crate's
+            // dependencies or its other modules. A single loose file still compiles alone.
+            "rs" -> "if cargo locate-project >/dev/null 2>&1; then cargo run -q; " +
+                "else rustc $file -o /tmp/kern-run && /tmp/kern-run; fi"
             "java" -> "java $file"
             "kt", "kts" -> if (name.endsWith(".kts")) "kotlin $file" else null
             else -> when (name) {

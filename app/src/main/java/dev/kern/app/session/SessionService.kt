@@ -18,8 +18,8 @@ import android.os.PowerManager
 import android.util.Log
 import dev.kern.app.R
 import dev.kern.app.core.Notifications
-import java.net.HttpURLConnection
-import java.net.URL
+import dev.kern.app.editor.EditorMode
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -142,15 +142,6 @@ class SessionService : Service() {
         // resolvers indefinitely because neither apt nor clone had run since setup.
         GuestConfig.refreshDns(this)
 
-        if (isHealthy()) {
-            Log.i(TAG, "supervise: adopted an already-running server")
-        } else {
-            CodeServer.applyWorkbenchSettings(this)
-            if (!launchWithRetries()) return
-        }
-        _state.value = SessionState.Healthy
-        updateNotification(running())
-
         // Pocket workflow (M5): while a session is running, watch for the agent stopping to
         // ask something and raise a notification so the phone can be in a pocket.
         //
@@ -179,6 +170,28 @@ class SessionService : Service() {
                 }
             }
         }
+
+        // The native editor needs no server, so none is started until the workbench is
+        // asked for: code-server is a Node process of a few hundred MB that takes ten to
+        // twenty seconds of CPU to boot, all of it wasted on someone who never opens it.
+        // The session is usable meanwhile - terminals, the cockpit and the editor all
+        // work - so it says so, and the server starts the moment the mode flips.
+        if (EditorMode.isNative(this) && !isHealthy()) {
+            _state.value = SessionState.Healthy
+            updateNotification("Linux is running")
+            EditorMode.flow(this).first { it == EditorMode.Kind.Workbench }
+            _state.value = SessionState.Starting
+            updateNotification("Starting VS Code...")
+        }
+
+        if (isHealthy()) {
+            Log.i(TAG, "supervise: adopted an already-running server")
+        } else {
+            CodeServer.applyWorkbenchSettings(this)
+            if (!launchWithRetries()) return
+        }
+        _state.value = SessionState.Healthy
+        updateNotification(running())
 
         var watch = RestartPolicy.State()
         while (scope.isActive) {
@@ -295,16 +308,7 @@ class SessionService : Service() {
         return isHealthy()
     }
 
-    private fun isHealthy(): Boolean = try {
-        val conn = URL(CodeServer.HEALTH_URL).openConnection() as HttpURLConnection
-        conn.connectTimeout = 2_000
-        conn.readTimeout = 2_000
-        val ok = conn.responseCode in 200..299
-        conn.disconnect()
-        ok
-    } catch (e: Exception) {
-        false
-    }
+    private fun isHealthy(): Boolean = CodeServer.isHealthy()
 
     private fun shutdown() {
         superviseJob?.cancel()

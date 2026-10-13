@@ -177,7 +177,7 @@ private fun BootingScreen(state: SessionState) {
     ) {
         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         Text(
-            if (state is SessionState.Reconnecting) "reconnecting" else "starting linux",
+            if (state is SessionState.Reconnecting) "reconnecting" else "starting VS Code",
             fontFamily = FontFamily.Monospace,
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

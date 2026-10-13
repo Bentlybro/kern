@@ -1,7 +1,10 @@
 package dev.kern.app.ui
 
 import dev.kern.app.agent.AgentRepository
+import dev.kern.app.core.AppScope
+import dev.kern.app.editor.EditorChrome
 import dev.kern.app.editor.EditorMode
+import dev.kern.app.workbench.WorkbenchFiles
 import dev.kern.app.editor.NativeEditor
 import dev.kern.app.input.InputTargets
 import dev.kern.app.session.SessionState
@@ -130,10 +133,10 @@ internal fun TopBar(
                 // likeliest person to open this menu at all.
                 MenuAction("redo", { menuOpen = false }) { InputTargets.redo(context) }
                 MenuAction("find", { menuOpen = false }) { InputTargets.find(context) }
+                MenuAction("go to file", { menuOpen = false }) {
+                    if (native) EditorChrome.quickOpen.value = true else WorkbenchWebView.Commands.quickOpen()
+                }
                 if (!native) {
-                    MenuAction("go to file", { menuOpen = false }) {
-                        WorkbenchWebView.Commands.quickOpen()
-                    }
                     MenuAction("find in files", { menuOpen = false }) {
                         WorkbenchWebView.Commands.toggleSearch()
                     }
@@ -163,7 +166,14 @@ internal fun TopBar(
                 // Both editors work on the same files, so switching is free at any moment:
                 // VS Code for language servers and extensions, native for speed and touch.
                 MenuAction(if (native) "open VS Code" else "native editor", { menuOpen = false }) {
-                    if (native) NativeEditor.saveAll()
+                    if (native) {
+                        NativeEditor.saveAll()
+                        // Carry the file being edited across, so the switch lands where
+                        // the user was rather than on an empty workbench.
+                        val file = NativeEditor.active.value
+                        val app = context.applicationContext
+                        if (file != null) AppScope.start { WorkbenchFiles.open(app, file) }
+                    }
                     EditorMode.set(context, if (native) EditorMode.Kind.Workbench else EditorMode.Kind.Native)
                 }
                 MenuAction("status", { menuOpen = false }) {

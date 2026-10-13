@@ -1,9 +1,9 @@
 package dev.kern.app.projects
 
+import dev.kern.app.editor.EditorMode
+import dev.kern.app.editor.NativeEditor
 import dev.kern.app.guest.LinuxRuntime
-import dev.kern.app.guest.sq
-import dev.kern.app.session.SessionService
-import dev.kern.app.session.SessionState
+import dev.kern.app.workbench.WorkbenchFiles
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -12,10 +12,8 @@ import android.provider.OpenableColumns
 import android.util.Log
 import java.io.File
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Files arriving from the rest of the phone: "Open with Kern" from a file manager, and
@@ -41,23 +39,13 @@ object IncomingFiles {
     suspend fun handle(context: Context, intent: Intent) {
         val path = receive(context, intent) ?: return
         _arrivals.value++
-        // code-server's own CLI, which opens the file in the window already connected over
-        // its IPC socket - no reload, workspace untouched. VS Code web's `payload` URL
-        // parameter was tried first and silently opened nothing (verified on device).
-        // A share can cold-start the app, so wait for a server and a window to talk to.
-        withTimeoutOrNull(90_000) {
-            SessionService.state.first { it is SessionState.Healthy }
-        } ?: return
-        repeat(6) { attempt ->
-            if (attempt > 0) delay(3_000)
-            val r = LinuxRuntime.run(
-                context,
-                "code-server --reuse-window ${sq(path)} >/dev/null 2>&1",
-                timeoutMs = 20_000,
-            )
-            if (r?.ok == true) return
+        // Into whichever editor is in use: the native one opens instantly, the workbench
+        // once it has a connected window.
+        if (EditorMode.isNative(context)) {
+            NativeEditor.open(context, path)
+        } else {
+            WorkbenchFiles.open(context, path)
         }
-        Log.w(TAG, "could not open $path in the workbench")
     }
 
     /** Whether [intent] is one of ours to handle at all. */

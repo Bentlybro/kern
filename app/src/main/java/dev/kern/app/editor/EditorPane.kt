@@ -46,6 +46,19 @@ import kotlinx.coroutines.launch
 object EditorChrome {
     val treeOpen = MutableStateFlow(false)
     val findOpen = MutableStateFlow(false)
+    val quickOpen = MutableStateFlow(false)
+
+    /** Whether any of the above is showing - what back should close first. */
+    fun anyOpen(): Boolean = treeOpen.value || findOpen.value || quickOpen.value
+
+    /** Close the topmost: go-to-file, then the tree, then find. */
+    fun closeTop() {
+        when {
+            quickOpen.value -> quickOpen.value = false
+            treeOpen.value -> treeOpen.value = false
+            else -> findOpen.value = false
+        }
+    }
 
     fun toggleTree() {
         treeOpen.value = !treeOpen.value
@@ -69,6 +82,7 @@ fun NativeEditorPane(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val treeOpen by EditorChrome.treeOpen.collectAsStateWithLifecycle()
     val findOpen by EditorChrome.findOpen.collectAsStateWithLifecycle()
+    val quickOpen by EditorChrome.quickOpen.collectAsStateWithLifecycle()
     val open by NativeEditor.open.collectAsStateWithLifecycle()
     val active by NativeEditor.active.collectAsStateWithLifecycle()
     val unsaved by NativeEditor.unsaved.collectAsStateWithLifecycle()
@@ -148,6 +162,16 @@ fun NativeEditorPane(modifier: Modifier = Modifier) {
                         .clickable { EditorChrome.treeOpen.value = false },
                 )
             }
+        }
+        if (quickOpen) {
+            QuickOpen(
+                root,
+                onOpen = {
+                    openFile(it)
+                    EditorChrome.quickOpen.value = false
+                },
+                onDismiss = { EditorChrome.quickOpen.value = false },
+            )
         }
     }
 }

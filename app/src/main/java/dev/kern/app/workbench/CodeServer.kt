@@ -34,6 +34,18 @@ object CodeServer {
 
     const val HEALTH_URL = "http://127.0.0.1:$PORT/healthz"
 
+    /** Whether the server answers its health endpoint. Blocking; at most ~4 s. */
+    fun isHealthy(): Boolean = try {
+        val conn = java.net.URL(HEALTH_URL).openConnection() as java.net.HttpURLConnection
+        conn.connectTimeout = 2_000
+        conn.readTimeout = 2_000
+        val ok = conn.responseCode in 200..299
+        conn.disconnect()
+        ok
+    } catch (e: Exception) {
+        false
+    }
+
     /**
      * Start code-server inside the guest if it is not already listening. Idempotent via
      * a pidfile; deliberately not `pgrep`, whose pattern would also match the very shell

@@ -133,8 +133,17 @@ fun Shell(state: SessionState) {
     BackHandler(enabled = destination != ShellDestination.Editor) {
         destination = ShellDestination.Editor
     }
-    BackHandler(enabled = destination == ShellDestination.Editor) {
-        WorkbenchWebView.Commands.escape()
+    // In the native editor, back closes whatever native chrome is open over it and is
+    // otherwise left to the system, as every Android app does. The workbench keeps its
+    // Escape, which closes VS Code's own pickers and panels.
+    val editorMode by EditorMode.flow(LocalContext.current).collectAsStateWithLifecycle()
+    val treeOpen by EditorChrome.treeOpen.collectAsStateWithLifecycle()
+    val findOpen by EditorChrome.findOpen.collectAsStateWithLifecycle()
+    val quickOpen by EditorChrome.quickOpen.collectAsStateWithLifecycle()
+    val native = editorMode == EditorMode.Kind.Native
+    val chromeOpen = treeOpen || findOpen || quickOpen
+    BackHandler(enabled = destination == ShellDestination.Editor && (!native || chromeOpen)) {
+        if (native) EditorChrome.closeTop() else WorkbenchWebView.Commands.escape()
     }
 
     // A file shared to Kern opens in the editor, so the editor is where to be. Skipping

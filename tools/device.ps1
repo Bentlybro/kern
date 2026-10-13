@@ -35,8 +35,9 @@ $ErrorActionPreference = 'Stop'
 
 # ---- configuration ---------------------------------------------------------
 
-$Adb      = 'C:\adb\adb.exe'
-$Device   = '192.168.0.233:5555'
+# KERN_ADB / KERN_DEVICE override these; smoke.ps1 passes its -Adb and -Device through them.
+$Adb      = if ($env:KERN_ADB) { $env:KERN_ADB } else { 'C:\adb\adb.exe' }
+$Device   = if ($env:KERN_DEVICE) { $env:KERN_DEVICE } else { '192.168.0.233:5555' }
 $Pkg      = 'dev.kern.app'
 $Activity = "$Pkg/.MainActivity"
 $Root     = Split-Path -Parent $PSScriptRoot

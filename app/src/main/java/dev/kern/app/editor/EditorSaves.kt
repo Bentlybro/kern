@@ -36,6 +36,15 @@ internal object EditorSaves {
         }
     }
 
+    /**
+     * Wait until no write to [paths] is in flight. Call after dropping their tabs: a write
+     * that had already passed its dropped check then finishes before the caller moves or
+     * deletes the files, rather than landing after and recreating them.
+     */
+    suspend fun settle(paths: Collection<String>) {
+        for (path in paths) locks[path]?.withLock { }
+    }
+
     private fun write(context: Context, file: NativeEditor.OpenFile, version: Long, text: String): Boolean {
         // Closed without saving, or a later save of this file already wrote newer text.
         if (file.dropped || file.savedRevision >= version) return false

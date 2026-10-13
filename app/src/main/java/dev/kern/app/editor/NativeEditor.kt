@@ -157,6 +157,11 @@ object NativeEditor {
         }
         val (language, highlighted) = EditorLanguages.forPath(context, path)
         withContext(Dispatchers.Main) {
+            // Opened twice at once: the first one in is the tab, and may already be edited.
+            if (path in files) {
+                activate(path)
+                return@withContext
+            }
             val file = OpenFile(path, Content(text)).also {
                 it.language = language
                 it.highlighted = highlighted
@@ -241,6 +246,39 @@ object NativeEditor {
                 report("${path.substringAfterLast('/')} isn't saved, so it stays open")
             }
         }
+    }
+
+    /**
+     * Run [operation] - a rename of [path] to [renamedTo], or with null a delete - with the
+     * tabs under it out of the way: saved, closed, and their in-flight writes finished, so
+     * nothing can be typed into them or written back while the files move. Afterwards they
+     * reopen at their new paths, or at their old ones if the operation failed.
+     *
+     * Returns the operation's result, or null without running it when a tab could not be
+     * saved - closing it then would lose the edits.
+     */
+    suspend fun moving(context: Context, path: String, renamedTo: String?, operation: suspend () -> Boolean): Boolean? {
+        val affected = withContext(Dispatchers.Main) { under(path) }
+        val wasActive = _active.value?.takeIf { it in affected }
+        flush(affected)
+        val cleared = withContext(Dispatchers.Main) {
+            // Checked and dropped in one step on Main, so no keystroke lands in between.
+            if (affected.any { it in _unsaved.value }) return@withContext false
+            drop(*affected.filter { it in files }.toTypedArray())
+            true
+        }
+        if (!cleared) {
+            report("${path.substringAfterLast('/')} has unsaved changes - resolve them first")
+            return null
+        }
+        EditorSaves.settle(affected)
+        val ok = operation()
+        fun moved(p: String) = if (ok && renamedTo != null) renamedTo + p.removePrefix(path) else p
+        if (!ok || renamedTo != null) {
+            for (p in affected) open(context, moved(p))
+            wasActive?.let { moved(it) }?.takeIf { it in files }?.let { withContext(Dispatchers.Main) { activate(it) } }
+        }
+        return ok
     }
 
     /**

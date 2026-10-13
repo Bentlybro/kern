@@ -83,8 +83,12 @@ class ProjectsModel(private val app: Context, private val scope: CoroutineScope)
         // Its tabs close first, inside the same app-scoped job as the rm: a save still
         // queued for one of them would otherwise put the deleted folder back.
         val work = AppScope.start {
-            withContext(Dispatchers.Main) { NativeEditor.forget("${ProjectRepository.PROJECTS_DIR}/${name.trim()}") }
-            ProjectRepository.delete(app, name)
+            var outcome: ProjectRepository.Outcome = ProjectRepository.Outcome.Failure("${name.trim()} has unsaved changes - resolve them first")
+            NativeEditor.moving(app, "${ProjectRepository.PROJECTS_DIR}/${name.trim()}", null) {
+                outcome = ProjectRepository.delete(app, name)
+                outcome is ProjectRepository.Outcome.Success
+            }
+            outcome
         }
         scope.launch { report(work.await(), "Deleted") {} }
     }

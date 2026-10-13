@@ -45,8 +45,8 @@ jobs:
       - name: Read the constants out of the source
         id: constants
         run: |
-          guest=app/src/main/java/dev/kern/app/runtime/GuestConfig.kt
-          installer=app/src/main/java/dev/kern/app/runtime/RootfsInstaller.kt
+          guest=app/src/main/java/dev/kern/app/guest/GuestConfig.kt
+          installer=app/src/main/java/dev/kern/app/guest/RootfsInstaller.kt
 
           release=$(grep -oP 'UBUNTU_RELEASE = "\K[^"]+' "$guest" || true)
           codename=$(grep -oP 'UBUNTU_CODENAME = "\K[^"]+' "$guest" || true)

@@ -2,7 +2,7 @@
 
 ## Build
 
-The build needs JDK 17 and an Android SDK with platform 37; the Gradle wrapper (Gradle 9.7, Android Gradle Plugin 9.4) is checked in and fetches the rest. AGP 9 compiles Kotlin itself, so there is no `kotlin-android` plugin.
+The build needs JDK 17 and an Android SDK with platform 37; the Gradle wrapper (Gradle 9.7.1, Android Gradle Plugin 9.4) is checked in and fetches the rest. AGP 9 compiles Kotlin itself, so there is no `kotlin-android` plugin.
 
 ```powershell
 $env:JAVA_HOME = "C:\Program Files\Java\jdk-17"

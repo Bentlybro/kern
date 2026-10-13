@@ -1,5 +1,6 @@
 package dev.kern.app.setup
 
+import androidx.compose.ui.text.font.FontWeight
 import dev.kern.app.core.BatteryOptimization
 import dev.kern.app.guest.LinuxRuntime
 import dev.kern.app.guest.RootfsInstaller
@@ -117,9 +118,11 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        Spacer(Modifier.height(24.dp))
         Text(
             "Kern",
-            fontSize = 28.sp,
+            style = MaterialTheme.typography.displaySmall,
+            fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
         )
         Text(
@@ -129,8 +132,8 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
                 "A complete Linux development environment, running inside this app. " +
                     "Nothing else to install."
             },
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
         )
 
         if (!ready) {
@@ -138,7 +141,7 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
                 "Setup downloads about ${RootfsInstaller.ESTIMATED_DOWNLOAD_MB} MB and " +
                     "uses roughly ${RootfsInstaller.ESTIMATED_DISK_MB} MB of storage. " +
                     "Use Wi-Fi — it takes a few minutes.",
-                fontSize = 12.5.sp,
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

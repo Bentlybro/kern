@@ -37,7 +37,8 @@ class WarmProcess(
     @Volatile
     private var process: PtyProcess? = null
     private val ids = AtomicInteger()
-    private val waiting = ConcurrentHashMap<Int, CompletableFuture<JSONArray>>()
+    /** Requests awaiting an answer, each with the process it was sent to. */
+    private val waiting = ConcurrentHashMap<Int, Pair<PtyProcess, CompletableFuture<JSONArray>>>()
 
     /** When the last process started, and the earliest the next may; see [read]. */
     @Volatile
@@ -72,7 +73,7 @@ class WarmProcess(
                 if (at < 0) return@forEachLine
                 val json = runCatching { JSONObject(raw.substring(at + MARK.length)) }.getOrNull()
                     ?: return@forEachLine
-                waiting.remove(json.optInt("i", -1))?.complete(json.optJSONArray("r") ?: JSONArray())
+                waiting.remove(json.optInt("i", -1))?.second?.complete(json.optJSONArray("r") ?: JSONArray())
             }
         }
         // Ended - killed with the guest, crashed, or the server is not installed. The next
@@ -86,8 +87,10 @@ class WarmProcess(
             }
         }
         runCatching { p.close() }
-        waiting.values.forEach { it.complete(JSONArray()) }
-        waiting.clear()
+        // Only this process's requests: a replacement may already have its own in flight.
+        waiting.entries.removeIf { (_, pending) ->
+            (pending.first === p).also { if (it) pending.second.complete(JSONArray()) }
+        }
     }
 
     /** One request; an empty answer on any failure or after [timeoutMs]. Blocking. */
@@ -95,7 +98,7 @@ class WarmProcess(
         val p = ensure(context) ?: return JSONArray()
         val id = ids.incrementAndGet()
         val future = CompletableFuture<JSONArray>()
-        waiting[id] = future
+        waiting[id] = p to future
         val request = JSONObject()
             .put("i", id).put("k", kind).put("p", path).put("l", line).put("c", column)
             .put("s", Base64.encodeToString(source.toByteArray(), Base64.NO_WRAP))

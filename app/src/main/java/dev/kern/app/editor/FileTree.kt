@@ -130,16 +130,17 @@ fun FileTree(root: String, onOpen: (String) -> Unit, modifier: Modifier = Modifi
         TreePromptDialog(p, onDismiss = { prompt = null }) { value ->
             prompt = null
             scope.launch {
-                // Rename and delete move files out from under open tabs: write the tabs
-                // out first, and only drop them once the move really happened.
-                val moving = p is TreePrompt.Rename || p is TreePrompt.Delete
-                if (moving && !NativeEditor.flush(NativeEditor.under(p.node.path))) {
-                    NativeEditor.report("${p.node.name} has unsaved changes - resolve them first")
-                    return@launch
+                // Rename and delete move files out from under open tabs, so the tabs are
+                // saved and closed for the duration; see NativeEditor.moving.
+                val ok = if (p is TreePrompt.Rename || p is TreePrompt.Delete) {
+                    NativeEditor.moving(context, p.node.path, (p as? TreePrompt.Rename)?.target(value)) {
+                        withContext(Dispatchers.IO) { p.apply(context, value) }
+                    }
+                } else {
+                    withContext(Dispatchers.IO) { p.apply(context, value) }
                 }
-                val ok = withContext(Dispatchers.IO) { p.apply(context, value) }
-                if (!ok) NativeEditor.report("${p.title.removeSuffix("?")} failed")
-                if (moving && ok) NativeEditor.forget(p.node.path)
+                // null: refused over unsaved tabs, which already says so.
+                if (ok == false) NativeEditor.report("${p.title.removeSuffix("?")} failed")
                 if (p.node.isDirectory) expanded = expanded + p.node.path
                 reload++
                 // A file just made is a file about to be written in.
@@ -214,8 +215,10 @@ private sealed class TreePrompt(val node: GuestFiles.Node, val title: String, va
     }
 
     class Rename(node: GuestFiles.Node) : TreePrompt(node, "Rename", node.name) {
+        fun target(value: String) = "${node.path.substringBeforeLast('/')}/${value.trim()}"
+
         override fun apply(context: android.content.Context, value: String) =
-            GuestFiles.rename(context, node.path, "${node.path.substringBeforeLast('/')}/${value.trim()}")
+            GuestFiles.rename(context, node.path, target(value))
     }
 
     class Delete(node: GuestFiles.Node) : TreePrompt(node, "Delete ${node.name}?", "") {

@@ -19,6 +19,9 @@ param(
     [string]$Device = '192.168.0.233:5555'
 )
 $ErrorActionPreference = 'Continue'
+# device.ps1, used for the guest's tmux, talks to the same phone.
+$env:KERN_ADB = $Adb
+$env:KERN_DEVICE = $Device
 $null = New-Item -ItemType Directory -Force "$PSScriptRoot\shots"
 $Pkg = 'dev.kern.app'
 $script:pass = 0

@@ -56,10 +56,13 @@ object Grammars {
     suspend fun ensureLoaded(context: Context): Boolean {
         if (loaded) return true
         return loading.withLock {
-            if (!loaded && codeServerInstalled(context)) {
+            if (!loaded && SystemClock.elapsedRealtime() >= nextAttempt && codeServerInstalled(context)) {
                 loaded = withContext(Dispatchers.IO) {
                     runCatching { load(context.applicationContext) }.getOrElse { Log.w(TAG, "grammars: failed", it); false }
                 }
+                // A load that failed over a finished install - a read error, say - is
+                // tried again, but not on every one of the editor's frequent calls.
+                if (!loaded) nextAttempt = SystemClock.elapsedRealtime() + 30_000
             }
             loaded
         }
@@ -70,6 +73,12 @@ object Grammars {
     @Volatile
     private var statusStamp = 0L
 
+    @Volatile
+    private var installSeen = false
+
+    @Volatile
+    private var nextAttempt = 0L
+
     /**
      * Whether dpkg has finished installing code-server - not merely started: mid-unpack
      * the extensions directory exists half full, and loading then would leave most
@@ -78,6 +87,7 @@ object Grammars {
      */
     private fun codeServerInstalled(context: Context): Boolean {
         val status = File(LinuxRuntime.rootfsDir(context), "var/lib/dpkg/status")
+        if (installSeen) return true
         val stamp = status.lastModified()
         if (stamp == 0L || stamp == statusStamp) return false
         val done = runCatching {
@@ -89,9 +99,8 @@ object Grammars {
                 }
             }
         }.getOrDefault(false)
-        // Remembered either way: a load that fails over a finished install is retried
-        // when dpkg next changes something, not on every call.
         statusStamp = stamp
+        installSeen = done
         return done
     }
 

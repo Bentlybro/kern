@@ -107,6 +107,11 @@ object ProjectBackup {
             val script = """
                 tar -tzf /tmp/$STAGED > /tmp/kern-backup.list 2>/dev/null || { echo NOTTAR >&2; exit 2; }
                 if grep -qE '^/|(^|/)\.\.(/|${'$'})' /tmp/kern-backup.list; then echo UNSAFE >&2; exit 3; fi
+                # Unpacked size, not the download's: a small archive of zeros expands to
+                # fill the phone, and failing halfway leaves a partial restore over /root.
+                need=${'$'}(tar -tvzf /tmp/$STAGED 2>/dev/null | awk '{s+=${'$'}3} END {printf "%d", s}')
+                free=${'$'}(df -Pk /root | awk 'NR==2 {printf "%d", ${'$'}4 * 1024}')
+                if [ "${'$'}need" -ge "${'$'}free" ]; then rm -f /tmp/kern-backup.list; echo NOSPACE >&2; exit 4; fi
                 tar -xzf /tmp/$STAGED -C /root 2>&1
                 rc=${'$'}?
                 rm -f /tmp/kern-backup.list
@@ -118,6 +123,7 @@ object ProjectBackup {
                 0 -> "Restored into ~/ — open it from projects"
                 2 -> "That is not a Kern backup (.tar.gz)"
                 3 -> "Refused: that archive writes outside your home folder"
+                4 -> "Not enough free space to unpack that backup"
                 else -> "Restore failed: ${r.lastLine() ?: "exit ${r.exitCode}"}"
             }
         } catch (e: Exception) {

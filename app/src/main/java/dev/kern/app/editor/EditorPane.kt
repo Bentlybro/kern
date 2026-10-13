@@ -217,7 +217,7 @@ private fun Tabs(
                 // Unsaved shows as a dot where the close button sits, as VS Code does; it
                 // lasts under a second with autosave, which is the point of showing it.
                 Box(
-                    Modifier.size(36.dp).clip(CircleShape).clickable { onClose(path) },
+                    Modifier.size(48.dp).clip(CircleShape).clickable { onClose(path) },
                     contentAlignment = Alignment.Center,
                 ) {
                     if (path in unsaved) {

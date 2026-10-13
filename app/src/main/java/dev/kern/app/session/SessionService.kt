@@ -16,6 +16,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.Log
 import dev.kern.app.R
 import dev.kern.app.core.Notifications
@@ -61,6 +62,9 @@ class SessionService : Service() {
 
         /** How often the server is asked whether it is alive. */
         private const val HEALTH_TICK_MS = 15_000L
+
+        /** How long VS Code may sit unused behind the native editor before its server stops. */
+        private const val SERVER_IDLE_MS = 120_000L
 
         /** How often the agent's screen is read for a question. No fork; just memory. */
         private const val AGENT_TICK_MS = 3_000L
@@ -172,93 +176,110 @@ class SessionService : Service() {
             }
         }
 
-        // The native editor needs no server, so none is started until the workbench is
-        // asked for: code-server is a Node process of a few hundred MB that takes ten to
-        // twenty seconds of CPU to boot, all of it wasted on someone who never opens it.
-        // The session is usable meanwhile - terminals, the cockpit and the editor all
-        // work - so it says so, and the server starts the moment the mode flips.
-        if (EditorMode.isNative(this) && !isHealthy()) {
-            _state.value = SessionState.Healthy
-            updateNotification("Linux is running")
-            EditorMode.flow(this).first { it == EditorMode.Kind.Workbench }
-            _state.value = SessionState.Starting
-            updateNotification("Starting VS Code...")
-        }
-
-        // First setup installs code-server last, behind the native editor. Someone who
-        // asks for VS Code before it lands waits here, told why, rather than watching a
-        // launch fail three times over a binary that is not there yet.
-        if (!CodeServer.isInstalled(this)) {
-            updateNotification("Installing VS Code...")
-            while (!CodeServer.isInstalled(this)) {
-                if (!RootfsInstaller.isRunning) RootfsInstaller.start(this)
-                delay(2_000)
-            }
-        }
-
-        if (isHealthy()) {
-            Log.i(TAG, "supervise: adopted an already-running server")
-        } else {
-            CodeServer.applyWorkbenchSettings(this)
-            if (!launchWithRetries()) return
-        }
-        _state.value = SessionState.Healthy
-        updateNotification(running())
-
-        var watch = RestartPolicy.State()
+        // Round again whenever the server is stopped for idleness, below.
         while (scope.isActive) {
-            delay(HEALTH_TICK_MS)
+            // The native editor needs no server, so none is started until the workbench is
+            // asked for: code-server is a Node process of a few hundred MB that takes ten to
+            // twenty seconds of CPU to boot, all of it wasted on someone who never opens it.
+            // The session is usable meanwhile - terminals, the cockpit and the editor all
+            // work - so it says so, and the server starts the moment the mode flips.
+            if (EditorMode.isNative(this) && !isHealthy()) {
+                _state.value = SessionState.Healthy
+                updateNotification("Linux is running")
+                EditorMode.flow(this).first { it == EditorMode.Kind.Workbench }
+                _state.value = SessionState.Starting
+                updateNotification("Starting VS Code...")
+            }
 
-            val wasDegraded = watch != RestartPolicy.State()
-            val (nextWatch, decision) = RestartPolicy.next(watch, isHealthy())
-            watch = nextWatch
+            // First setup installs code-server last, behind the native editor. Someone who
+            // asks for VS Code before it lands waits here, told why, rather than watching a
+            // launch fail three times over a binary that is not there yet.
+            if (!CodeServer.isInstalled(this)) {
+                updateNotification("Installing VS Code...")
+                while (!CodeServer.isInstalled(this)) {
+                    if (!RootfsInstaller.isRunning) RootfsInstaller.start(this)
+                    delay(2_000)
+                }
+            }
 
-            when (decision) {
-                RestartPolicy.Decision.Healthy -> {
-                    // Only when something had gone wrong, or this rewrites the same
-                    // notification every fifteen seconds for the life of the session.
-                    if (wasDegraded) {
-                        acquireWakeLock()
-                        updateNotification(running())
+            if (isHealthy()) {
+                Log.i(TAG, "supervise: adopted an already-running server")
+            } else {
+                CodeServer.applyWorkbenchSettings(this)
+                if (!launchWithRetries()) return
+            }
+            _state.value = SessionState.Healthy
+            updateNotification(running())
+
+            var watch = RestartPolicy.State()
+            var nativeSince = 0L
+            while (scope.isActive) {
+                delay(HEALTH_TICK_MS)
+
+                // Back in the native editor for a while: the server is a few hundred MB
+                // nothing is using. Stop it, and wait for the workbench again from the top.
+                if (EditorMode.isNative(this@SessionService)) {
+                    if (nativeSince == 0L) nativeSince = SystemClock.elapsedRealtime()
+                    if (SystemClock.elapsedRealtime() - nativeSince >= SERVER_IDLE_MS) {
+                        Log.i(TAG, "supervise: native editor only - stopping code-server")
+                        CodeServer.stop()
+                        break
                     }
-                    _state.value = SessionState.Healthy
+                } else {
+                    nativeSince = 0L
                 }
 
-                RestartPolicy.Decision.Wait -> Unit
+                val wasDegraded = watch != RestartPolicy.State()
+                val (nextWatch, decision) = RestartPolicy.next(watch, isHealthy())
+                watch = nextWatch
 
-                is RestartPolicy.Decision.Abandoned -> Unit
-
-                is RestartPolicy.Decision.Restart -> {
-                    _state.value = SessionState.Reconnecting
-                    updateNotification(
-                        if (decision.attempt == 1) {
-                            "Server died - restarting..."
-                        } else {
-                            "Server died - restarting (attempt ${decision.attempt})..."
-                        },
-                    )
-                    delay(decision.backoffMs)
-                    CodeServer.stop()
-                    CodeServer.start(this, Secrets.token(this))
-                    if (awaitHealthy(RESTART_TIMEOUT_MS)) {
-                        // Reset here as well as in the policy: awaitHealthy is a whole
-                        // recovery the next tick has no way to learn about otherwise, and
-                        // leaving the restart count standing would spend the budget on a
-                        // server that came back.
-                        watch = RestartPolicy.State()
+                when (decision) {
+                    RestartPolicy.Decision.Healthy -> {
+                        // Only when something had gone wrong, or this rewrites the same
+                        // notification every fifteen seconds for the life of the session.
+                        if (wasDegraded) {
+                            acquireWakeLock()
+                            updateNotification(running())
+                        }
                         _state.value = SessionState.Healthy
-                        updateNotification(running())
                     }
-                }
 
-                is RestartPolicy.Decision.GiveUp -> {
-                    Log.e(TAG, "supervise: ${decision.message}")
-                    _state.value = SessionState.Failed(decision.message)
-                    updateNotification("Server is down - open the app for details")
-                    // Nothing left to keep the CPU awake for. The only way back from here
-                    // is the user running Repair, and they will be looking at the screen
-                    // when they do - at which point a healthy check re-acquires it.
-                    releaseWakeLock()
+                    RestartPolicy.Decision.Wait -> Unit
+
+                    is RestartPolicy.Decision.Abandoned -> Unit
+
+                    is RestartPolicy.Decision.Restart -> {
+                        _state.value = SessionState.Reconnecting
+                        updateNotification(
+                            if (decision.attempt == 1) {
+                                "Server died - restarting..."
+                            } else {
+                                "Server died - restarting (attempt ${decision.attempt})..."
+                            },
+                        )
+                        delay(decision.backoffMs)
+                        CodeServer.stop()
+                        CodeServer.start(this, Secrets.token(this))
+                        if (awaitHealthy(RESTART_TIMEOUT_MS)) {
+                            // Reset here as well as in the policy: awaitHealthy is a whole
+                            // recovery the next tick has no way to learn about otherwise, and
+                            // leaving the restart count standing would spend the budget on a
+                            // server that came back.
+                            watch = RestartPolicy.State()
+                            _state.value = SessionState.Healthy
+                            updateNotification(running())
+                        }
+                    }
+
+                    is RestartPolicy.Decision.GiveUp -> {
+                        Log.e(TAG, "supervise: ${decision.message}")
+                        _state.value = SessionState.Failed(decision.message)
+                        updateNotification("Server is down - open the app for details")
+                        // Nothing left to keep the CPU awake for. The only way back from here
+                        // is the user running Repair, and they will be looking at the screen
+                        // when they do - at which point a healthy check re-acquires it.
+                        releaseWakeLock()
+                    }
                 }
             }
         }

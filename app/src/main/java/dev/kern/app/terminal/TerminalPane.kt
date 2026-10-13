@@ -1,5 +1,7 @@
 package dev.kern.app.terminal
 
+import dev.kern.app.ui.KernIcons
+import androidx.compose.material3.Icon
 import dev.kern.app.ui.Shell
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -66,7 +68,7 @@ fun TerminalPane(modifier: Modifier = Modifier) {
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surface)
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 6.dp, vertical = 3.dp),
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -152,21 +154,22 @@ private fun Tab(
 ) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(10.dp))
             .background(
-                if (selected) MaterialTheme.colorScheme.surfaceVariant
+                if (selected) MaterialTheme.colorScheme.surfaceContainerHighest
                 else MaterialTheme.colorScheme.surface,
             )
             .clickable(onClick = onSelect)
-            .heightIn(min = 48.dp)
-            .padding(start = 12.dp, end = if (closable) 0.dp else 12.dp),
+            .heightIn(min = 40.dp)
+            .padding(start = 14.dp, end = if (closable) 2.dp else 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(
             title,
-            fontSize = 11.sp,
-            color = if (selected) MaterialTheme.colorScheme.primary
+            style = MaterialTheme.typography.bodySmall,
+            maxLines = 1,
+            color = if (selected) MaterialTheme.colorScheme.onSurface
             else MaterialTheme.colorScheme.onSurfaceVariant,
         )
         if (closable) {
@@ -174,16 +177,12 @@ private fun Tab(
             // tab you were aiming for, and one thumb-width of overshoot closed a shell.
             Box(
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(6.dp))
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .clickable(onClick = onClose),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    "x",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Icon(KernIcons.Close, "Close terminal", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
@@ -199,23 +198,15 @@ private fun Tab(
 private fun DetachedTab(slot: Int, onReattach: () -> Unit) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(10.dp))
             .background(MaterialTheme.colorScheme.surface)
             .clickable(onClick = onReattach)
-            .heightIn(min = 48.dp)
-            .padding(horizontal = 12.dp),
+            .heightIn(min = 40.dp)
+            .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            "sh $slot",
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            "reopen",
-            fontSize = 10.sp,
-            color = MaterialTheme.colorScheme.primary,
-        )
+        Text("Shell $slot", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Reopen", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
     }
 }

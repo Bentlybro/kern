@@ -227,7 +227,7 @@ object TerminalSessions {
     private fun openShell(context: Context, slot: Int): Entry {
         _shellStuck.value = false
         _detached.value = _detached.value - slot
-        val entry = create(context, Kind.Shell, null, "sh $slot", slot)
+        val entry = create(context, Kind.Shell, null, "Shell $slot", slot)
         _activeId.value = entry.id
         return entry
     }

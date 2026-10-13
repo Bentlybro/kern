@@ -17,6 +17,7 @@ import io.github.rosemoe.sora.langs.textmate.registry.ThemeRegistry
 import io.github.rosemoe.sora.text.Content
 import io.github.rosemoe.sora.widget.CodeEditor
 import io.github.rosemoe.sora.widget.EditorSearcher
+import io.github.rosemoe.sora.widget.schemes.EditorColorScheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -189,9 +190,13 @@ object NativeEditor {
         val view = instance ?: return
         val file = files[path] ?: return
         if (!themed && Grammars.isLoaded()) {
-            runCatching { view.colorScheme = TextMateColorScheme.create(ThemeRegistry.getInstance()) }
-                .onSuccess { themed = true }
+            runCatching {
+                view.colorScheme = TextMateColorScheme.create(ThemeRegistry.getInstance()).apply { kernAccents() }
+            }.onSuccess { themed = true }
         }
+        // Every time, not once: sora re-derives the scheme from the theme when the theme
+        // registry fires, and that put the stock-blue handles back (caught on device).
+        if (themed) view.colorScheme.kernAccents()
         view.setEditorLanguage(file.language)
         view.setText(file.content, true, null)
     }
@@ -331,5 +336,23 @@ object NativeEditor {
 
     fun setTextSize(sp: Float) {
         instance?.setTextSize(sp)
+    }
+
+    /**
+     * Kern's accent on the editor's own chrome - selection handles, the caret, the
+     * completion and text-action windows - so they read as part of the app rather than
+     * sora's stock blue. The syntax colours stay VS Code's.
+     */
+    private fun EditorColorScheme.kernAccents() {
+        val accent = 0xFFE2B15F.toInt()
+        val panel = 0xFF1F2328.toInt()
+        setColor(EditorColorScheme.SELECTION_HANDLE, accent)
+        setColor(EditorColorScheme.SELECTION_INSERT, accent)
+        setColor(EditorColorScheme.TEXT_ACTION_WINDOW_BACKGROUND, panel)
+        setColor(EditorColorScheme.TEXT_ACTION_WINDOW_ICON_COLOR, 0xFFE3E5E8.toInt())
+        setColor(EditorColorScheme.COMPLETION_WND_BACKGROUND, panel)
+        setColor(EditorColorScheme.COMPLETION_WND_CORNER, 0xFF3A3F46.toInt())
+        setColor(EditorColorScheme.COMPLETION_WND_TEXT_MATCHED, accent)
+        setColor(EditorColorScheme.COMPLETION_WND_ITEM_CURRENT, 0xFF2B3036.toInt())
     }
 }

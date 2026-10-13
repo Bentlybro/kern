@@ -53,6 +53,10 @@ object NativeEditor {
         @Volatile
         var diskStamp: Long = 0
 
+        /** The checker's complaint about the saved file, if any; see [SyntaxCheck]. */
+        @Volatile
+        var problem: SyntaxCheck.Problem? = null
+
         /** True while our own write is in flight, so [DiskSync] does not mistake it. */
         @Volatile
         var writing: Boolean = false
@@ -199,6 +203,7 @@ object NativeEditor {
         if (themed) view.colorScheme.kernAccents()
         view.setEditorLanguage(file.language)
         view.setText(file.content, true, null)
+        showProblem(file)
     }
 
     fun close(path: String) {
@@ -256,6 +261,11 @@ object NativeEditor {
             file.writing = false
             if (ok && files[path]?.savedRevision == version) {
                 _unsaved.value = _unsaved.value - path
+            }
+            // Check what was just saved, and underline the error if there is one.
+            if (ok) {
+                file.problem = SyntaxCheck.check(context, path)
+                main.post { if (_active.value == path) showProblem(file) }
             }
         }
     }
@@ -354,5 +364,10 @@ object NativeEditor {
         setColor(EditorColorScheme.COMPLETION_WND_CORNER, 0xFF3A3F46.toInt())
         setColor(EditorColorScheme.COMPLETION_WND_TEXT_MATCHED, accent)
         setColor(EditorColorScheme.COMPLETION_WND_ITEM_CURRENT, 0xFF2B3036.toInt())
+    }
+
+    private fun showProblem(file: OpenFile) {
+        val view = instance ?: return
+        view.diagnostics = SyntaxCheck.diagnostics(file.content, file.problem)
     }
 }

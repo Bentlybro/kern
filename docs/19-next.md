@@ -8,10 +8,9 @@ A long usability pass, all verified on the Pixel 7a. The native editor is now th
 
 New open items that pass created:
 
-- **Language intelligence in the native editor.** It highlights, matches brackets and indents, but has no completion, diagnostics or go-to-definition. The workbench has all three. The route is D13's extension bridge rather than sora's experimental `editor-lsp`.
+- **Language intelligence in the native editor.** It highlights, completes words from the file, and underlines syntax errors on save (Python, JavaScript, shell, JSON, via each language's own checker in the guest), but has no type-aware completion, lint or go-to-definition. The workbench has those. The route is D13's extension bridge rather than sora's experimental `editor-lsp`.
 - **Folding and multi-cursor** are absent from sora (issues #85 and #798) and need either upstream work or a fork.
 - **Per-project tabs start empty the first time** after this update, because the old single tab list is not migrated. Opening files once fixes it for good.
-- **Setup has not been re-run since the restyle.** It needs a delete-and-reinstall on a device to check the first-run screens.
 
 ## 1. Guest processes should outlive the app
 

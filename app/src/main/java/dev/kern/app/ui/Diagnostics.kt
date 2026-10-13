@@ -1,5 +1,7 @@
 package dev.kern.app.ui
 
+import dev.kern.app.guest.LinuxRuntime
+import dev.kern.app.guest.RootfsInstaller
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -20,8 +22,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.kern.app.BuildConfig
-import dev.kern.app.runtime.LinuxRuntime
-import dev.kern.app.runtime.RootfsInstaller
 import kotlinx.coroutines.delay
 
 /**

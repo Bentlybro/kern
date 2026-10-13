@@ -69,7 +69,7 @@
 
         <!-- Not exported: only the package installer talks to it, via our own PendingIntent. -->
         <receiver
-            android:name=".runtime.InstallReceiver"
+            android:name=".update.InstallReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="dev.kern.app.INSTALL_RESULT" />
@@ -81,7 +81,7 @@
           broadcast, so exported=false still receives it while keeping everyone else out.
         -->
         <receiver
-            android:name=".runtime.UpdateRelaunchReceiver"
+            android:name=".update.UpdateRelaunchReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />

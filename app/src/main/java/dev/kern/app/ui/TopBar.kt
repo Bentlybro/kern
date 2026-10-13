@@ -1,5 +1,9 @@
 package dev.kern.app.ui
 
+import dev.kern.app.agent.AgentRepository
+import dev.kern.app.session.SessionState
+import dev.kern.app.terminal.TerminalSessions
+import dev.kern.app.workbench.WorkbenchWebView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -21,7 +25,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
-import dev.kern.app.runtime.AgentRepository
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,7 +36,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.kern.app.session.SessionState
 
 @Composable
 internal fun TopBar(

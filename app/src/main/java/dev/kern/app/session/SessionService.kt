@@ -1,5 +1,11 @@
 package dev.kern.app.session
 
+import dev.kern.app.MainActivity
+import dev.kern.app.agent.AgentPrompt
+import dev.kern.app.core.Secrets
+import dev.kern.app.guest.GuestConfig
+import dev.kern.app.terminal.TerminalSessions
+import dev.kern.app.workbench.CodeServer
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -12,14 +18,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
-import dev.kern.app.MainActivity
 import dev.kern.app.R
-import dev.kern.app.runtime.AgentPrompt
-import dev.kern.app.runtime.AgentRepository
-import dev.kern.app.runtime.CodeServer
-import dev.kern.app.runtime.GuestConfig
-import dev.kern.app.ui.TerminalSessions
-import dev.kern.app.runtime.Secrets
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.CoroutineScope

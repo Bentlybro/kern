@@ -1,5 +1,16 @@
 package dev.kern.app
 
+import dev.kern.app.core.AppScope
+import dev.kern.app.core.UsageTracker
+import dev.kern.app.guest.LinuxRuntime
+import dev.kern.app.input.focusedInputView
+import dev.kern.app.projects.IncomingFiles
+import dev.kern.app.session.SessionService
+import dev.kern.app.session.SessionState
+import dev.kern.app.setup.SetupScreen
+import dev.kern.app.terminal.TerminalSessions
+import dev.kern.app.ui.KernTheme
+import dev.kern.app.ui.Shell
 import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.KeyEvent
@@ -24,14 +35,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.kern.app.runtime.LinuxRuntime
-import dev.kern.app.runtime.UsageTracker
-import dev.kern.app.session.SessionService
-import dev.kern.app.session.SessionState
-import dev.kern.app.ui.KernTheme
-import dev.kern.app.ui.SetupScreen
-import dev.kern.app.ui.Shell
-import dev.kern.app.ui.focusedInputView
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,7 +46,7 @@ class MainActivity : ComponentActivity() {
         // wrapper rather than against `this`, and it has to be pointed at the current
         // Activity before anything asks for one. Without it every recreation leaked this
         // whole window. WorkbenchWebView does the same thing at its own acquire().
-        dev.kern.app.ui.TerminalSessions.rebind(this)
+        dev.kern.app.terminal.TerminalSessions.rebind(this)
 
         // Eager start: once Linux is set up there is nothing to decide, so begin booting
         // code-server the moment the app opens rather than waiting for a button. Starting
@@ -70,17 +73,17 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun importFrom(intent: android.content.Intent?) {
-        if (!dev.kern.app.runtime.IncomingFiles.accepts(intent)) return
+        if (!dev.kern.app.projects.IncomingFiles.accepts(intent)) return
         val app = applicationContext
-        dev.kern.app.runtime.AppScope.start {
-            dev.kern.app.runtime.IncomingFiles.handle(app, intent!!)
+        dev.kern.app.core.AppScope.start {
+            dev.kern.app.projects.IncomingFiles.handle(app, intent!!)
         }
     }
 
     /**
      * Stop and start the usage clock with the window, not with the composition.
      *
-     * [dev.kern.app.runtime.UsageTracker] measures which surface the user is actually in,
+     * [dev.kern.app.core.UsageTracker] measures which surface the user is actually in,
      * and nothing was stopping it when the app left the screen - so a phone in a pocket
      * kept banking time against whatever was last open. See UsageTracker.pause.
      */

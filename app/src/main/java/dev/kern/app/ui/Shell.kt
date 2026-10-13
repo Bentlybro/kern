@@ -1,5 +1,19 @@
-﻿package dev.kern.app.ui
+package dev.kern.app.ui
 
+import dev.kern.app.agent.CockpitScreen
+import dev.kern.app.core.UsageTracker
+import dev.kern.app.guest.RootfsInstaller
+import dev.kern.app.input.KeyRow
+import dev.kern.app.projects.IncomingFiles
+import dev.kern.app.projects.ProjectsScreen
+import dev.kern.app.session.SessionService
+import dev.kern.app.session.SessionState
+import dev.kern.app.settings.SettingsScreen
+import dev.kern.app.settings.StatusScreen
+import dev.kern.app.terminal.TerminalPane
+import dev.kern.app.terminal.TerminalSessions
+import dev.kern.app.workbench.SelectionOverlay
+import dev.kern.app.workbench.WorkbenchWebView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -23,8 +37,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
-import dev.kern.app.runtime.RootfsInstaller
-import dev.kern.app.runtime.UsageTracker
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.Saver
@@ -38,8 +50,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.kern.app.session.SessionService
-import dev.kern.app.session.SessionState
 
 /**
  * Where the shell is. One slot rather than a flag per screen: precedence used to be
@@ -126,7 +136,7 @@ fun Shell(state: SessionState) {
 
     // A file shared to Kern opens in the editor, so the editor is where to be. Skipping
     // the initial value is what stops every recomposition after one share doing this.
-    val arrivals by dev.kern.app.runtime.IncomingFiles.arrivals.collectAsStateWithLifecycle()
+    val arrivals by dev.kern.app.projects.IncomingFiles.arrivals.collectAsStateWithLifecycle()
     var seenArrivals by rememberSaveable { mutableStateOf(arrivals) }
     LaunchedEffect(arrivals) {
         if (arrivals != seenArrivals) {

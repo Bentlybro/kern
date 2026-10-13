@@ -15,7 +15,7 @@
 # proguard-android-optimize.txt already carries a -keepclasseswithmembernames rule for
 # native methods. This is here anyway: that file is Google's and can change, and this is
 # not a dependency worth leaving implicit.
--keepclasseswithmembernames,includedescriptorclasses class dev.kern.app.runtime.Pty {
+-keepclasseswithmembernames,includedescriptorclasses class dev.kern.app.guest.Pty {
     native <methods>;
 }
 
@@ -31,7 +31,7 @@
 # swallows it, and the result is an editor that silently stops raising the keyboard and
 # stops reporting selection. That is the worst shape a release-only regression can take,
 # so it is kept explicitly rather than relying on a global annotation rule.
--keepclassmembers class dev.kern.app.ui.WorkbenchBridge {
+-keepclassmembers class dev.kern.app.workbench.WorkbenchBridge {
     @android.webkit.JavascriptInterface <methods>;
 }
 # The global form as well, so a second bridge added later is covered without anyone having

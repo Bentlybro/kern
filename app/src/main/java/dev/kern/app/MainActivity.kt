@@ -1,5 +1,6 @@
 package dev.kern.app
 
+import dev.kern.app.workbench.CodeServer
 import dev.kern.app.core.AppScope
 import dev.kern.app.editor.EditorMode
 import dev.kern.app.core.UsageTracker
@@ -176,7 +177,7 @@ private fun BootingScreen(state: SessionState) {
     ) {
         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         Text(
-            if (state is SessionState.Reconnecting) "reconnecting" else "starting VS Code",
+            if (state is SessionState.Reconnecting) "reconnecting" else if (CodeServer.isInstalled(LocalContext.current)) "starting VS Code" else "installing VS Code - this takes a minute",
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 16.dp),

@@ -77,8 +77,8 @@ Press **Set up Linux** once. Setup runs in two halves:
 
 | Phase | What happens | Measured |
 |---|---|---|
-| 1 | Setup downloads the Ubuntu base image, unpacks it, configures apt and installs code-server. | **It reaches a usable editor in ~133s.** |
-| 2 | Setup installs git, gh, tmux, curl, ripgrep and python3 *behind* the running IDE. | It completes in ~184s. |
+| 1 | Setup downloads and unpacks the Ubuntu base image and configures it. | **It reaches the editor in ~73s.** |
+| 2 | Setup installs git, gh, tmux, curl, ripgrep, python3 and VS Code *behind* the running editor. | It completes about two minutes later. |
 
 You are in the editor while the second half runs, and a strip reports what is still installing. Kern shows live output throughout, so there are no unexplained multi-minute pauses.
 

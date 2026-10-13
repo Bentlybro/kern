@@ -133,7 +133,10 @@ object LinuxRuntime {
      * a third condition added to two of three hands the user the IDE while the setup
      * screen still thinks there is work to do.
      */
-    fun isReady(context: Context): Boolean = isInstalled(context) && CodeServer.isInstalled(context)
+    // Linux alone, not Linux and code-server: the native editor, the terminal and the
+    // cockpit need nothing more, and code-server installs behind them. The workbench waits
+    // for it itself (SessionService).
+    fun isReady(context: Context): Boolean = isInstalled(context)
 
     /** How the guest describes itself, e.g. "Ubuntu 26.04 LTS". */
     suspend fun osPrettyName(context: Context): String? =

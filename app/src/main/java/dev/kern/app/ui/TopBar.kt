@@ -60,7 +60,8 @@ internal fun TopBar(
     val editorMode by EditorMode.flow(context).collectAsStateWithLifecycle()
     val native = editorMode == EditorMode.Kind.Native
 
-    val project = ProjectRepository.currentFolder(context).substringAfterLast('/').ifEmpty { "/" }
+    val folder = ProjectRepository.currentFolder(context)
+    val project = if (folder == ProjectRepository.HOME) "Home" else folder.substringAfterLast('/').ifEmpty { "/" }
     Row(
         modifier = Modifier
             .fillMaxWidth()

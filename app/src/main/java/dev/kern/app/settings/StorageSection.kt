@@ -1,5 +1,6 @@
 package dev.kern.app.settings
 
+import androidx.compose.material3.ButtonDefaults
 import dev.kern.app.ui.Panel
 import dev.kern.app.ui.SectionTitle
 import dev.kern.app.core.runDetached
@@ -250,6 +251,7 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
                     enabled = busy == null,
                     onClick = {
                         busy = "Deleting..."

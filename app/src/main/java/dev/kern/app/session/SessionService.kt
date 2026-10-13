@@ -3,6 +3,7 @@ package dev.kern.app.session
 import dev.kern.app.agent.AgentPrompt
 import dev.kern.app.core.Secrets
 import dev.kern.app.guest.GuestConfig
+import dev.kern.app.guest.RootfsInstaller
 import dev.kern.app.terminal.TerminalSessions
 import dev.kern.app.workbench.CodeServer
 import android.app.Notification
@@ -182,6 +183,17 @@ class SessionService : Service() {
             EditorMode.flow(this).first { it == EditorMode.Kind.Workbench }
             _state.value = SessionState.Starting
             updateNotification("Starting VS Code...")
+        }
+
+        // First setup installs code-server last, behind the native editor. Someone who
+        // asks for VS Code before it lands waits here, told why, rather than watching a
+        // launch fail three times over a binary that is not there yet.
+        if (!CodeServer.isInstalled(this)) {
+            updateNotification("Installing VS Code...")
+            while (!CodeServer.isInstalled(this)) {
+                if (!RootfsInstaller.isRunning) RootfsInstaller.start(this)
+                delay(2_000)
+            }
         }
 
         if (isHealthy()) {

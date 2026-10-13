@@ -156,9 +156,11 @@ object RootfsInstaller {
      */
     suspend fun install(context: Context): Boolean = withContext(Dispatchers.IO) {
         try {
-            val essential = coroutineScope {
-                val deb = File(downloadDir(context), DEB_NAME)
-                var fetch: Deferred<String?>? = null
+            val deb = File(downloadDir(context), DEB_NAME)
+            // Started during unpacking and awaited much later: code-server is 218 MB and
+            // nothing needs it until someone opens VS Code.
+            var fetch: Deferred<String?>? = null
+            val essential = run {
 
                 if (!LinuxRuntime.isInstalled(context)) {
                     val archive = File(downloadDir(context), ARCHIVE_NAME)
@@ -188,14 +190,14 @@ object RootfsInstaller {
                     // it here costs almost nothing on the clock instead of minutes of its
                     // own once unpacking has finished.
                     if (!CodeServer.isInstalled(context)) {
-                        fetch = async { fetchServer(deb) }
+                        fetch = scope.async { fetchServer(deb) }
                     }
 
                     _stage.value = Stage.Working("Unpacking Ubuntu")
                     logLine("Unpacking the filesystem")
                     if (!extract(context, archive)) {
                         fetch?.cancel()
-                        return@coroutineScope fail("Could not unpack the filesystem")
+                        return@run fail("Could not unpack the filesystem")
                     }
                     archive.delete()
                 }
@@ -208,40 +210,6 @@ object RootfsInstaller {
                 GuestConfig.apply(context)
                 logLine("Configured apt, DNS and dpkg")
 
-                if (!CodeServer.isInstalled(context)) {
-                    _stage.value = Stage.Working("Updating package lists")
-                    LinuxRuntime.run(
-                        context,
-                        "apt-get update 2>&1",
-                        timeoutMs = 300_000,
-                        onLine = ::logLine,
-                    )
-
-                    if (fetch == null) fetch = async { fetchServer(deb) }
-                    _stage.value = Stage.Working("Downloading code-server")
-                    val failure = fetch.await()
-                    if (failure != null) return@coroutineScope fail(failure)
-
-                    _stage.value = Stage.Working("Installing code-server")
-                    val staged = File(LinuxRuntime.guestTmpDir(context), "code-server.deb")
-                    if (!moveInto(deb, staged)) {
-                        return@coroutineScope fail("Could not stage the code-server package")
-                    }
-
-                    // apt (not dpkg) so dependencies resolve.
-                    val result = LinuxRuntime.run(
-                        context,
-                        "apt-get install -y /tmp/code-server.deb 2>&1; rm -f /tmp/code-server.deb",
-                        timeoutMs = 900_000,
-                        onLine = ::logLine,
-                    )
-                    if (!CodeServer.isInstalled(context)) {
-                        return@coroutineScope fail(
-                            result?.stdout?.lines()?.lastOrNull { it.isNotBlank() }
-                                ?: "code-server did not install",
-                        )
-                    }
-                }
                 true
             }
             if (!essential) return@withContext false
@@ -251,6 +219,10 @@ object RootfsInstaller {
             LinuxRuntime.run(context, "mkdir -p /root/projects", timeoutMs = 20_000)
             LinuxRuntime.notifyInstallChanged()
             logLine("Editor ready — installing the toolchain in the background")
+
+            // Package lists first: the toolchain cannot install without them.
+            _stage.value = Stage.Working("Updating package lists")
+            LinuxRuntime.run(context, "apt-get update 2>&1", timeoutMs = 300_000, onLine = ::logLine)
 
             _stage.value = Stage.Working("Installing tools")
             // Checked, not fired and forgotten: apt losing the connection partway leaves a
@@ -263,6 +235,10 @@ object RootfsInstaller {
                 )
             }
 
+            // Last: VS Code. Only the workbench needs it, and the native editor - the
+            // default - opens without it, so first run no longer waits on 218 MB.
+            installCodeServer(context, deb, fetch)?.let { return@withContext fail(it) }
+
             _stage.value = Stage.Working("Finishing up")
             GuestConfig.polish(context)
             logLine("Setup complete")
@@ -273,6 +249,35 @@ object RootfsInstaller {
             Log.e(TAG, "setup failed", e)
             fail(e.message ?: e.javaClass.simpleName)
         }
+    }
+
+    /**
+     * Download (or finish downloading) and install code-server. Null on success, otherwise
+     * why not. [pending] is a download already in flight, if setup started one early.
+     */
+    private suspend fun installCodeServer(context: Context, deb: File, pending: Deferred<String?>?): String? {
+        if (CodeServer.isInstalled(context)) return null
+        val fetch = pending ?: scope.async { fetchServer(deb) }
+        _stage.value = Stage.Working("Downloading VS Code")
+        fetch.await()?.let { return it }
+
+        _stage.value = Stage.Working("Installing VS Code")
+        val staged = File(LinuxRuntime.guestTmpDir(context), "code-server.deb")
+        if (!moveInto(deb, staged)) {
+            return "Could not stage the code-server package"
+        }
+
+        // apt (not dpkg) so dependencies resolve.
+        val result = LinuxRuntime.run(
+            context,
+            "apt-get install -y /tmp/code-server.deb 2>&1; rm -f /tmp/code-server.deb",
+            timeoutMs = 900_000,
+            onLine = ::logLine,
+        )
+        if (!CodeServer.isInstalled(context)) {
+            return result?.stdout?.lines()?.lastOrNull { it.isNotBlank() } ?: "code-server did not install"
+        }
+        return null
     }
 
     /**

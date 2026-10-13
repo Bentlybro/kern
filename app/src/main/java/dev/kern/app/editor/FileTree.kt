@@ -1,5 +1,10 @@
 package dev.kern.app.editor
 
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import dev.kern.app.ui.KernIcons
+import dev.kern.app.ui.HeaderIcon
+import androidx.compose.material3.Icon
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -67,13 +72,38 @@ fun FileTree(root: String, onOpen: (String) -> Unit, modifier: Modifier = Modifi
     val rootNode = GuestFiles.Node(root.substringAfterLast('/').ifEmpty { "/" }, root, true)
 
     Column(modifier.background(MaterialTheme.colorScheme.surface)) {
+        // The project and what can be made in it, in plain sight: a long-press nobody
+        // knows about is not a way to create a file.
+        Row(
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                rootNode.name,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            HeaderIcon(KernIcons.Add, "New file", { prompt = TreePrompt.NewFile(rootNode) })
+            HeaderIcon(KernIcons.Folder, "New folder", { prompt = TreePrompt.NewFolder(rootNode) })
+            HeaderIcon(KernIcons.Refresh, "Refresh", { reload++ })
+        }
+        if (rows.isEmpty()) {
+            Text(
+                "Empty folder. Tap + to add a file.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
         LazyColumn(Modifier.fillMaxSize()) {
-            item { TreeRow(rootNode, 0, isOpen = true, selected = false, onClick = { reload++ }, onLong = { menuFor = rootNode }, bold = true) }
             items(rows, key = { it.node.path }) { row ->
                 Box {
                     TreeRow(
                         node = row.node,
-                        depth = row.depth + 1,
+                        depth = row.depth,
                         isOpen = row.node.path in expanded,
                         selected = row.node.path == active,
                         onClick = {
@@ -103,6 +133,11 @@ fun FileTree(root: String, onOpen: (String) -> Unit, modifier: Modifier = Modifi
                 withContext(Dispatchers.IO) { p.apply(context, value) }
                 if (p.node.isDirectory) expanded = expanded + p.node.path
                 reload++
+                // A file just made is a file about to be written in.
+                if (p is TreePrompt.NewFile) {
+                    NativeEditor.focusOnNextOpen()
+                    onOpen("${TreePrompt.dirOf(p.node)}/${value.trim()}")
+                }
             }
         }
     }
@@ -133,16 +168,17 @@ private fun TreeRow(
             .padding(start = (8 + depth * 14).dp, end = 8.dp, top = 9.dp, bottom = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
+        Icon(
             when {
-                !node.isDirectory -> " "
-                isOpen -> "▾"
-                else -> "▸"
+                !node.isDirectory -> KernIcons.File
+                isOpen -> KernIcons.ChevronDown
+                else -> KernIcons.ChevronRight
             },
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 12.sp,
-            modifier = Modifier.width(14.dp),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
         )
+        Spacer(Modifier.width(8.dp))
         Text(
             node.name,
             fontSize = 14.sp,
@@ -157,7 +193,6 @@ private fun TreeRow(
 /** What a long-press offers. Everything except delete asks for a name first. */
 private sealed class TreePrompt(val node: GuestFiles.Node, val title: String, val initial: String) {
     abstract fun apply(context: android.content.Context, value: String)
-
 
     class NewFile(node: GuestFiles.Node) : TreePrompt(node, "New file", "") {
         override fun apply(context: android.content.Context, value: String) {

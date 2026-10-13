@@ -155,6 +155,22 @@ object NativeEditor {
         _active.value = path
         show(path)
         remember()
+        if (focusNext) {
+            focusNext = false
+            instance?.let { it.requestFocus(); it.showSoftInput() }
+        }
+    }
+
+    /**
+     * Put the caret in the next file opened and raise the keyboard - for a file just
+     * created, which is a file about to be typed in. Not for ordinary opens: a keyboard
+     * nobody asked for covers half the code they opened the file to read.
+     */
+    @Volatile
+    private var focusNext = false
+
+    fun focusOnNextOpen() {
+        focusNext = true
     }
 
     /**
@@ -247,25 +263,42 @@ object NativeEditor {
     // the active tab are kept in prefs and reopened on the next launch; the contents need
     // no keeping, since autosave already put them on disk.
 
+    /** The project whose tabs are open. Each project keeps its own set. */
+    private var project: String? = null
+
+    private fun tabsKey(root: String) = Prefs.KEY_EDITOR_TABS + ":" + root
+    private fun activeKey(root: String) = Prefs.KEY_EDITOR_ACTIVE + ":" + root
+
     private fun remember() {
         val context = appContext ?: return
+        val root = project ?: return
         Prefs.of(context).edit()
-            .putString(Prefs.KEY_EDITOR_TABS, files.keys.joinToString("\n"))
-            .putString(Prefs.KEY_EDITOR_ACTIVE, _active.value)
+            .putString(tabsKey(root), files.keys.joinToString("\n"))
+            .putString(activeKey(root), _active.value)
             .apply()
     }
 
-    @Volatile
-    private var restored = false
-
-    /** Reopen last session's tabs, once per process. Files that have gone are skipped. */
-    suspend fun restore(context: Context) {
-        if (restored) return
-        restored = true
+    /**
+     * Show [root]'s tabs: the ones it had last time, reopened from disk. Switching project
+     * saves the current tabs and closes them first - a file from another project left open
+     * here is one autosave away from being edited by mistake.
+     */
+    suspend fun showProject(context: Context, root: String) {
+        if (project == root) return
         appContext = context.applicationContext
+        // Read before anything is closed: closing publishes, and publishing saves the tab
+        // list - which would otherwise overwrite this project's saved tabs with nothing.
         val prefs = Prefs.of(context)
-        val tabs = prefs.getString(Prefs.KEY_EDITOR_TABS, null)?.split('\n')?.filter { it.isNotBlank() }.orEmpty()
-        val active = prefs.getString(Prefs.KEY_EDITOR_ACTIVE, null)
+        val tabs = prefs.getString(tabsKey(root), null)?.split('\n')?.filter { it.isNotBlank() }.orEmpty()
+        val active = prefs.getString(activeKey(root), null)
+        withContext(Dispatchers.Main) {
+            saveAll()
+            files.keys.toList().forEach { files.remove(it) }
+            _active.value = null
+            instance?.setText("")
+            project = root
+            publish()
+        }
         for (path in tabs) {
             if (GuestFiles.host(context, path).isFile) open(context, path)
         }

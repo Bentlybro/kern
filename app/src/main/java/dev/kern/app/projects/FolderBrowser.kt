@@ -1,10 +1,10 @@
 package dev.kern.app.projects
 
-import dev.kern.app.ui.KernColors
+import dev.kern.app.ui.KernIcons
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.combinedClickable
 import dev.kern.app.ui.ScreenHeader
 import dev.kern.app.ui.ScreenSurface
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -31,7 +30,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
@@ -116,37 +114,40 @@ internal fun FolderBrowser(
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun FolderRow(
     name: String,
     subtitle: String,
     isRepo: Boolean,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(6.dp)
-                .clip(CircleShape)
-                .background(
-                    if (isRepo) KernColors.Ok else MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
+        // A repository is tinted with the accent: it is what most rows here are, and the
+        // one kind that can be committed and pushed from the cockpit.
+        Icon(
+            KernIcons.Folder,
+            contentDescription = null,
+            tint = if (isRepo) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(22.dp),
         )
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(14.dp))
         // Weighted so a long path cannot squeeze [trailing] out of the row entirely.
         Column(Modifier.weight(1f)) {
-            Text(name, fontSize = 15.sp, color = MaterialTheme.colorScheme.onBackground)
+            Text(name, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
             Text(
                 subtitle.removePrefix(ProjectRepository.HOME).ifEmpty { "~" },
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

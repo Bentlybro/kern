@@ -93,7 +93,7 @@ fun NativeEditorPane(modifier: Modifier = Modifier) {
     val conflicts by DiskSync.conflicts.collectAsStateWithLifecycle()
     val root = ProjectRepository.currentFolder(context)
 
-    LaunchedEffect(Unit) { NativeEditor.restore(context.applicationContext) }
+    LaunchedEffect(root) { NativeEditor.showProject(context.applicationContext, root) }
 
     // Follow the disk while on screen: one stat per open tab, so cheap enough to poll.
     val lifecycle = LocalLifecycleOwner.current

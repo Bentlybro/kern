@@ -166,8 +166,16 @@ object HealthCheck {
     )
 
     /** Run an [Remedy.Install]. Returns true when every requested binary is present. */
-    suspend fun install(context: Context, packages: List<String>): Boolean =
-        Apt.install(context, packages)
+    suspend fun install(context: Context, packages: List<String>): Boolean {
+        if (!Apt.install(context, packages)) return false
+        // With npm comes what the native editor needs for JavaScript and TypeScript
+        // intelligence (TsIntel). TypeScript 5, not latest: 7 is the native rewrite and has
+        // no JavaScript language-service API. Best effort - node works without it.
+        if ("npm" in packages) {
+            LinuxRuntime.run(context, "npm i -g typescript@5 @types/node 2>&1", timeoutMs = 300_000)
+        }
+        return true
+    }
 
     /**
      * Whether the guest can actually reach GitHub. Cloning a public repository works

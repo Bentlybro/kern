@@ -50,7 +50,7 @@ object NativeEditor {
         var language: io.github.rosemoe.sora.lang.Language? = null
 
         /** Library code reached by go-to-definition: shown, never edited or saved. */
-        val readOnly: Boolean get() = path.startsWith("/usr/")
+        val readOnly: Boolean get() = path.startsWith("/usr/") || "/node_modules/" in path
 
         /** The file's mtime when last read or written by us; see [DiskSync]. */
         @Volatile
@@ -149,13 +149,12 @@ object NativeEditor {
             Grammars.scopeFor(path.substringAfterLast('/'))?.let { scope ->
                 runCatching { TextMateLanguage.create(scope, true) }.getOrNull()
             }?.let { tm ->
-                // Python gets jedi's completions on top of the TextMate language.
-                if (path.endsWith(".py")) {
-                    PythonIntel.warm(context)
-                    PythonLanguage(tm, context.applicationContext, path)
-                } else {
-                    tm
-                }
+                // Languages with a provider (Python, JavaScript, TypeScript) get its
+                // completions on top of the TextMate language.
+                CodeIntel.forPath(path)?.let { provider ->
+                    provider.warm(context)
+                    IntelLanguage(tm, context.applicationContext, path, provider)
+                } ?: tm
             }
         }
         withContext(Dispatchers.Main) {
@@ -386,16 +385,17 @@ object NativeEditor {
 
     /**
      * Jump to where the name under the caret is defined - in this file, another file in the
-     * project, or a library. Python only, through jedi. Returns whether it found anywhere.
+     * project, or a library, through the file's [CodeIntel] provider. Returns whether it
+     * found anywhere.
      */
     suspend fun goToDefinition(context: Context): Boolean {
         val path = _active.value ?: return false
-        if (!path.endsWith(".py")) return false
+        val provider = CodeIntel.forPath(path) ?: return false
         val (source, line, column) = withContext(Dispatchers.Main) {
             val view = instance ?: return@withContext null
             Triple(view.text.toString(), view.cursor.leftLine + 1, view.cursor.leftColumn)
         } ?: return false
-        val target = withContext(Dispatchers.IO) { PythonIntel.definition(context, path, source, line, column) } ?: return false
+        val target = withContext(Dispatchers.IO) { provider.definition(context, path, source, line, column) } ?: return false
         if (target.path != path) open(context, target.path)
         withContext(Dispatchers.Main) {
             val view = instance ?: return@withContext

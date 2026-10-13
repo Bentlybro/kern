@@ -5,6 +5,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.clickable
 import dev.kern.app.agent.AgentRepository
 import dev.kern.app.core.AppScope
+import dev.kern.app.editor.CodeIntel
 import dev.kern.app.editor.EditorChrome
 import dev.kern.app.editor.EditorMode
 import dev.kern.app.workbench.WorkbenchFiles
@@ -141,8 +142,8 @@ internal fun TopBar(
                 // likeliest person to open this menu at all.
                 MenuAction("redo", { menuOpen = false }) { InputTargets.redo(context) }
                 MenuAction("find", { menuOpen = false }) { InputTargets.find(context) }
-                // Python only for now: jedi answers it (see PythonIntel).
-                if (native && activeFile?.endsWith(".py") == true) {
+                // Where a provider understands the file (CodeIntel): Python, JS, TS.
+                if (native && activeFile?.let { CodeIntel.forPath(it) } != null) {
                     MenuAction("go to definition", { menuOpen = false }) {
                         AppScope.start { NativeEditor.goToDefinition(context.applicationContext) }
                     }

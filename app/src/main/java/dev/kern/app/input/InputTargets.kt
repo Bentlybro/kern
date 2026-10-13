@@ -1,5 +1,8 @@
 package dev.kern.app.input
 
+import dev.kern.app.terminal.write
+import dev.kern.app.terminal.sendKey
+import dev.kern.app.terminal.hasFocus
 import android.content.Context
 import android.view.KeyCharacterMap
 import dev.kern.app.editor.EditorChrome

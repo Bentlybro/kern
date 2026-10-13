@@ -1,5 +1,8 @@
 package dev.kern.app.agent
 
+import dev.kern.app.terminal.writeTo
+import dev.kern.app.terminal.writeRawTo
+import dev.kern.app.terminal.sendKeyTo
 import dev.kern.app.terminal.TerminalSessions
 import dev.kern.app.ui.KernColors
 import android.view.KeyEvent

@@ -1,5 +1,6 @@
 package dev.kern.app.agent
 
+import dev.kern.app.terminal.writeTo
 import androidx.compose.ui.text.font.FontFamily
 import dev.kern.app.ui.ScreenHeader
 import androidx.compose.material3.OutlinedButton

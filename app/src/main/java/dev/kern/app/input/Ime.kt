@@ -1,5 +1,7 @@
 package dev.kern.app.input
 
+import dev.kern.app.terminal.hasFocus
+import dev.kern.app.terminal.current
 import dev.kern.app.terminal.TerminalSessions
 import dev.kern.app.workbench.WorkbenchWebView
 import android.view.View

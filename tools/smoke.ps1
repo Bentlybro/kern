@@ -19,20 +19,33 @@ $script:pass = 0
 $script:fail = @()
 
 function Dump {
+    # Pulled as a file and read as UTF-8: `adb shell cat` is decoded in the console's code
+    # page, which mangles every non-ASCII label (the find bar's arrows, "Open folder…").
     & $Adb -s $Device shell uiautomator dump /sdcard/kern-ui.xml 2>$null | Out-Null
-    [xml](& $Adb -s $Device shell cat /sdcard/kern-ui.xml 2>$null)
+    $local = Join-Path $env:TEMP 'kern-ui.xml'
+    & $Adb -s $Device pull /sdcard/kern-ui.xml $local 2>$null | Out-Null
+    [xml][IO.File]::ReadAllText($local, [Text.Encoding]::UTF8)
 }
 
 function Find([string]$text) {
     $xml = Dump
-    $xml.SelectNodes('//node') | Where-Object {
-        $_.text -eq $text -or $_.'content-desc' -eq $text
-    } | Select-Object -First 1
+    # Exact first; then a prefix, so "Open folder" finds "Open folder…".
+    $nodes = $xml.SelectNodes('//node')
+    $hit = $nodes | Where-Object { $_.text -eq $text -or $_.'content-desc' -eq $text } | Select-Object -First 1
+    if (-not $hit) { $hit = $nodes | Where-Object { $_.text -like "$text*" } | Select-Object -First 1 }
+    $hit
 }
 
 function Tap([string]$text) {
     for ($i = 0; $i -lt 4; $i++) {
         $n = Find $text
+        # Wait for the element to stop moving - a menu still animating open reports bounds
+        # that a tap a moment later no longer matches, and lands on the item above.
+        if ($n) {
+            Start-Sleep -Milliseconds 500
+            $again = Find $text
+            if ($again -and $again.bounds -ne $n.bounds) { continue }
+        }
         if ($n) {
             $b = [regex]::Matches($n.bounds, '\d+') | ForEach-Object { [int]$_.Value }
             & $Adb -s $Device shell input tap ([int](($b[0] + $b[2]) / 2)) ([int](($b[1] + $b[3]) / 2)) 2>$null
@@ -82,7 +95,7 @@ Step 'projects' {
     $null = Tap 'New project'; Expect 'new project dialog' @('Start a git repository', 'Create'); $null = Tap 'Cancel'
     $null = Tap 'Clone'; Expect 'clone dialog' @('Clone a repository', 'Latest commit only'); $null = Tap 'Cancel'
     & $Adb -s $Device shell input swipe 540 1500 540 600 2>$null; Start-Sleep 1
-    $null = Tap 'Open folder…'; Expect 'folder browser' @('Open here', '~/projects'); Back
+    $null = Tap 'Open folder'; Expect 'folder browser' @('Open here', '~/projects'); Back
     Expect 'back closes the browser' @('New project')
     $null = Tap 'demo'
 }
@@ -91,17 +104,20 @@ Step 'file tree and editor' {
     if (-not (Find 'hello.py')) { $null = Tap 'Files' }
     $null = Tap 'hello.py'
     Expect 'editor' @('hello.py', 'Run')
+    # The tree opens as a drawer over the editor on a phone; close it so later steps see
+    # the editor rather than the tree.
+    if (Find 'New file') { $null = Tap 'Files' }
 }
 
-Step 'go to file' { $null = Tap 'More'; $null = Tap 'Go to file'; Expect 'go to file' @('Go to file'); Back }
+Step 'go to file' { $null = Tap 'More'; $null = Tap 'Go to file'; Expect 'go to file' @('Go to file', 'hello.py'); $null = Tap 'Close' }
 
 Step 'find' { $null = Tap 'More'; $null = Tap 'Find'; Expect 'find bar' @('⇄'); $null = Tap '✕' }
 
 Step 'run' {
     $null = Tap 'Run'
-    # The terminal draws its text rather than exposing it, so read the shell through tmux.
+    # The terminal draws its text rather than exposing it, so read the shells through tmux.
     Start-Sleep 6
-    $out = & powershell -NoProfile -Command "& '$PSScriptRoot\device.ps1' guest 'tmux capture-pane -p -t kern-1 2>/dev/null; tmux capture-pane -p -t kern-2 2>/dev/null'" 2>$null
+    $out = & "$PSScriptRoot\device.ps1" guest 'for s in $(tmux ls -F "#S" 2>/dev/null); do tmux capture-pane -p -t "$s"; done' 2>$null
     if ("$out" -like '*5.0 True None 31*') { $script:pass++ } else { $script:fail += "run output - not in terminal" }
     $null = Tap 'Show editor'
 }
@@ -119,7 +135,7 @@ Step 'settings' {
     # Compose reports only what is on screen, so each group is checked where it is visible.
     Expect 'settings' @('EDITOR', 'Kern editor', 'VS Code', 'Text size')
     & $Adb -s $Device shell input swipe 540 1800 540 700 2>$null; Start-Sleep 1
-    Expect 'settings middle' @('GITHUB')
+    Expect 'settings middle' @('KEY ROW', 'echo macro')
     1..8 | ForEach-Object { & $Adb -s $Device shell input swipe 540 2000 540 400 2>$null }
     Start-Sleep 1
     Expect 'settings lower' @('BACKUP', 'Export projects', 'Delete Linux')

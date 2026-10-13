@@ -56,9 +56,11 @@ class WarmProcess(
             val run = command.replace("{}", "/root/.kern/$scriptName")
             val p = LinuxRuntime.spawnInGuest(context, listOf("/bin/bash", "-lc", "stty raw -echo; exec $run"))
                 ?: return null
-            Thread({ read(p) }, "Kern$name").apply { isDaemon = true }.start()
+            // Published before the reader starts, so a process that dies at once is
+            // cleared by its own reader rather than cached as a dead handle.
             startedAt = SystemClock.elapsedRealtime()
             process = p
+            Thread({ read(p) }, "Kern$name").apply { isDaemon = true }.start()
             return p
         }
     }
@@ -77,9 +79,11 @@ class WarmProcess(
         // request starts a new one - but not straight away if this one died at once, or a
         // missing gopls would be respawned on every keystroke.
         // A deliberate [stop] has already cleared [process], and is no reason to wait.
-        if (process === p) {
-            process = null
-            if (SystemClock.elapsedRealtime() - startedAt < 10_000) retryAfter = SystemClock.elapsedRealtime() + 60_000
+        synchronized(this) {
+            if (process === p) {
+                process = null
+                if (SystemClock.elapsedRealtime() - startedAt < 10_000) retryAfter = SystemClock.elapsedRealtime() + 60_000
+            }
         }
         runCatching { p.close() }
         waiting.values.forEach { it.complete(JSONArray()) }
@@ -110,8 +114,10 @@ class WarmProcess(
 
     /** End the process, if running; the next request starts a fresh one. */
     fun stop() {
-        val p = synchronized(this) { process.also { process = null } } ?: return
-        retryAfter = 0
+        val p = synchronized(this) {
+            retryAfter = 0
+            process.also { process = null }
+        } ?: return
         runCatching { p.close() }
     }
 

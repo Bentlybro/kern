@@ -63,10 +63,7 @@ fun EditorSection() {
         selected = mode == EditorMode.Kind.Workbench,
         title = "VS Code",
         detail = "The full workbench: language servers, extensions, debugger. Takes a few seconds to start.",
-    ) {
-        NativeEditor.saveAll()
-        EditorMode.set(context, EditorMode.Kind.Workbench)
-    }
+    ) { EditorSwitch.toWorkbench(context, null) }
 
     if (mode == EditorMode.Kind.Native) {
         Text("Text size  ${size.toInt()}", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 6.dp))

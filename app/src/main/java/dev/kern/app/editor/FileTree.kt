@@ -133,8 +133,12 @@ fun FileTree(root: String, onOpen: (String) -> Unit, modifier: Modifier = Modifi
                 // Rename and delete move files out from under open tabs: write the tabs
                 // out first, and only drop them once the move really happened.
                 val moving = p is TreePrompt.Rename || p is TreePrompt.Delete
-                if (moving) NativeEditor.flush()
+                if (moving && !NativeEditor.flush(NativeEditor.under(p.node.path))) {
+                    NativeEditor.report("${p.node.name} has unsaved changes - resolve them first")
+                    return@launch
+                }
                 val ok = withContext(Dispatchers.IO) { p.apply(context, value) }
+                if (!ok) NativeEditor.report("${p.title.removeSuffix("?")} failed")
                 if (moving && ok) NativeEditor.forget(p.node.path)
                 if (p.node.isDirectory) expanded = expanded + p.node.path
                 reload++

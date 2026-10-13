@@ -9,9 +9,11 @@ import dev.kern.app.core.AppScope
 import dev.kern.app.editor.NativeEditor
 import dev.kern.app.workbench.WorkbenchWebView
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * What the Projects screen does - create, clone, delete - apart from how it looks.
@@ -78,8 +80,13 @@ class ProjectsModel(private val app: Context, private val scope: CoroutineScope)
     fun delete(name: String) {
         busy = "Deleting $name…"
         message = null
-        val work = AppScope.start { ProjectRepository.delete(app, name) }
-        scope.launch { report(work.await(), "Deleted") { NativeEditor.forget(it) } }
+        // Its tabs close first, inside the same app-scoped job as the rm: a save still
+        // queued for one of them would otherwise put the deleted folder back.
+        val work = AppScope.start {
+            withContext(Dispatchers.Main) { NativeEditor.forget("${ProjectRepository.PROJECTS_DIR}/${name.trim()}") }
+            ProjectRepository.delete(app, name)
+        }
+        scope.launch { report(work.await(), "Deleted") {} }
     }
 
     private fun openOnSuccess(outcome: ProjectRepository.Outcome) {

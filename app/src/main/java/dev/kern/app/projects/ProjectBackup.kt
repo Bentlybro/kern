@@ -5,6 +5,7 @@ import dev.kern.app.guest.StorageManager
 import dev.kern.app.guest.sq
 import android.content.Context
 import android.net.Uri
+import dev.kern.app.core.copyCapped
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -91,12 +92,15 @@ object ProjectBackup {
      * Unpack an export back into /root. Files in the archive replace files of the same name;
      * anything not in it is left alone, so this never deletes work.
      */
+    private const val MAX_RESTORE_BYTES = 4L shl 30
+
     suspend fun restore(context: Context, source: Uri): String = withContext(Dispatchers.IO) {
         val staged = File(LinuxRuntime.guestTmpDir(context), STAGED)
         try {
             val input = context.contentResolver.openInputStream(source)
                 ?: return@withContext "Could not read that file"
-            input.use { src -> staged.outputStream().use { src.copyTo(it) } }
+            val whole = input.use { src -> staged.outputStream().use { src.copyCapped(it, MAX_RESTORE_BYTES) } }
+            if (!whole) return@withContext "That file is over ${MAX_RESTORE_BYTES shr 30} GB - too big to be a Kern export"
 
             // Refuse anything that would land outside /root: an archive is a list of paths
             // chosen by whoever made it, and this one came from shared storage.

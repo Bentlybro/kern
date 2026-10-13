@@ -2,6 +2,17 @@
 
 This is an honest list, ordered by what would most change Kern as a daily tool rather than by what is easiest. Anything marked **unverified** builds and deploys but has not been proven on device, and should be treated as unfinished.
 
+## Changed on 2026-10-13
+
+A long usability pass, all verified on the Pixel 7a. The native editor is now the default (decision D14 in [08](08-decisions.md)), with VS Code started on demand; files can be run with one tap; projects can be exported and restored; files can be opened with or shared to Kern; the key row is configurable; the whole UI was restyled; and sources are organised into feature packages with every file under 500 lines. Bugs fixed along the way include git hanging for ten minutes on an invisible credential prompt, localhost links replacing the editor, shallow-only clones, selection handles that moved text instead of selecting it, and commits authored as `kern@localhost`.
+
+New open items that pass created:
+
+- **Language intelligence in the native editor.** It highlights, matches brackets and indents, but has no completion, diagnostics or go-to-definition. The workbench has all three. The route is D13's extension bridge rather than sora's experimental `editor-lsp`.
+- **Folding and multi-cursor** are absent from sora (issues #85 and #798) and need either upstream work or a fork.
+- **Per-project tabs start empty the first time** after this update, because the old single tab list is not migrated. Opening files once fixes it for good.
+- **Setup has not been re-run since the restyle.** It needs a delete-and-reinstall on a device to check the first-run screens.
+
 ## 1. Guest processes should outlive the app
 
 This is the biggest gap, and the one most likely to lose someone's work.

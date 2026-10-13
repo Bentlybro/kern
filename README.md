@@ -8,7 +8,7 @@ Ubuntu 26.04 LTS · code-server 4.131 · git · tmux · python3 · ripgrep
 
 Kern installs a real Ubuntu filesystem inside its own sandbox and runs it through PRoot. `apt install` works. Compilers, language servers and CLI agents are the ordinary glibc builds from the Ubuntu archive, not special mobile ports. There is no root, no Termux, and no server in a datacentre.
 
-**Kern works, and it is pre-release.** Setup takes about two minutes to reach a usable editor. It has been verified end to end on device, so the numbers in this README are measured rather than estimated.
+**Kern works, and it is pre-release.** Setup takes about two minutes to reach a usable editor, and after that the app opens straight into the editor with nothing to wait for. It has been verified end to end on device, so the numbers in this README are measured rather than estimated.
 
 <p align="center">
   <img src="docs/images/editor.png" width="24%" alt="The VS Code workbench with a Python file open, syntax highlighted, file tree beside it">
@@ -25,14 +25,16 @@ Kern installs a real Ubuntu filesystem inside its own sandbox and runs it throug
 
 |  |  |
 |---|---|
-| **Editor** | Kern runs the real VS Code workbench (code-server) with its own chrome hidden. The web layer renders only the editor, and every surface around it is native Compose. |
+| **Editor** | Kern's own native editor opens files instantly, straight from the Linux filesystem, with VS Code's grammars and Dark Modern theme, tabs per project, autosave, find and replace, go to file, and Android selection and keyboard. Tabs follow the disk, so a `git pull` or an agent's edit shows up, and an outside change is never overwritten. |
+| **VS Code** | The full workbench (code-server) is one tap away for language servers, extensions and the debugger. It starts only when you ask for it and opens on the file you were editing. |
+| **Run** | One tap runs the file you are editing - Python, Node, Bash, Go, C, C++, Rust, make, npm, cargo and more - in a real terminal, so its output and input are right there. |
 | **Terminal** | The terminal opens genuine PTYs into the guest and draws them with a native terminal emulator, so there is no xterm.js and no WebView in the input path. You can run multiple shells in tabs, and each one opens in the current project. |
 | **Linux** | The guest is Ubuntu 26.04 LTS, with a working `apt`, fake root, and the whole Ubuntu archive available. |
-| **Projects** | You can create a project, `git clone` one, or open any folder, and Kern reads them natively from the guest filesystem. |
+| **Projects** | You can create a project, `git clone` one (full history, or shallow), or open any folder. Projects can be exported to a single file and restored, and files can be opened with or shared to Kern from other apps. |
 | **GitHub** | Signing in takes one tap and uses the device flow. Kern registers gh as git's credential helper, so `git push` then works everywhere: in the editor's Git panel, in the terminal, and in any agent. |
-| **Adaptive** | Kern lays out for the screen it is on, whether that is a phone, a tablet, an unfolded foldable, tabletop posture (the editor above the crease and the terminal below) or desktop mode. |
+| **Adaptive** | Kern lays out for the screen it is on: a phone, a tablet, an unfolded foldable, tabletop posture (the editor above the crease and the terminal below), or a wide screen with the terminal beside the editor. |
 | **Optional agent** | A cockpit runs whatever CLI coding agent you name, in a real terminal, alongside a diff and a one-thumb commit. Wanting no agent is a supported choice, and the diff half still earns its place. |
-| **Input** | Kern adds a coding key row with sticky modifiers, explicit keyboard control, and hardware-keyboard chords. |
+| **Input** | Kern adds a coding key row with sticky modifiers, explicit keyboard control, and hardware-keyboard chords. The row is yours to rearrange, with text macros such as `git status⏎` as one-tap keys. |
 | **Health** | A status screen says what is wrong with the environment and gives you a button that fixes it rather than a command to copy. |
 
 ## How it works

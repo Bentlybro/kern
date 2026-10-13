@@ -73,6 +73,16 @@ There are two rejected approaches and one preferred approach for a future native
 
 One correction to note: this does **not** "preserve the VS Code extension ecosystem". code-server already uses Open VSX only, because Microsoft's Marketplace ToS restricts the Marketplace to Microsoft products, so Pylance, MS C/C++ and Remote-* are already unavailable. Justify the bridge on **protocol ownership and zero backend work**, never on marketplace breadth.
 
+## D14 — The native editor is the default; the workbench starts on demand — **Accepted (2026-10-13)**
+
+D12 said to build the native shell first, measure, and only then consider swapping the editing surface. The shell is built, and the measurement it asked for came back: the usage tracker put the editor at 97% of session time, against D12's own bar of "well above ~15%". So the native surface now exists beside the workbench and is the default.
+
+It is sora-editor 0.24.6 (the D9 candidate) with TextMate highlighting, as `docs/research2/native-editor.md` recommended, but nothing is bundled: grammars, language configurations and the Dark Modern theme are read from the code-server install already in the guest, so the two editors colour code identically and new code-server releases bring new languages to both. Files are read and written directly from the guest filesystem with no PRoot spawn, which is what makes opening instant.
+
+What it does not do is replace the workbench, and the research's reasons still hold: no folding, no multi-cursor, and the LSP layer would be months of work. Instead the workbench became an on-demand mode. In native mode the supervisor does not start code-server at all - a few hundred MB of Node and ten to twenty seconds of CPU saved for anyone who never opens it - and "Open VS Code" starts it and lands on the file being edited. Both editors work on the same files, so switching is free.
+
+Revisit when: language intelligence is wanted natively (the route is D13's extension bridge, not editor-lsp), or folding lands in sora (#85).
+
 ## D9 — Touch-first satellite editor (CodeMirror 6) — **Superseded by D12**
 
 This decision is kept alive only as a fallback behind the editor seam. If an editing surface is ever swapped in, sora-editor 0.24.6 is the primary candidate, **vendored into our tree** rather than consumed as a remote dependency: its head tracks AGP 9.2.1/Kotlin 2.3.10 with a single maintainer at 73% of all commits, and Code on the Go deliberately pins the frozen 0.23.6 rather than following head, having had to patch into sora's package namespace to reach package-private APIs. LGPL-2.1-or-later is clean against GPLv3, and vendoring makes the relinking obligation trivial. The known gaps are code folding (issue #85, milestone 0.25.0) and multi-cursor (issue #798, no milestone, no comments, so treat it as permanently absent).

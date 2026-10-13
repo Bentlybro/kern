@@ -18,6 +18,18 @@ SyntaxError: expected ':'"""
     }
 
     @Test
+    fun `a traceback's own frames do not win over the file's line`() {
+        val out = """Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/usr/lib/python3.14/ast.py", line 46, in parse
+  File "/root/p/a.py", line 7
+    def f(
+         ^
+SyntaxError: '(' was never closed"""
+        assertEquals(7, SyntaxCheck.parse("/root/p/a.py", out)!!.line)
+    }
+
+    @Test
     fun `node names file and line`() {
         val out = "/root/p/app.js:2\nconst x = ;\n          ^\n\nSyntaxError: Unexpected token ';'"
         assertEquals(2, SyntaxCheck.parse("/root/p/app.js", out)!!.line)

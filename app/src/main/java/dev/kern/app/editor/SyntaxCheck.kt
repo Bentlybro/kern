@@ -14,7 +14,7 @@ import io.github.rosemoe.sora.text.Content
  * Not a language server - those are a much larger job (docs/19). This is the cheap half
  * that catches most of what goes wrong typing on a phone: an unclosed bracket, a stray
  * indent, a missing colon. After each save the file is handed to the language's own
- * checker - `python3 -m py_compile`, `node --check`, `bash -n` - and the line it names
+ * checker - Python's parser, `node --check`, `bash -n` - and the line it names
  * is underlined, with the message on tap.
  */
 object SyntaxCheck {
@@ -25,7 +25,9 @@ object SyntaxCheck {
     internal fun commandFor(path: String): String? {
         val file = sq(path)
         return when (path.substringAfterLast('.', "").lowercase()) {
-            "py" -> "python3 -m py_compile $file"
+            // ast.parse, not py_compile: py_compile writes a __pycache__ into the project on
+            // every save (caught on device, cluttering the tree). Parsing writes nothing.
+            "py" -> "python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' $file"
             "js", "mjs", "cjs" -> "node --check $file"
             "sh", "bash" -> "bash -n $file"
             "json" -> "python3 -m json.tool $file >/dev/null"
@@ -41,8 +43,11 @@ object SyntaxCheck {
     internal fun parse(path: String, output: String): Problem? {
         if (output.isBlank()) return null
         val name = Regex.escape(path.substringAfterLast('/'))
-        val line = Regex("""line (\d+)""").find(output)?.groupValues?.get(1)?.toIntOrNull()
+        // The file's own line first: a traceback names the checker's frames too, and the
+        // first "line 1" in it is the checker's, not the file's.
+        val line = Regex(""""[^"]*$name", line (\d+)""").find(output)?.groupValues?.get(1)?.toIntOrNull()
             ?: Regex("""$name:(\d+)""").find(output)?.groupValues?.get(1)?.toIntOrNull()
+            ?: Regex("""line (\d+)""").find(output)?.groupValues?.get(1)?.toIntOrNull()
             ?: return null
         val message = output.lineSequence()
             .map { it.trim() }

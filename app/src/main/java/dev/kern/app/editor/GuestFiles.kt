@@ -17,6 +17,9 @@ object GuestFiles {
     /** Larger than any source file anyone edits on a phone, smaller than an OOM. */
     const val MAX_BYTES = 4L * 1024 * 1024
 
+    /** Never interesting to browse: version-control internals and generated caches. */
+    private val HIDDEN = setOf(".git", "__pycache__", ".pytest_cache", ".mypy_cache")
+
     data class Node(val name: String, val path: String, val isDirectory: Boolean)
 
     sealed interface Read {
@@ -34,7 +37,7 @@ object GuestFiles {
         val children = host(context, guestDir).listFiles() ?: return emptyList()
         val base = guestDir.trimEnd('/')
         return children
-            .filter { it.name != ".git" }
+            .filter { it.name !in HIDDEN }
             .map { Node(it.name, "$base/${it.name}", it.isDirectory) }
             .sortedWith(compareBy<Node>({ !it.isDirectory }, { it.name.lowercase() }))
     }

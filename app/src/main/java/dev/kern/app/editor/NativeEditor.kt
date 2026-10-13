@@ -93,6 +93,11 @@ object NativeEditor {
         val w = MutableContextWrapper(activityContext).also { wrapper = it }
         themed = false
         val view = KernCodeEditor(w).apply {
+            // Explicit params, not none: sora only allows scrolling past the last line when
+            // the view has layout params, and without that scroll room the completion
+            // window near the bottom of a file had nowhere to go and collapsed to a hairline
+            // (caught on device).
+            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             typefaceText = Typeface.MONOSPACE
             setTextSize(EditorPrefs.fontSp(activityContext))
             isWordwrap = EditorPrefs.wrap(activityContext)

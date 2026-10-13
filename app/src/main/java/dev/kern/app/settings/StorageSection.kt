@@ -1,5 +1,6 @@
 package dev.kern.app.settings
 
+import dev.kern.app.ui.Panel
 import dev.kern.app.ui.SectionTitle
 import dev.kern.app.core.runDetached
 import dev.kern.app.guest.RootfsInstaller
@@ -102,158 +103,168 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
     }
 
     SectionTitle("Storage")
+    Panel {
 
-    if (measuring) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(
-                modifier = Modifier.height(16.dp).width(16.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            Text(
-                "  measuring the Linux install...",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        if (measuring) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(
+                    modifier = Modifier.height(16.dp).width(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    "  measuring the Linux install...",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
+
+        usage?.let { u ->
+            UsageBar(u)
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                UsageRow("Linux total", StorageManager.format(u.guestMb))
+                UsageRow("  your projects", StorageManager.format(u.projectsMb))
+                UsageRow("  package cache", StorageManager.format(u.aptCacheMb))
+                UsageRow("Free on device", StorageManager.format(u.freeMb))
+            }
+
+            if (u.overLimit) {
+                Text(
+                    "Linux is over the ${StorageManager.format(u.limitMb.toLong())} " +
+                        "budget you set.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+
     }
-
-    usage?.let { u ->
-        UsageBar(u)
-        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            UsageRow("Linux total", StorageManager.format(u.guestMb))
-            UsageRow("  your projects", StorageManager.format(u.projectsMb))
-            UsageRow("  package cache", StorageManager.format(u.aptCacheMb))
-            UsageRow("Free on device", StorageManager.format(u.freeMb))
-        }
-
-        if (u.overLimit) {
-            Text(
-                "Linux is over the ${StorageManager.format(u.limitMb.toLong())} " +
-                    "budget you set.",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-    }
-
     SectionTitle("Budget")
-    Text(
-        "Linux is a folder inside this app, not a fixed-size disk, so this is a " +
-            "warning threshold rather than a hard cap - Android gives no way to " +
-            "enforce one without root. You will be told when it is exceeded.",
-        fontSize = 12.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    LimitChooser(
-        selected = usage?.limitMb ?: StorageManager.limitMb(context),
-        onSelect = {
-            StorageManager.setLimitMb(context, it)
-            reload++
-        },
-    )
-
-    SectionTitle("Maintenance")
-    (busy ?: result)?.let {
-        Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
-    }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(
-            enabled = busy == null,
-            onClick = {
-                busy = "Cleaning up..."
-                // On the app scope for the same reason as Repair beside it: closing
-                // settings used to kill the guest command partway through.
-                scope.runDetached({ StorageManager.cleanUp(app) }) {
-                    result = it
-                    busy = null
-                    reload++
-                }
-            },
-        ) { Text("Free up space") }
-
-        TextButton(
-            enabled = busy == null && !RootfsInstaller.isRunning,
-            onClick = {
-                // Started on the installer's own scope, not this screen's:
-                // closing settings must not cancel a repair mid-package. It is
-                // idempotent, skipping whatever is already in place.
-                RootfsInstaller.start(context)
-            },
-        ) { Text("Repair") }
-    }
-    Text(
-        "Free up space clears the package cache, temporary files and logs - your " +
-            "projects and installed tools are untouched. Repair reinstalls any " +
-            "missing tools, for a setup that was interrupted.",
-        fontSize = 11.5.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    // Surface live progress from the installer while Repair runs.
-    (installerStage as? RootfsInstaller.Stage.Working)?.let {
+    Panel {
         Text(
-            "${it.what}...",
-            fontSize = 11.5.sp,
-            color = MaterialTheme.colorScheme.primary,
-        )
-    }
-
-    SectionTitle("Backup")
-    backupStatus?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary) }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Button(enabled = busy == null, onClick = { exportLauncher.launch("kern-backup.tar.gz") }) {
-            Text("Export projects")
-        }
-        TextButton(
-            enabled = busy == null,
-            // Any type: providers label .tar.gz half a dozen ways, and the restore checks
-            // the contents itself.
-            onClick = { importLauncher.launch(arrayOf("*/*")) },
-        ) { Text("Restore") }
-    }
-    Text(
-        "Saves ~/projects and your git, shell and editor settings as one file wherever " +
-            "you choose. Rebuildable folders like node_modules are left out, and so are " +
-            "credentials - sign in to GitHub again after a restore.",
-        fontSize = 11.5.sp,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-
-    SectionTitle("Reset")
-    if (!confirmDelete) {
-        TextButton(onClick = { confirmDelete = true }) {
-            Text("Delete Linux", color = MaterialTheme.colorScheme.error)
-        }
-        Text(
-            "Removes the whole environment, including anything in ~/projects that " +
-                "you have not pushed - export it above first. Setup would run again " +
-                "from scratch.",
-            fontSize = 11.5.sp,
+            "Linux is a folder inside this app, not a fixed-size disk, so this is a " +
+                "warning threshold rather than a hard cap - Android gives no way to " +
+                "enforce one without root. You will be told when it is exceeded.",
+            fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-    } else {
-        Text(
-            "This deletes ${StorageManager.format(usage?.guestMb ?: 0)} including " +
-                "unpushed work. There is no undo.",
-            fontSize = 12.5.sp,
-            color = MaterialTheme.colorScheme.error,
+        LimitChooser(
+            selected = usage?.limitMb ?: StorageManager.limitMb(context),
+            onSelect = {
+                StorageManager.setLimitMb(context, it)
+                reload++
+            },
         )
+
+    }
+    SectionTitle("Maintenance")
+    Panel {
+        (busy ?: result)?.let {
+            Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 enabled = busy == null,
                 onClick = {
-                    busy = "Deleting..."
-                    // App scope too: if the screen closes first the delete still has to
-                    // happen, or the app returns to a guest the user was told was gone.
-                    // deleteGuest tells the routing itself, so the callback below is only
-                    // the fast path back to setup.
-                    scope.runDetached({ StorageManager.deleteGuest(app) }) {
+                    busy = "Cleaning up..."
+                    // On the app scope for the same reason as Repair beside it: closing
+                    // settings used to kill the guest command partway through.
+                    scope.runDetached({ StorageManager.cleanUp(app) }) {
+                        result = it
                         busy = null
-                        onGuestDeleted()
+                        reload++
                     }
                 },
-            ) { Text("Delete everything") }
-            TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+            ) { Text("Free up space") }
+
+            TextButton(
+                enabled = busy == null && !RootfsInstaller.isRunning,
+                onClick = {
+                    // Started on the installer's own scope, not this screen's:
+                    // closing settings must not cancel a repair mid-package. It is
+                    // idempotent, skipping whatever is already in place.
+                    RootfsInstaller.start(context)
+                },
+            ) { Text("Repair") }
+        }
+        Text(
+            "Free up space clears the package cache, temporary files and logs - your " +
+                "projects and installed tools are untouched. Repair reinstalls any " +
+                "missing tools, for a setup that was interrupted.",
+            fontSize = 11.5.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        // Surface live progress from the installer while Repair runs.
+        (installerStage as? RootfsInstaller.Stage.Working)?.let {
+            Text(
+                "${it.what}...",
+                fontSize = 11.5.sp,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+
+    }
+    SectionTitle("Backup")
+    Panel {
+        backupStatus?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary) }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(enabled = busy == null, onClick = { exportLauncher.launch("kern-backup.tar.gz") }) {
+                Text("Export projects")
+            }
+            TextButton(
+                enabled = busy == null,
+                // Any type: providers label .tar.gz half a dozen ways, and the restore checks
+                // the contents itself.
+                onClick = { importLauncher.launch(arrayOf("*/*")) },
+            ) { Text("Restore") }
+        }
+        Text(
+            "Saves ~/projects and your git, shell and editor settings as one file wherever " +
+                "you choose. Rebuildable folders like node_modules are left out, and so are " +
+                "credentials - sign in to GitHub again after a restore.",
+            fontSize = 11.5.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+    }
+    SectionTitle("Reset")
+    Panel {
+        if (!confirmDelete) {
+            TextButton(onClick = { confirmDelete = true }) {
+                Text("Delete Linux", color = MaterialTheme.colorScheme.error)
+            }
+            Text(
+                "Removes the whole environment, including anything in ~/projects that " +
+                    "you have not pushed - export it above first. Setup would run again " +
+                    "from scratch.",
+                fontSize = 11.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            Text(
+                "This deletes ${StorageManager.format(usage?.guestMb ?: 0)} including " +
+                    "unpushed work. There is no undo.",
+                fontSize = 12.5.sp,
+                color = MaterialTheme.colorScheme.error,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    enabled = busy == null,
+                    onClick = {
+                        busy = "Deleting..."
+                        // App scope too: if the screen closes first the delete still has to
+                        // happen, or the app returns to a guest the user was told was gone.
+                        // deleteGuest tells the routing itself, so the callback below is only
+                        // the fast path back to setup.
+                        scope.runDetached({ StorageManager.deleteGuest(app) }) {
+                            busy = null
+                            onGuestDeleted()
+                        }
+                    },
+                ) { Text("Delete everything") }
+                TextButton(onClick = { confirmDelete = false }) { Text("Cancel") }
+            }
         }
     }
 }

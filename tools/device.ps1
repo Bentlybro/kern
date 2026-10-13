@@ -50,8 +50,11 @@ $PortHex  = '3419'
 # ---- helpers ---------------------------------------------------------------
 
 function Connect-Device {
+    # adb prints "daemon starting" and the like on stderr, which Windows PowerShell turns
+    # into a terminating NativeCommandError under 'Stop' - so a cold daemon failed the run.
+    $ErrorActionPreference = 'Continue'
     & $Adb connect $Device *> $null
-    $devices = & $Adb devices
+    $devices = & $Adb devices 2>$null
     if (-not ($devices -match [regex]::Escape($Device))) {
         throw "Device $Device not reachable. Is the phone awake and on Wi-Fi?"
     }
@@ -60,7 +63,12 @@ function Connect-Device {
 function Invoke-Adb {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$AdbArgs)
     $all = @('-s', $Device) + $AdbArgs
-    & $Adb @all
+    # Same reason as above: progress lines such as "1 file pulled" arrive on stderr, and
+    # under 'Stop' they aborted every shot and guest call after the work had succeeded.
+    # Dropped rather than merged in: callers parse stdout, and a stray "Broken pipe" line in
+    # the array made -match return the array and never set $Matches.
+    $ErrorActionPreference = 'Continue'
+    & $Adb @all 2>$null
 }
 
 <#

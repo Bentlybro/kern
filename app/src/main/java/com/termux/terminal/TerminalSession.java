@@ -10,7 +10,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 
-import dev.kern.app.runtime.PtyProcess;
+import dev.kern.app.guest.PtyProcess;
 
 /**
  * A terminal session: a shell running on a pseudo-terminal owned by this app.

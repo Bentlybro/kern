@@ -2,7 +2,7 @@
 
 First run is the only moment Kern asks the user to wait, so it is worth doing well. This document covers what setup actually does, why it is split in two, and where the time goes.
 
-The implementation lives in `runtime/RootfsInstaller.kt`.
+The implementation lives in `guest/RootfsInstaller.kt`.
 
 ## The shape
 
@@ -10,7 +10,7 @@ Setup runs in **two halves**, and the split is the single most important thing a
 
 | Phase | Steps | Why here |
 |---|---|---|
-| **1 — essential** | It downloads the Ubuntu base image, unpacks it through PRoot, writes the apt, DNS and dpkg configuration, runs `apt-get update` and installs code-server. | The editor cannot open without a filesystem and a server. |
+| **1 — essential** | It downloads the Ubuntu base image, unpacks it through PRoot, writes the apt, DNS and dpkg configuration, and starts downloading code-server. | The native editor needs only a filesystem; code-server (VS Code) finishes behind it. |
 | **2 — background** | It installs `ca-certificates git gh tmux curl ripgrep python3 python3-pip`, then runs `polish()`. | All of this is worth having, but none of it blocks writing code. |
 
 Between the two, the installer tells the app that the environment is usable. The IDE opens, and the toolchain installs behind it with a strip in the editor reporting progress.

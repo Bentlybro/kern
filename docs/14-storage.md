@@ -1,6 +1,6 @@
 # 14 — Storage
 
-The implementation lives in `runtime/StorageManager.kt` and `ui/SettingsScreen.kt`.
+The implementation lives in `guest/StorageManager.kt` and `settings/SettingsScreen.kt`.
 
 ## What it costs
 

@@ -10,7 +10,7 @@ The tests live in `app/src/test/java/dev/kern/app/`, under `runtime/` and `sessi
 ./gradlew testDebugUnitTest
 ```
 
-There are 105 tests. They take six seconds on a warm build and twenty-five from cold, and most of that is compiling the app. They need no network, no device and no emulator. The HTML report lands in `app/build/reports/tests/testDebugUnitTest/index.html`, and the machine-readable results land in `app/build/test-results/testDebugUnitTest/`.
+There are 130 tests. They take six seconds on a warm build and twenty-five from cold, and most of that is compiling the app. They need no network, no device and no emulator. The HTML report lands in `app/build/reports/tests/testDebugUnitTest/index.html`, and the machine-readable results land in `app/build/test-results/testDebugUnitTest/`.
 
 CI runs the same task on every push to `dev` and every pull request into `dev` or `main`. Unlike lint it has no `continue-on-error`, so a red test is a red build. When the tests themselves fail, CI uploads both reports as a `unit-test-report-<sha>` artifact — the console only prints a count, and the artifact is what says which assertion went and why.
 

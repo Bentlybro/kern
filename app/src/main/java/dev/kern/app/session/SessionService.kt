@@ -1,7 +1,12 @@
 package dev.kern.app.session
 
+import dev.kern.app.agent.AgentPrompt
+import dev.kern.app.core.Secrets
+import dev.kern.app.guest.GuestConfig
+import dev.kern.app.guest.RootfsInstaller
+import dev.kern.app.terminal.TerminalSessions
+import dev.kern.app.workbench.CodeServer
 import android.app.Notification
-import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
@@ -12,16 +17,10 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
-import dev.kern.app.MainActivity
 import dev.kern.app.R
-import dev.kern.app.runtime.AgentPrompt
-import dev.kern.app.runtime.AgentRepository
-import dev.kern.app.runtime.CodeServer
-import dev.kern.app.runtime.GuestConfig
-import dev.kern.app.ui.TerminalSessions
-import dev.kern.app.runtime.Secrets
-import java.net.HttpURLConnection
-import java.net.URL
+import dev.kern.app.core.Notifications
+import dev.kern.app.editor.EditorMode
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -63,6 +62,9 @@ class SessionService : Service() {
         /** How often the server is asked whether it is alive. */
         private const val HEALTH_TICK_MS = 15_000L
 
+        /** How often the agent's screen is read for a question. No fork; just memory. */
+        private const val AGENT_TICK_MS = 3_000L
+
         /**
          * How long a *restarted* server gets to answer, against [START_TIMEOUT_MS] for a
          * cold one. Shorter because everything slow about the first start - unpacking,
@@ -90,6 +92,7 @@ class SessionService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var superviseJob: Job? = null
+    private var agentWatch: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -140,29 +143,21 @@ class SessionService : Service() {
         // resolvers indefinitely because neither apt nor clone had run since setup.
         GuestConfig.refreshDns(this)
 
-        if (isHealthy()) {
-            Log.i(TAG, "supervise: adopted an already-running server")
-        } else {
-            CodeServer.applyWorkbenchSettings(this)
-            if (!launchWithRetries()) return
-        }
-        _state.value = SessionState.Healthy
-        updateNotification(running())
-
-        var watch = RestartPolicy.State()
-        var wasAwaiting = false
-        var agentTick = 0
-        while (scope.isActive) {
-            delay(HEALTH_TICK_MS)
-
-            // Pocket workflow (M5): while a session is running, watch for the agent
-            // stopping to ask something and raise a notification so the phone can be in
-            // a pocket. Polled every other health tick - cheap, and tool-agnostic.
-            //
-            // Reads the rendered screen rather than a byte stream, because a TUI agent
-            // repaints in place: the last thing written and the last thing shown are
-            // routinely different, and only the second one is the question.
-            if (++agentTick % 2 == 0) {
+        // Pocket workflow (M5): while a session is running, watch for the agent stopping to
+        // ask something and raise a notification so the phone can be in a pocket.
+        //
+        // Reads the rendered screen rather than a byte stream, because a TUI agent repaints
+        // in place: the last thing written and the last thing shown are routinely
+        // different, and only the second one is the question. Its own loop, not the health
+        // tick's: this is an in-memory read with no fork behind it, and riding every other
+        // health tick made "agent needs you" arrive up to half a minute after it did.
+        // Held and replaced, because Retry restarts supervise() and each pass would
+        // otherwise leave another watcher behind, each raising its own notification.
+        agentWatch?.cancel()
+        agentWatch = scope.launch {
+            var wasAwaiting = false
+            while (isActive) {
+                delay(AGENT_TICK_MS)
                 runCatching {
                     val screen = TerminalSessions.agentScreen()
                     val awaiting = screen != null && AgentPrompt.awaitingInput(screen)
@@ -175,6 +170,44 @@ class SessionService : Service() {
                     wasAwaiting = awaiting
                 }
             }
+        }
+
+        // The native editor needs no server, so none is started until the workbench is
+        // asked for: code-server is a Node process of a few hundred MB that takes ten to
+        // twenty seconds of CPU to boot, all of it wasted on someone who never opens it.
+        // The session is usable meanwhile - terminals, the cockpit and the editor all
+        // work - so it says so, and the server starts the moment the mode flips.
+        if (EditorMode.isNative(this) && !isHealthy()) {
+            _state.value = SessionState.Healthy
+            updateNotification("Linux is running")
+            EditorMode.flow(this).first { it == EditorMode.Kind.Workbench }
+            _state.value = SessionState.Starting
+            updateNotification("Starting VS Code...")
+        }
+
+        // First setup installs code-server last, behind the native editor. Someone who
+        // asks for VS Code before it lands waits here, told why, rather than watching a
+        // launch fail three times over a binary that is not there yet.
+        if (!CodeServer.isInstalled(this)) {
+            updateNotification("Installing VS Code...")
+            while (!CodeServer.isInstalled(this)) {
+                if (!RootfsInstaller.isRunning) RootfsInstaller.start(this)
+                delay(2_000)
+            }
+        }
+
+        if (isHealthy()) {
+            Log.i(TAG, "supervise: adopted an already-running server")
+        } else {
+            CodeServer.applyWorkbenchSettings(this)
+            if (!launchWithRetries()) return
+        }
+        _state.value = SessionState.Healthy
+        updateNotification(running())
+
+        var watch = RestartPolicy.State()
+        while (scope.isActive) {
+            delay(HEALTH_TICK_MS)
 
             val wasDegraded = watch != RestartPolicy.State()
             val (nextWatch, decision) = RestartPolicy.next(watch, isHealthy())
@@ -287,19 +320,11 @@ class SessionService : Service() {
         return isHealthy()
     }
 
-    private fun isHealthy(): Boolean = try {
-        val conn = URL(CodeServer.HEALTH_URL).openConnection() as HttpURLConnection
-        conn.connectTimeout = 2_000
-        conn.readTimeout = 2_000
-        val ok = conn.responseCode in 200..299
-        conn.disconnect()
-        ok
-    } catch (e: Exception) {
-        false
-    }
+    private fun isHealthy(): Boolean = CodeServer.isHealthy()
 
     private fun shutdown() {
         superviseJob?.cancel()
+        agentWatch?.cancel()
         CodeServer.stop()
         _state.value = SessionState.Idle
         releaseWakeLock()
@@ -322,21 +347,9 @@ class SessionService : Service() {
 
     /** Separate, higher-importance channel so "agent needs you" actually buzzes. */
     private fun notifyAgent(title: String, text: String) {
-        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        nm.createNotificationChannel(
-            NotificationChannel(
-                AGENT_CHANNEL_ID,
-                "Agent attention",
-                NotificationManager.IMPORTANCE_HIGH,
-            ),
-        )
-        val openIntent = PendingIntent.getActivity(
-            this,
-            2,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE,
-        )
-        nm.notify(
+        Notifications.channel(this, AGENT_CHANNEL_ID, "Agent attention", NotificationManager.IMPORTANCE_HIGH)
+        val openIntent = Notifications.openApp(this, 2)
+        Notifications.manager(this).notify(
             NOTIF_AGENT_ID,
             Notification.Builder(this, AGENT_CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_chat)
@@ -350,13 +363,8 @@ class SessionService : Service() {
     }
 
     private fun goForeground(text: String) {
-        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        nm.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID,
-                getString(R.string.notif_channel_session),
-                NotificationManager.IMPORTANCE_LOW,
-            ),
+        Notifications.channel(
+            this, CHANNEL_ID, getString(R.string.notif_channel_session), NotificationManager.IMPORTANCE_LOW,
         )
         val notification = buildNotification(text)
         if (Build.VERSION.SDK_INT >= 34) {
@@ -371,17 +379,11 @@ class SessionService : Service() {
     }
 
     private fun updateNotification(text: String) {
-        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIF_ID, buildNotification(text))
+        Notifications.manager(this).notify(NOTIF_ID, buildNotification(text))
     }
 
     private fun buildNotification(text: String): Notification {
-        val openIntent = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE,
-        )
+        val openIntent = Notifications.openApp(this, 0)
         val stopIntent = PendingIntent.getService(
             this,
             1,

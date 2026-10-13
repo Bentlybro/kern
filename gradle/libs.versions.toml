@@ -8,6 +8,8 @@ lifecycle = "2.8.7"
 window = "1.5.1"
 coroutines = "1.11.0"
 junit = "4.13.2"
+sora = "0.24.6"
+desugar = "2.1.5"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -20,6 +22,11 @@ compose-ui = { group = "androidx.compose.ui", name = "ui" }
 compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
 compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+sora-bom = { group = "io.github.rosemoe", name = "editor-bom", version.ref = "sora" }
+sora-editor = { group = "io.github.rosemoe", name = "editor" }
+sora-textmate = { group = "io.github.rosemoe", name = "language-textmate" }
+sora-oniguruma = { group = "io.github.rosemoe", name = "oniguruma-native" }
+desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs", version.ref = "desugar" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 
 [plugins]

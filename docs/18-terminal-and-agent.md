@@ -1,6 +1,6 @@
 # 18 — The terminal and the agent
 
-The implementation is in `ui/TerminalSessions.kt`, `ui/TerminalPane.kt`, `ui/CockpitScreen.kt` and `runtime/AgentRepository.kt`.
+The implementation is in `terminal/TerminalSessions.kt`, `terminal/TerminalPane.kt`, `agent/CockpitScreen.kt` and `agent/AgentRepository.kt`.
 
 ## One registry, not two special cases
 

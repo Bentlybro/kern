@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Nothing of Kern's is backed up or carried to a new phone.
+
+  The guest is ~1.2 GB, far past auto-backup's 25 MB, so it never travels - and the
+  prefs on their own are worse than nothing: a restored session token, recents list and
+  layout epoch describe a Linux environment that is not there. Projects are protected by
+  git and by the in-app export (settings > storage), not by this.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </device-transfer>
+</data-extraction-rules>

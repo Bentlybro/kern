@@ -129,7 +129,7 @@ Encryption at rest is not the interesting part — GitHub does that already. The
 | Somebody commits it by accident. | `.gitignore` blocks it, and GitHub push protection catches it. |
 | It is echoed into the logs. | No step prints it, and GitHub also masks known values. |
 
-Two more things are worth turning on in the browser, because no workflow can do them for you. The first is **branch protection on `main`**, so that releases only come from reviewed merges, and the second is **secret scanning with push protection**, which is free on public repositories.
+`main` is already guarded by a repository **ruleset** (not classic branch protection, so the branch-protection API reports it as unprotected): every change needs a pull request and a passing `Build and check`, with zero required approvals. A direct `git push origin main` is rejected, so a release is a PR from `dev`, merged. The other thing worth turning on in the browser is **secret scanning with push protection**, which is free on public repositories.
 
 None of this covers anyone who has write access to the repository, and none of it covers your own machine. The key is only ever as safe as those two things.
 
@@ -137,7 +137,7 @@ None of this covers anyone who has write access to the repository, and none of i
 
 `isMinifyEnabled` and `isShrinkResources` are on. Two things in Kern are reached by *name* at runtime rather than through a reference R8 can follow, and both are pinned in `app/proguard-rules.pro`:
 
-- **The JNI pty.** `cpp/pty.c` binds statically, so its symbols spell out `Java_dev_kern_app_runtime_Pty_*`. The class's fully-qualified name and its native method names are part of the ABI; rename either and the first terminal anyone opens dies with `UnsatisfiedLinkError`.
+- **The JNI pty.** `cpp/pty.c` binds statically, so its symbols spell out `Java_dev_kern_app_guest_Pty_*`. The class's fully-qualified name and its native method names are part of the ABI; rename either and the first terminal anyone opens dies with `UnsatisfiedLinkError`.
 - **The workbench bridge.** `WorkbenchBridge`'s methods are called only from injected JavaScript, so R8 sees no caller and removes them. That does not crash — the injected script wraps each call in `try/catch` — it just silently stops the editor raising the keyboard and reporting selection. A release-only regression that fails quietly is the worst shape one can take, so it is kept explicitly.
 
 Line numbers are kept (`-keepattributes SourceFile,LineNumberTable`) because Kern's bug reports are stack traces the user copies out of the app, and an obfuscated one is useless to whoever receives it.
@@ -159,4 +159,4 @@ The updater lives under Settings → Updates. It checks the latest release when 
 
 The user can install an available update or **skip** it, and a skipped version stays skipped until somebody presses "Check for updates" deliberately. Nothing installs on its own. The download goes to app-private cache, where nothing else on the device can rewrite it, and Kern hands it to Android's `PackageInstaller`, which shows its own confirmation. So the user says yes twice, and the platform still verifies the signature before it does anything.
 
-The implementation is in `runtime/Updates.kt`, `runtime/InstallReceiver.kt` and `ui/UpdateSection.kt`.
+The implementation is in `update/Updates.kt`, `update/InstallReceiver.kt` and `update/UpdateSection.kt`.

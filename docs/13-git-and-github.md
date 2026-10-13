@@ -1,6 +1,6 @@
 # 13 — Git and GitHub
 
-The implementation lives in `runtime/GitHubAuth.kt` and `ui/GitHubSection.kt`.
+The implementation lives in `git/GitHubAuth.kt` and `settings/GitHubSection.kt`.
 
 ## What the feature actually is
 

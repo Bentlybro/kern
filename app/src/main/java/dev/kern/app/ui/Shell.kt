@@ -1,11 +1,27 @@
-﻿package dev.kern.app.ui
+package dev.kern.app.ui
 
+import dev.kern.app.agent.CockpitScreen
+import dev.kern.app.core.UsageTracker
+import dev.kern.app.guest.RootfsInstaller
+import dev.kern.app.input.KeyRow
+import dev.kern.app.editor.EditorChrome
+import dev.kern.app.editor.EditorMode
+import dev.kern.app.editor.NativeEditorPane
+import dev.kern.app.projects.IncomingFiles
+import dev.kern.app.terminal.Runner
+import dev.kern.app.projects.ProjectsScreen
+import dev.kern.app.session.SessionService
+import dev.kern.app.session.SessionState
+import dev.kern.app.settings.SettingsScreen
+import dev.kern.app.settings.StatusScreen
+import dev.kern.app.terminal.TerminalPane
+import dev.kern.app.terminal.TerminalSessions
+import dev.kern.app.workbench.SelectionOverlay
+import dev.kern.app.workbench.WorkbenchWebView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,8 +39,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
-import dev.kern.app.runtime.RootfsInstaller
-import dev.kern.app.runtime.UsageTracker
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.Saver
@@ -32,14 +46,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.kern.app.session.SessionService
-import dev.kern.app.session.SessionState
 
 /**
  * Where the shell is. One slot rather than a flag per screen: precedence used to be
@@ -120,8 +130,42 @@ fun Shell(state: SessionState) {
     BackHandler(enabled = destination != ShellDestination.Editor) {
         destination = ShellDestination.Editor
     }
-    BackHandler(enabled = destination == ShellDestination.Editor) {
-        WorkbenchWebView.Commands.escape()
+    // In the native editor, back closes whatever native chrome is open over it and is
+    // otherwise left to the system, as every Android app does. The workbench keeps its
+    // Escape, which closes VS Code's own pickers and panels.
+    val editorMode by EditorMode.flow(LocalContext.current).collectAsStateWithLifecycle()
+    val treeOpen by EditorChrome.treeOpen.collectAsStateWithLifecycle()
+    val findOpen by EditorChrome.findOpen.collectAsStateWithLifecycle()
+    val quickOpen by EditorChrome.quickOpen.collectAsStateWithLifecycle()
+    val native = editorMode == EditorMode.Kind.Native
+    val chromeOpen = treeOpen || findOpen || quickOpen
+    BackHandler(enabled = destination == ShellDestination.Editor && (!native || chromeOpen)) {
+        if (native) EditorChrome.closeTop() else WorkbenchWebView.Commands.escape()
+    }
+
+    // A file shared to Kern opens in the editor, so the editor is where to be. Skipping
+    // the initial value is what stops every recomposition after one share doing this.
+    val arrivals by IncomingFiles.arrivals.collectAsStateWithLifecycle()
+    var seenArrivals by rememberSaveable { mutableStateOf(arrivals) }
+    LaunchedEffect(arrivals) {
+        if (arrivals != seenArrivals) {
+            seenArrivals = arrivals
+            destination = ShellDestination.Editor
+            // On a phone the terminal covers the editor, and the file opened unseen behind
+            // it - caught on device.
+            showTerminal = false
+        }
+    }
+
+    // Run asks for the terminal: the output of what was just started is the point.
+    val runs by Runner.showTerminal.collectAsStateWithLifecycle()
+    var seenRuns by rememberSaveable { mutableStateOf(runs) }
+    LaunchedEffect(runs) {
+        if (runs != seenRuns) {
+            seenRuns = runs
+            destination = ShellDestination.Editor
+            showTerminal = true
+        }
     }
 
     // M5a: record where session time actually goes, so decision D12 can be settled with
@@ -179,6 +223,8 @@ fun Shell(state: SessionState) {
                 ProjectsScreen(
                     onOpenFolder = { path ->
                         WorkbenchWebView.openFolder(path)
+                        // A project just opened is a tree you want to see.
+                        if (EditorMode.isNative(context)) EditorChrome.treeOpen.value = true
                         destination = ShellDestination.Editor
                     },
                     onDismiss = { destination = ShellDestination.Editor },
@@ -237,47 +283,12 @@ fun Shell(state: SessionState) {
                         if (showTerminal) TerminalPane(Modifier.fillMaxSize())
                         else EditorPane(Modifier.fillMaxSize())
 
-                    showTerminal -> {
-                        // The pane the keyboard is typing into is the pane that needs the
-                        // room. A fixed 60/40 split shares the keyboard's cost between
-                        // both panes, which left the terminal ~10 rows tall on the
-                        // unfolded screen — under thumbs that were covering the editor
-                        // anyway. So while the IME is up and a terminal holds focus, the
-                        // editor collapses to a sliver and the terminal takes the rest;
-                        // either putting the keyboard away or tapping the editor restores
-                        // the split. The editor stays in composition on purpose: removing
-                        // it would detach the WebView and run the layout's teardown.
-                        val terminalFocused by TerminalSessions.focused
-                            .collectAsStateWithLifecycle()
-                        val imeUp =
-                            WindowInsets.imeAnimationTarget.getBottom(LocalDensity.current) > 0
-                        // Snapped, not animated: each step of a weight animation re-lays
-                        // out the workbench, which is the struggle imeAnimationTarget
-                        // exists to avoid.
-                        val editorWeight = if (imeUp && terminalFocused) 0.12f else 0.6f
-                        Column(Modifier.fillMaxSize()) {
-                            EditorPane(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .weight(editorWeight),
-                            )
-                            Spacer(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(1.dp)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                            )
-                            TerminalPane(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f - editorWeight),
-                            )
-                        }
-                    }
+                    showTerminal -> EditorTerminalSplit()
 
                     else -> EditorPane(Modifier.fillMaxSize())
                 }
-                if (state is SessionState.Reconnecting) ReconnectOverlay()
+                // The native editor needs no server, so a restart behind it is not its business.
+                if (state is SessionState.Reconnecting && !EditorMode.isNative(context)) ReconnectOverlay()
             }
 
             KeyRow()
@@ -314,7 +325,6 @@ private fun SetupStrip() {
     Column(Modifier.fillMaxWidth()) {
         Text(
             failure ?: "$label — you can keep working",
-            fontFamily = FontFamily.Monospace,
             fontSize = 10.sp,
             color = if (failure != null) {
                 MaterialTheme.colorScheme.error
@@ -341,36 +351,14 @@ private fun SetupStrip() {
     }
 }
 
-/** Tabletop: content on the upright half, controls on the flat half (docs/05). */
+/** Whichever editor the user has chosen; see [EditorMode]. */
 @Composable
-private fun TabletopLayout(fold: FoldState) {
-    val density = LocalDensity.current
-    val hingeDp = fold.hingeBounds?.let { with(density) { (it.bottom - it.top).toDp() } } ?: 0.dp
-
-    Column(modifier = Modifier.fillMaxSize()) {
-        EditorPane(
-            Modifier
-                .fillMaxWidth()
-                .weight(1f),
-        )
-        // Nothing interactive may sit on the crease.
-        Spacer(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(if (hingeDp > 0.dp) hingeDp else 2.dp)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        )
-        // Flat half: the terminal, reachable without reaching across the crease.
-        TerminalPane(
-            Modifier
-                .fillMaxWidth()
-                .weight(1f),
-        )
+internal fun EditorPane(modifier: Modifier = Modifier) {
+    val mode by EditorMode.flow(LocalContext.current).collectAsStateWithLifecycle()
+    if (mode == EditorMode.Kind.Native) {
+        NativeEditorPane(modifier)
+        return
     }
-}
-
-@Composable
-private fun EditorPane(modifier: Modifier = Modifier) {
     Box(modifier = modifier) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),

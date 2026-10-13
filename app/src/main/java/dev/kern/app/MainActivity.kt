@@ -1,5 +1,19 @@
 package dev.kern.app
 
+import dev.kern.app.workbench.CodeServer
+import dev.kern.app.core.AppScope
+import dev.kern.app.editor.EditorMode
+import dev.kern.app.core.UsageTracker
+import dev.kern.app.guest.LinuxRuntime
+import dev.kern.app.input.focusedInputView
+import dev.kern.app.projects.IncomingFiles
+import dev.kern.app.session.SessionService
+import dev.kern.app.session.SessionState
+import dev.kern.app.setup.SetupScreen
+import dev.kern.app.terminal.TerminalSessions
+import dev.kern.app.ui.KernTheme
+import dev.kern.app.ui.Shell
+import android.content.Intent
 import android.annotation.SuppressLint
 import android.os.Bundle
 import android.view.KeyEvent
@@ -20,18 +34,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.kern.app.runtime.LinuxRuntime
-import dev.kern.app.runtime.UsageTracker
-import dev.kern.app.session.SessionService
-import dev.kern.app.session.SessionState
-import dev.kern.app.ui.KernTheme
-import dev.kern.app.ui.SetupScreen
-import dev.kern.app.ui.Shell
-import dev.kern.app.ui.focusedInputView
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,7 +48,7 @@ class MainActivity : ComponentActivity() {
         // wrapper rather than against `this`, and it has to be pointed at the current
         // Activity before anything asks for one. Without it every recreation leaked this
         // whole window. WorkbenchWebView does the same thing at its own acquire().
-        dev.kern.app.ui.TerminalSessions.rebind(this)
+        TerminalSessions.rebind(this)
 
         // Eager start: once Linux is set up there is nothing to decide, so begin booting
         // code-server the moment the app opens rather than waiting for a button. Starting
@@ -57,12 +62,30 @@ class MainActivity : ComponentActivity() {
                 AppRoot()
             }
         }
+
+        // Only a fresh launch: a recreation re-delivers the original intent, and the file
+        // it carried was already imported the first time round.
+        if (savedInstanceState == null) importFrom(intent)
+    }
+
+    /** singleTask: a share while Kern is already open arrives here, not in onCreate. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        importFrom(intent)
+    }
+
+    private fun importFrom(intent: Intent?) {
+        if (!IncomingFiles.accepts(intent)) return
+        val app = applicationContext
+        AppScope.start {
+            IncomingFiles.handle(app, intent!!)
+        }
     }
 
     /**
      * Stop and start the usage clock with the window, not with the composition.
      *
-     * [dev.kern.app.runtime.UsageTracker] measures which surface the user is actually in,
+     * [UsageTracker] measures which surface the user is actually in,
      * and nothing was stopping it when the app left the screen - so a phone in a pocket
      * kept banking time against whatever was last open. See UsageTracker.pause.
      */
@@ -112,6 +135,8 @@ private fun AppRoot() {
     // "starting linux" instead of returning it to setup.
     val installChanges by LinuxRuntime.installChanges.collectAsStateWithLifecycle()
     val ready = remember(installChanges) { LinuxRuntime.isReady(context) }
+    val editorMode by EditorMode.flow(context).collectAsStateWithLifecycle()
+    val nativeEditor = editorMode == EditorMode.Kind.Native
 
     // An environment with no session running should start one. This is what carries the
     // app from setup finishing straight into the IDE, without the user pressing a second
@@ -128,6 +153,10 @@ private fun AppRoot() {
         // Checked first: with no environment there is nothing for the IDE or the
         // loading screen to be about, whatever the session last reported.
         !ready -> SetupScreen(sessionState, onStart = { SessionService.start(context) })
+
+        // The native editor reads the guest's files directly and needs no server, so it
+        // opens the moment Linux is installed rather than after code-server's cold start.
+        nativeEditor -> Shell(sessionState)
 
         sessionState is SessionState.Healthy || sessionState is SessionState.Reconnecting ->
             Shell(sessionState)
@@ -148,8 +177,7 @@ private fun BootingScreen(state: SessionState) {
     ) {
         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         Text(
-            if (state is SessionState.Reconnecting) "reconnecting" else "starting linux",
-            fontFamily = FontFamily.Monospace,
+            if (state is SessionState.Reconnecting) "reconnecting" else if (CodeServer.isInstalled(LocalContext.current)) "starting VS Code" else "installing VS Code - this takes a minute",
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 16.dp),

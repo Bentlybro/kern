@@ -1,5 +1,10 @@
 package dev.kern.app.agent
 
+import androidx.compose.ui.text.font.FontFamily
+import dev.kern.app.ui.ScreenHeader
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import dev.kern.app.ui.KernIcons
 import dev.kern.app.ui.HeaderIcon
 import dev.kern.app.core.runDetached
@@ -7,11 +12,9 @@ import dev.kern.app.git.GitCommands
 import dev.kern.app.projects.ProjectRepository
 import dev.kern.app.terminal.TerminalSessions
 import dev.kern.app.terminal.TerminalSurface
-import dev.kern.app.ui.HeaderAction
 import dev.kern.app.ui.KernColors
 import dev.kern.app.ui.ScreenSurface
 import androidx.compose.foundation.background
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -21,12 +24,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -71,7 +72,8 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
 
     var status by remember { mutableStateOf<GitCommands.Status?>(null) }
     var diff by remember { mutableStateOf<List<String>>(emptyList()) }
-    var showDiff by remember { mutableStateOf(false) }
+    // Changes first when no agent is set: that is all this screen is for, then.
+    var showDiff by remember { mutableStateOf(AgentRepository.command(context).isBlank()) }
     var reply by remember { mutableStateOf("") }
     var commitMsg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf<String?>(null) }
@@ -112,85 +114,59 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
     }
 
     ScreenSurface {
-        // Not the shared ScreenHeader: this bar carries a live dot and the branch where the
-        // other screens carry a title. The padding matches it, so the headers still line up.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        ScreenHeader(
+            title = status?.takeIf { it.isRepo }?.let { "${it.branch} · ${it.changed} changed" } ?: "Source control",
+            onBack = onDismiss,
         ) {
-            val running = agent != null
-            Box(
-                Modifier
-                    .size(9.dp)
-                    .clip(CircleShape)
-                    .background(if (running) KernColors.Ok else MaterialTheme.colorScheme.secondary),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                if (running) "running" else "idle",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.weight(1f))
-            status?.let {
-                if (it.isRepo) {
-                    Text(
-                        "${it.branch} · ${it.changed} changed",
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        softWrap = false,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            onDismiss?.let { HeaderIcon(KernIcons.Close, "Close", it) }
+            HeaderIcon(KernIcons.Refresh, "Refresh", { refresh++ })
         }
 
-        // Start and stop, or say plainly that no agent is set.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        TabRow(
+            selectedTabIndex = if (showDiff) 0 else 1,
+            containerColor = MaterialTheme.colorScheme.background,
+            contentColor = MaterialTheme.colorScheme.primary,
         ) {
-            when {
-                command.isBlank() -> Text(
-                    "No agent set — settings > agent. The diff and commit tabs work without one.",
-                    fontSize = 11.5.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-
-                agent != null -> {
-                    HeaderAction("Stop") { TerminalSessions.stopAgent() }
-                    Text(
-                        command,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        softWrap = false,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+            Tab(selected = showDiff, onClick = { showDiff = true }, text = { Text("Changes") })
+            Tab(selected = !showDiff, onClick = { showDiff = false }, text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (agent != null) {
+                        Box(Modifier.size(7.dp).clip(CircleShape).background(KernColors.Ok))
+                        Spacer(Modifier.width(6.dp))
+                    }
+                    Text("Agent")
                 }
-
-                else -> Button(onClick = { TerminalSessions.startAgent(context, command) }) {
-                    Text("Start $command", fontSize = 13.sp)
-                }
-            }
+            })
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp),
-        ) {
-            Tab("output", !showDiff) { showDiff = false }
-            Tab("diff", showDiff) { showDiff = true }
-            TextButton(onClick = { refresh++ }) {
-                Text("refresh", fontSize = 12.sp)
+        // The agent tab's own bar: start and stop, or say plainly that none is set.
+        if (!showDiff) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                when {
+                    command.isBlank() -> Text(
+                        "No agent set. Choose one in Settings - Changes works without one.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    agent != null -> {
+                        Text(
+                            command,
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            softWrap = false,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedButton(onClick = { TerminalSessions.stopAgent() }) { Text("Stop") }
+                    }
+                    else -> Button(onClick = { TerminalSessions.startAgent(context, command) }) {
+                        Text("Start $command")
+                    }
+                }
             }
         }
 
@@ -201,12 +177,8 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 TerminalSurface(agent, Modifier.fillMaxSize())
             } else {
                 Text(
-                    if (command.isBlank()) {
-                        "Nothing running. The diff and commit tabs work on their own."
-                    } else {
-                        "Nothing running. Start $command above."
-                    },
-                    fontSize = 12.sp,
+                    if (command.isBlank()) "Nothing running." else "Nothing running. Start $command above.",
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(16.dp),
                 )

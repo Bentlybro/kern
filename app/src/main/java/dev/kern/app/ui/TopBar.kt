@@ -1,6 +1,9 @@
 package dev.kern.app.ui
 
 import dev.kern.app.agent.AgentRepository
+import dev.kern.app.editor.EditorMode
+import dev.kern.app.editor.NativeEditor
+import dev.kern.app.input.InputTargets
 import dev.kern.app.session.SessionState
 import dev.kern.app.terminal.TerminalSessions
 import dev.kern.app.workbench.WorkbenchWebView
@@ -51,6 +54,8 @@ internal fun TopBar(
     var confirmQuit by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val agentCommand by AgentRepository.commandFlow(context).collectAsStateWithLifecycle()
+    val editorMode by EditorMode.flow(context).collectAsStateWithLifecycle()
+    val native = editorMode == EditorMode.Kind.Native
 
 
     Row(
@@ -86,8 +91,12 @@ internal fun TopBar(
                 .horizontalScroll(rememberScrollState()),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ActionChip("files") { WorkbenchWebView.Commands.toggleSidebar() }
-            ActionChip("git") { WorkbenchWebView.Commands.toggleSourceControl() }
+            ActionChip("files") { InputTargets.toggleFiles(context) }
+            // The native editor has no source-control view of its own; the cockpit's diff
+            // and commit is the same job, already native.
+            ActionChip("git") {
+                if (native) onNavigate(ShellDestination.Cockpit) else WorkbenchWebView.Commands.toggleSourceControl()
+            }
             if (mode != DisplayMode.Tabletop) {
                 ActionChip(
                     label = if (terminalShown) "editor" else "term",
@@ -99,7 +108,7 @@ internal fun TopBar(
             // the most frequent action in any editor, it is what you reach for the instant
             // the soft keyboard autocorrects an identifier, and without it there is no way
             // to send Ctrl+Z at all. Redo is comparatively rare, so it went to the menu.
-            ActionChip("undo") { WorkbenchWebView.Commands.undo() }
+            ActionChip("undo") { InputTargets.undo(context) }
             // Only when there is an agent to open. Someone who never wanted one should
             // not be carrying a permanent chip for it, and the cockpit's diff and commit
             // half is still reachable through "more".
@@ -119,19 +128,20 @@ internal fun TopBar(
                 // Ordered by how often it is reached for, not by category. Redo sits at the
                 // top because someone who has just used the undo chip and overshot is the
                 // likeliest person to open this menu at all.
-                MenuAction("redo", { menuOpen = false }) {
-                    WorkbenchWebView.Commands.redo()
-                }
-                MenuAction("go to file", { menuOpen = false }) {
-                    WorkbenchWebView.Commands.quickOpen()
-                }
-                MenuAction("find in files", { menuOpen = false }) {
-                    WorkbenchWebView.Commands.toggleSearch()
-                }
-                // The command palette earns its place here rather than being dropped:
-                // it is the way into every VS Code command that has no chip.
-                MenuAction("command palette", { menuOpen = false }) {
-                    WorkbenchWebView.Commands.commandPalette()
+                MenuAction("redo", { menuOpen = false }) { InputTargets.redo(context) }
+                MenuAction("find", { menuOpen = false }) { InputTargets.find(context) }
+                if (!native) {
+                    MenuAction("go to file", { menuOpen = false }) {
+                        WorkbenchWebView.Commands.quickOpen()
+                    }
+                    MenuAction("find in files", { menuOpen = false }) {
+                        WorkbenchWebView.Commands.toggleSearch()
+                    }
+                    // The command palette earns its place here rather than being dropped:
+                    // it is the way into every VS Code command that has no chip.
+                    MenuAction("command palette", { menuOpen = false }) {
+                        WorkbenchWebView.Commands.commandPalette()
+                    }
                 }
                 // The comment on the agent chip promised this and nothing delivered it:
                 // with no agent set, the diff-and-commit cockpit had no way in at all.
@@ -145,8 +155,16 @@ internal fun TopBar(
                     TerminalSessions.openShell(context)
                     onNewShell()
                 }
-                MenuAction("chat", { menuOpen = false }) {
-                    WorkbenchWebView.Commands.toggleChatPanel()
+                if (!native) {
+                    MenuAction("chat", { menuOpen = false }) {
+                        WorkbenchWebView.Commands.toggleChatPanel()
+                    }
+                }
+                // Both editors work on the same files, so switching is free at any moment:
+                // VS Code for language servers and extensions, native for speed and touch.
+                MenuAction(if (native) "open VS Code" else "native editor", { menuOpen = false }) {
+                    if (native) NativeEditor.saveAll()
+                    EditorMode.set(context, if (native) EditorMode.Kind.Workbench else EditorMode.Kind.Native)
                 }
                 MenuAction("status", { menuOpen = false }) {
                     onNavigate(ShellDestination.Status)

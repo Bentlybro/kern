@@ -4,6 +4,9 @@ import dev.kern.app.agent.CockpitScreen
 import dev.kern.app.core.UsageTracker
 import dev.kern.app.guest.RootfsInstaller
 import dev.kern.app.input.KeyRow
+import dev.kern.app.editor.EditorChrome
+import dev.kern.app.editor.EditorMode
+import dev.kern.app.editor.NativeEditorPane
 import dev.kern.app.projects.IncomingFiles
 import dev.kern.app.projects.ProjectsScreen
 import dev.kern.app.session.SessionService
@@ -203,6 +206,8 @@ fun Shell(state: SessionState) {
                 ProjectsScreen(
                     onOpenFolder = { path ->
                         WorkbenchWebView.openFolder(path)
+                        // A project just opened is a tree you want to see.
+                        if (EditorMode.isNative(context)) EditorChrome.treeOpen.value = true
                         destination = ShellDestination.Editor
                     },
                     onDismiss = { destination = ShellDestination.Editor },
@@ -301,7 +306,8 @@ fun Shell(state: SessionState) {
 
                     else -> EditorPane(Modifier.fillMaxSize())
                 }
-                if (state is SessionState.Reconnecting) ReconnectOverlay()
+                // The native editor needs no server, so a restart behind it is not its business.
+                if (state is SessionState.Reconnecting && !EditorMode.isNative(context)) ReconnectOverlay()
             }
 
             KeyRow()
@@ -393,8 +399,14 @@ private fun TabletopLayout(fold: FoldState) {
     }
 }
 
+/** Whichever editor the user has chosen; see [EditorMode]. */
 @Composable
 private fun EditorPane(modifier: Modifier = Modifier) {
+    val mode by EditorMode.flow(LocalContext.current).collectAsStateWithLifecycle()
+    if (mode == EditorMode.Kind.Native) {
+        NativeEditorPane(modifier)
+        return
+    }
     Box(modifier = modifier) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),

@@ -1,8 +1,5 @@
 package dev.kern.app.input
 
-import dev.kern.app.terminal.TerminalSessions
-import dev.kern.app.workbench.WorkbenchWebView
-import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -29,33 +26,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * The coding key row. Keys are injected as REAL platform key events (see
- * [WorkbenchWebView.sendKey]) so the workbench receives them exactly as hardware keys.
+ * The coding key row. Keys are injected as REAL platform key events, routed by
+ * [InputTargets] to whichever surface holds the keyboard, so each receives them exactly as
+ * it would hardware keys.
  *
  * M4 turns this into the full input layer (configurable layouts, selection handles,
  * magnifier). It is docked above the IME by the shell's `imePadding()`.
  */
 @Composable
 fun KeyRow() {
-    /** Route to whichever surface has focus — terminal or workbench. */
+    val context = LocalContext.current
+
     fun key(code: Int) {
-        if (TerminalSessions.hasFocus()) {
-            TerminalSessions.sendKey(code, ModifierKeys.meta())
-        } else {
-            WorkbenchWebView.sendKey(code, ModifierKeys.meta())
-        }
+        InputTargets.sendKey(context, code, ModifierKeys.meta())
         ModifierKeys.clear()
     }
 
     fun char(c: Char) {
-        if (TerminalSessions.hasFocus()) {
-            TerminalSessions.write(c.toString())
-        } else {
-            val wv = WorkbenchWebView.current() ?: return
-            KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD)
-                .getEvents(charArrayOf(c))
-                ?.forEach { wv.dispatchKeyEvent(it) }
-        }
+        InputTargets.type(context, c.toString())
         ModifierKeys.clear()
     }
 
@@ -69,13 +57,12 @@ fun KeyRow() {
         text.split('\n').forEachIndexed { i, part ->
             if (i > 0) key(KeyEvent.KEYCODE_ENTER)
             if (part.isNotEmpty()) {
-                if (TerminalSessions.hasFocus()) TerminalSessions.write(part) else part.forEach(::char)
+                InputTargets.type(context, part)
             }
         }
         ModifierKeys.clear()
     }
 
-    val context = LocalContext.current
     val layout by KeyLayout.keys(context).collectAsStateWithLifecycle()
 
     Surface(color = MaterialTheme.colorScheme.surface) {
@@ -107,8 +94,8 @@ fun KeyRow() {
                     "ctrl-d" -> Key(label) { ctrlKey(KeyEvent.KEYCODE_D) }
                     "ctrl-z" -> Key(label) { ctrlKey(KeyEvent.KEYCODE_Z) }
                     "ctrl-l" -> Key(label) { ctrlKey(KeyEvent.KEYCODE_L) }
-                    "save" -> Key(label) { WorkbenchWebView.Commands.save(); ModifierKeys.clear() }
-                    "find" -> Key(label) { WorkbenchWebView.Commands.find(); ModifierKeys.clear() }
+                    "save" -> Key(label) { InputTargets.save(context); ModifierKeys.clear() }
+                    "find" -> Key(label) { InputTargets.find(context); ModifierKeys.clear() }
                     else -> when {
                         id.startsWith("m:") -> Key(label) { macro(id.removePrefix("m:")) }
                         id.length == 1 -> Key(label) { char(id[0]) }

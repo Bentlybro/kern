@@ -1,6 +1,7 @@
 package dev.kern.app
 
 import dev.kern.app.core.AppScope
+import dev.kern.app.editor.EditorMode
 import dev.kern.app.core.UsageTracker
 import dev.kern.app.guest.LinuxRuntime
 import dev.kern.app.input.focusedInputView
@@ -134,6 +135,8 @@ private fun AppRoot() {
     // "starting linux" instead of returning it to setup.
     val installChanges by LinuxRuntime.installChanges.collectAsStateWithLifecycle()
     val ready = remember(installChanges) { LinuxRuntime.isReady(context) }
+    val editorMode by EditorMode.flow(context).collectAsStateWithLifecycle()
+    val nativeEditor = editorMode == EditorMode.Kind.Native
 
     // An environment with no session running should start one. This is what carries the
     // app from setup finishing straight into the IDE, without the user pressing a second
@@ -150,6 +153,10 @@ private fun AppRoot() {
         // Checked first: with no environment there is nothing for the IDE or the
         // loading screen to be about, whatever the session last reported.
         !ready -> SetupScreen(sessionState, onStart = { SessionService.start(context) })
+
+        // The native editor reads the guest's files directly and needs no server, so it
+        // opens the moment Linux is installed rather than after code-server's cold start.
+        nativeEditor -> Shell(sessionState)
 
         sessionState is SessionState.Healthy || sessionState is SessionState.Reconnecting ->
             Shell(sessionState)

@@ -87,6 +87,8 @@ android {
         }
     }
     compileOptions {
+        // The native editor's TextMate engine uses java.time and friends below API 33.
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -126,6 +128,15 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.window)
     implementation(libs.kotlinx.coroutines.android)
+
+    // The native editor (docs/08 D9/D12): sora-editor with TextMate highlighting. Grammars
+    // and themes are not bundled - they are read from the code-server install already in
+    // the guest, so the native editor colours code exactly as the workbench does.
+    implementation(platform(libs.sora.bom))
+    implementation(libs.sora.editor)
+    implementation(libs.sora.textmate)
+    implementation(libs.sora.oniguruma)
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     // Plain JVM JUnit 4 only. The unit tests here cover pure logic - quoting, parsing,
     // arithmetic - so nothing in src/test may need an emulator, Robolectric or a network:

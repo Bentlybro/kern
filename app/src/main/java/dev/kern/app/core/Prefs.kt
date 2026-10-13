@@ -10,7 +10,7 @@ import android.content.SharedPreferences
  * export, a reset to defaults, or clearing per-guest state when the guest is deleted each
  * had to start with a grep across the runtime package.
  */
-internal object Prefs {
+object Prefs {
 
     private const val FILE = "kern"
     private const val USAGE_FILE = "kern_usage"
@@ -33,4 +33,5 @@ internal object Prefs {
     const val KEY_TERMINAL_FONT_SP = "terminal_font_sp"
     const val KEY_RELAUNCH_AFTER_UPDATE = "relaunch_after_update"
     const val KEY_KEY_ROW = "key_row"
+    const val KEY_EDITOR_MODE = "editor_mode"
 }

@@ -102,7 +102,7 @@ object HealthCheck {
         val result = LinuxRuntime.run(
             context,
             """
-            for b in code-server git tmux python3 node rg; do
+            for b in code-server git tmux python3 node rg cc clangd; do
               command -v ${'$'}b >/dev/null 2>&1 && echo "HAVE=${'$'}b" || echo "MISS=${'$'}b"
             done
             """.trimIndent(),
@@ -162,6 +162,8 @@ object HealthCheck {
         // npm too: Ubuntu packages it separately, and node without npm installs nothing.
         "node" to listOf("nodejs", "npm"),
         "rg" to listOf("ripgrep"),
+        // A C compiler for Run, and clangd for C/C++ completion in the editor (LspIntel).
+        "cc" to listOf("build-essential"),
         "gh" to listOf("gh", "ca-certificates"),
     )
 

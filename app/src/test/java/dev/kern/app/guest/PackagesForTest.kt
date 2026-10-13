@@ -77,4 +77,9 @@ class PackagesForTest {
         // arguments, which succeeds without installing anything and looks like a fix.
         assertEquals(emptyList<String>(), HealthCheck.packagesFor(emptyList()))
     }
+
+    @Test
+    fun `the c compiler comes from build-essential and clangd from itself`() {
+        assertEquals(listOf("build-essential", "clangd"), HealthCheck.packagesFor(listOf("cc", "clangd")))
+    }
 }

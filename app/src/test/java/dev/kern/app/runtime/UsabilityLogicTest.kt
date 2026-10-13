@@ -23,6 +23,14 @@ class UsabilityLogicTest {
     }
 
     @Test
+    fun `a repo with no remote says to add one`() {
+        val out = "fatal: No configured push destination.\nEither specify the URL from the " +
+            "command-line or configure a remote repository using\n\n    git remote add <name> <url>\n\n" +
+            "and then push using the remote name\n\n    git push <name>"
+        assertTrue(GitCommands.explain(out)!!.contains("no remote"))
+    }
+
+    @Test
     fun `anything else passes through unchanged`() {
         assertEquals("Already up to date.", GitCommands.explain("Already up to date."))
         assertEquals(null, GitCommands.explain(null))
@@ -35,6 +43,14 @@ class UsabilityLogicTest {
         assertEquals("bashrc", IncomingFiles.safeName("..bashrc"))
         assertEquals("shared-file", IncomingFiles.safeName("   "))
         assertEquals("notes.md", IncomingFiles.safeName("notes.md"))
+    }
+
+    @Test
+    fun `new keys land before the symbols, symbols at the end`() {
+        val row = listOf("esc", "tab", "|", "/")
+        assertEquals(listOf("esc", "tab", "m:ls\n", "|", "/"), dev.kern.app.ui.withAdded(row, "m:ls\n"))
+        assertEquals(listOf("esc", "tab", "|", "/", "@"), dev.kern.app.ui.withAdded(row, "@"))
+        assertEquals(listOf("esc", "ctrl-z"), dev.kern.app.ui.withAdded(listOf("esc"), "ctrl-z"))
     }
 
     @Test

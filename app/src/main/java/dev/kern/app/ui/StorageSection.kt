@@ -71,11 +71,15 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
 
     // Through the system picker, so the backup can go to Downloads, a USB stick or Drive
     // without Kern asking for storage permission of any kind.
+    // Its own line, beside its own buttons: sharing Maintenance's left the export's result
+    // a screen away from the button that produced it.
+    var backupStatus by remember { mutableStateOf<String?>(null) }
     fun runBackup(label: String, block: suspend () -> String) {
         busy = label
+        backupStatus = label
         val work = AppScope.start { block() }
         scope.launch {
-            result = work.await()
+            backupStatus = work.await()
             busy = null
             reload++
         }
@@ -198,6 +202,7 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
     }
 
     SectionTitle("Backup")
+    backupStatus?.let { Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary) }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Button(enabled = busy == null, onClick = { exportLauncher.launch("kern-backup.tar.gz") }) {
             Text("Export projects")

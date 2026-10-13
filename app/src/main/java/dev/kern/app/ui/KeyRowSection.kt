@@ -84,7 +84,7 @@ fun KeyRowSection() {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             missing.forEach { id ->
                 AssistChip(
-                    onClick = { save(row + id) },
+                    onClick = { save(withAdded(row, id)) },
                     label = { Text(KeyLayout.label(id), fontFamily = FontFamily.Monospace, fontSize = 12.sp) },
                 )
             }
@@ -104,10 +104,21 @@ fun KeyRowSection() {
             modifier = Modifier.weight(1f),
         )
         Button(enabled = macroText.isNotBlank(), onClick = {
-            save(row + KeyLayout.macro(macroText))
+            save(withAdded(row, KeyLayout.macro(macroText)))
             macroText = ""
         }) { Text("Add") }
     }
     TextButton(onClick = { KeyLayout.reset(context); selected = null }) { Text("Reset to default") }
 }
 
+
+/**
+ * [id] placed just before the run of single-character symbols, not after it. Appended, a
+ * new key or macro landed behind thirty-odd symbols at the far end of a scrolling row -
+ * added, and then effectively out of reach (caught on device). A symbol joins the end.
+ */
+internal fun withAdded(row: List<String>, id: String): List<String> {
+    if (id.length == 1) return row + id
+    val at = row.indexOfFirst { it.length == 1 }.takeIf { it >= 0 } ?: row.size
+    return row.toMutableList().apply { add(at, id) }
+}

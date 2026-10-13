@@ -132,6 +132,9 @@ fun Shell(state: SessionState) {
         if (arrivals != seenArrivals) {
             seenArrivals = arrivals
             destination = ShellDestination.Editor
+            // On a phone the terminal covers the editor, and the file opened unseen behind
+            // it - caught on device.
+            showTerminal = false
         }
     }
 

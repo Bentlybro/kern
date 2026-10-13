@@ -23,7 +23,9 @@ object GitCommands {
         val script = """
             cd ${sq(projectPath)} 2>/dev/null || exit 1
             git rev-parse --is-inside-work-tree >/dev/null 2>&1 || exit 2
-            echo "BRANCH:${'$'}(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+            # symbolic-ref, not rev-parse: in a repo with no commits yet rev-parse answers
+            # "HEAD", which is what the cockpit showed for every freshly created project.
+            echo "BRANCH:${'$'}(git symbolic-ref --short -q HEAD || git rev-parse --short HEAD 2>/dev/null)"
             git status --porcelain 2>/dev/null
         """.trimIndent()
         val r = LinuxRuntime.run(context, script, timeoutMs = 20_000)
@@ -48,6 +50,12 @@ object GitCommands {
             cd ${sq(projectPath)} 2>/dev/null || exit 1
             git --no-pager diff --no-color -U2
             git --no-pager diff --no-color -U2 --cached
+            # New files, as all-added diffs. git diff ignores untracked files, so a project
+            # whose only change was a new file showed "1 changed" over "No changes" - and
+            # "Commit all" would commit something the review screen never showed.
+            git ls-files --others --exclude-standard -z | while IFS= read -r -d '' f; do
+              git --no-pager diff --no-color --no-index -- /dev/null "${'$'}f"
+            done
         """.trimIndent()
         val r = LinuxRuntime.run(context, script, timeoutMs = 30_000) ?: return emptyList()
         // Truncate here rather than piping through head: one less thing in the pipeline
@@ -74,7 +82,22 @@ object GitCommands {
         line.contains("has no upstream branch") ->
             "This branch has never been pushed — push it once from the terminal with " +
                 "git push -u origin HEAD."
+        line.contains("No configured push destination") ||
+            line.contains("does not appear to be a git repository") ->
+            "This repository has no remote yet. Add one in the terminal: " +
+                "git remote add origin <url>"
         else -> line
+    }
+
+    /**
+     * Why [r] failed, in words. Matched against the whole output, not only its last line:
+     * git's "no remote" explanation ends with "git push <name>", which on its own was what
+     * the cockpit showed (caught on device).
+     */
+    private fun reason(r: LinuxRuntime.Result): String {
+        val whole = r.stdout + "\n" + r.stderr
+        val explained = explain(whole)
+        return if (explained != whole) explained!! else explain(r.lastLine()) ?: "exit ${r.exitCode}"
     }
 
     /** What setup writes so git will commit at all; see [GuestConfig.polish]. */
@@ -111,14 +134,14 @@ object GitCommands {
             cd ${sq(projectPath)} 2>/dev/null || exit 1
             command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }
             git add -A 2>&1
-            git commit -m ${sq(message)} 2>&1 | tail -n 3
+            git commit -m ${sq(message)} 2>&1
         """.trimIndent()
         val r = LinuxRuntime.run(context, script, timeoutMs = 60_000)
             ?: return "Timed out"
         // Without this the cockpit's status text becomes "bash: line 3: git: command not found".
         if (r.exitCode == 3) return "git is not installed yet — check Status."
         if (r.ok) return "Committed — ${r.lastLine() ?: "done"}"
-        return "Commit failed: ${explain(r.lastLine()) ?: "exit ${r.exitCode}"}"
+        return "Commit failed: ${reason(r)}"
     }
 
     /**
@@ -132,25 +155,25 @@ object GitCommands {
         val script = """
             cd ${sq(projectPath)} 2>/dev/null || exit 1
             command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }
-            git pull --ff-only 2>&1 | tail -n 3
+            git pull --ff-only 2>&1
         """.trimIndent()
         val r = LinuxRuntime.run(context, "set -o pipefail\n$script", timeoutMs = 120_000)
             ?: return "Timed out"
         if (r.exitCode == 3) return "git is not installed yet — check Status."
         if (r.ok) return r.lastLine() ?: "Pulled"
-        return "Pull failed: ${explain(r.lastLine()) ?: "exit ${r.exitCode}"}"
+        return "Pull failed: ${reason(r)}"
     }
 
     suspend fun push(context: Context, projectPath: String): String {
         val script = """
             cd ${sq(projectPath)} 2>/dev/null || exit 1
             command -v git >/dev/null 2>&1 || { echo NOGIT >&2; exit 3; }
-            git push 2>&1 | tail -n 3
+            git push 2>&1
         """.trimIndent()
         val r = LinuxRuntime.run(context, "set -o pipefail\n$script", timeoutMs = 120_000)
             ?: return "Timed out"
         if (r.exitCode == 3) return "git is not installed yet — check Status."
         if (r.ok) return r.lastLine() ?: "Pushed"
-        return "Push failed: ${explain(r.lastLine()) ?: "exit ${r.exitCode}"}"
+        return "Push failed: ${reason(r)}"
     }
 }

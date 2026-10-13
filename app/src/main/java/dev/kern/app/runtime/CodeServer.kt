@@ -29,16 +29,6 @@ object CodeServer {
     fun url(folder: String = "/root"): String =
         "http://127.0.0.1:$PORT/?folder=${android.net.Uri.encode(folder, "/")}"
 
-    /**
-     * [folder] as the workspace with [file] open in it, through VS Code web's `payload`
-     * query parameter - the same mechanism its own "open file" links use.
-     */
-    fun url(folder: String, file: String): String {
-        val target = android.net.Uri.encode(file, "/")
-        val payload = "[[\"openFile\",\"vscode-remote://127.0.0.1:$PORT$target\"]]"
-        return url(folder) + "&payload=" + android.net.Uri.encode(payload)
-    }
-
     const val HEALTH_URL = "http://127.0.0.1:$PORT/healthz"
 
     /**

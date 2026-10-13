@@ -131,6 +131,11 @@ internal fun TopBar(
                 MenuAction("command palette", { menuOpen = false }) {
                     WorkbenchWebView.Commands.commandPalette()
                 }
+                // The comment on the agent chip promised this and nothing delivered it:
+                // with no agent set, the diff-and-commit cockpit had no way in at all.
+                MenuAction("diff & commit", { menuOpen = false }) {
+                    onNavigate(ShellDestination.Cockpit)
+                }
                 MenuAction("projects", { menuOpen = false }) {
                     onNavigate(ShellDestination.Projects)
                 }

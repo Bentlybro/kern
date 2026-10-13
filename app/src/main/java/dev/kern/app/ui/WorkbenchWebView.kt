@@ -228,10 +228,7 @@ object WorkbenchWebView {
                 WorkbenchBridge.NAME,
             )
 
-            val folder = ProjectRepository.currentFolder(activityContext)
-            val file = pendingFile
-            pendingFile = null
-            loadUrl(if (file != null) CodeServer.url(folder, file) else CodeServer.url(folder))
+            loadUrl(CodeServer.url(ProjectRepository.currentFolder(activityContext)))
         }
         instance = webView
         return webView
@@ -292,21 +289,6 @@ object WorkbenchWebView {
     }
 
     /**
-     * A file to show when the workbench is first created, for a share that arrives before
-     * there is a workbench to show it in (the app was cold-started by the share).
-     */
-    @Volatile
-    private var pendingFile: String? = null
-
-    /** Open [file] in the editor, keeping [folder] as the workspace. Any thread. */
-    fun openFile(folder: String, file: String) {
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            val view = instance
-            if (view == null) pendingFile = file else view.loadUrl(CodeServer.url(folder, file))
-        }
-    }
-
-    /**
      * Send a real platform key event to the workbench. Used by the native chrome and key
      * row so the web app sees genuine key input rather than synthesized JS events.
      */
@@ -347,19 +329,37 @@ object WorkbenchWebView {
      * and the drag is replayed as a mouse gesture - no Monaco API needed, which matters
      * because the workbench page does not expose one.
      */
+    //
+    //
+    // A click at [fromX],[fromY] - the end that stays put - collapses the selection to a
+    // caret there; then, after a pause, a pointer drag from that same point to the drop.
+    // Every step of that was found the hard way on device, over CDP:
+    //  - mouse events (the original) only ever placed a caret: the workbench tracks the
+    //    editor with pointer events captured on the element pressed, so the moves go there;
+    //  - a drag that starts on text already selected is read as drag-and-drop and MOVES
+    //    the text, which is why the selection is collapsed first;
+    //  - without the pause the second press lands as a double-click and selects nothing;
+    //  - a shift-click, the obvious alternative, is ignored outright.
     fun dragSelect(fromX: Float, fromY: Float, toX: Float, toY: Float) {
         val js = """
             (function(){
-              function ev(t,x,y,b){
-                return new MouseEvent(t,{bubbles:true,cancelable:true,view:window,
-                  clientX:x,clientY:y,button:0,buttons:b,detail:1});
+              function ev(el,t,x,y,b){
+                el.dispatchEvent(new PointerEvent(t,{bubbles:true,cancelable:true,
+                  composed:true,view:window,clientX:x,clientY:y,
+                  button:t==='pointermove'?-1:0,buttons:b,detail:1,pointerId:1,
+                  pointerType:'mouse',isPrimary:true}));
               }
-              var a=document.elementFromPoint($fromX,$fromY);
-              var b=document.elementFromPoint($toX,$toY);
-              if(!a) return;
-              a.dispatchEvent(ev('mousedown',$fromX,$fromY,1));
-              (b||a).dispatchEvent(ev('mousemove',$toX,$toY,1));
-              (b||a).dispatchEvent(ev('mouseup',$toX,$toY,0));
+              var a=document.elementFromPoint($fromX,$fromY); if(!a) return;
+              ev(a,'pointerdown',$fromX,$fromY,1);
+              ev(a,'pointerup',$fromX,$fromY,0);
+              setTimeout(function(){
+                a=document.elementFromPoint($fromX,$fromY); if(!a) return;
+                ev(a,'pointerdown',$fromX,$fromY,1);
+                for(var i=1;i<=5;i++){
+                  ev(a,'pointermove',$fromX+($toX-$fromX)*i/5,$fromY+($toY-$fromY)*i/5,1);
+                }
+                ev(a,'pointerup',$toX,$toY,0);
+              },600);
             })();
         """.trimIndent()
         instance?.evaluateJavascript(js, null)

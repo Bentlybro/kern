@@ -68,7 +68,15 @@ object ProjectBackup {
             val out = context.contentResolver.openOutputStream(target, "wt")
                 ?: return@withContext "Could not write to that location"
             out.use { sink -> staged.inputStream().use { it.copyTo(sink) } }
-            "Backed up ${StorageManager.format(staged.length() / (1024 * 1024))}"
+            // KB below a megabyte: an empty ~/projects with dotfiles is ~2 KB, and "0 MB"
+            // read as a backup that had saved nothing.
+            val bytes = staged.length()
+            val size = if (bytes < 1024 * 1024) {
+                "${(bytes + 1023) / 1024} KB"
+            } else {
+                StorageManager.format(bytes / (1024 * 1024))
+            }
+            "Backed up $size"
         } catch (e: Exception) {
             "Backup failed: ${e.message ?: e.javaClass.simpleName}"
         } finally {

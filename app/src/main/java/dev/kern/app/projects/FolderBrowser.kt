@@ -35,6 +35,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+/**
+ * A guest path as a person reads it: home as `~`. Stripping `/root` alone turned
+ * /root/projects into "/projects", which reads as a folder at the filesystem root
+ * (caught on device). Internal for tests.
+ */
+internal fun displayPath(path: String): String = when {
+    path == ProjectRepository.HOME -> "~"
+    path.startsWith(ProjectRepository.HOME + "/") -> "~" + path.removePrefix(ProjectRepository.HOME)
+    else -> path
+}
+
 /** `/a/b` → `/a`, `/a` → `/`, and `/` stays itself (null means "leave the browser"). */
 internal fun parentOf(path: String): String? =
     if (path == "/") null else path.substringBeforeLast('/').ifEmpty { "/" }
@@ -67,7 +78,7 @@ internal fun FolderBrowser(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(
-                path,
+                displayPath(path),
                 fontSize = 12.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
@@ -142,7 +153,7 @@ internal fun FolderRow(
         Column(Modifier.weight(1f)) {
             Text(name, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onBackground)
             Text(
-                subtitle.removePrefix(ProjectRepository.HOME).ifEmpty { "~" },
+                displayPath(subtitle),
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

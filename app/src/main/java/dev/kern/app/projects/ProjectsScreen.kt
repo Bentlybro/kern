@@ -55,6 +55,9 @@ fun ProjectsScreen(
     var confirmDelete by remember { mutableStateOf<ProjectRepository.Entry?>(null) }
     // Non-null while the folder browser is up, holding the directory it shows.
     var browsePath by remember { mutableStateOf<String?>(null) }
+    // Where the browser was opened, which is where back closes it: at home, back used to
+    // climb to "/" instead of returning to Projects (caught on device).
+    var browseStart by remember { mutableStateOf<String?>(null) }
     // Where you have been, minus where you are: the open project is already on screen.
     val recents = remember(model.reload) {
         val current = ProjectRepository.currentFolder(context)
@@ -71,7 +74,7 @@ fun ProjectsScreen(
     }
 
     browsePath?.let { path ->
-        BackHandler { browsePath = parentOf(path) }
+        BackHandler { browsePath = if (path == browseStart) null else parentOf(path) }
         FolderBrowser(
             path = path,
             onNavigate = { browsePath = it },
@@ -152,7 +155,10 @@ fun ProjectsScreen(
             item { SectionTitle("Other", Modifier.padding(start = 16.dp, top = 8.dp)) }
             item { FolderRow(name = "Home", subtitle = ProjectRepository.HOME, isRepo = false, onClick = { open(ProjectRepository.HOME) }) }
             // "Open any folder": a package inside a monorepo, or anything outside ~/projects.
-            item { FolderRow(name = "Open folder…", subtitle = "Browse the whole filesystem", isRepo = false, onClick = { browsePath = ProjectRepository.HOME }) }
+            item { FolderRow(name = "Open folder…", subtitle = "Browse the whole filesystem", isRepo = false, onClick = {
+                browseStart = ProjectRepository.HOME
+                browsePath = ProjectRepository.HOME
+            }) }
             item { Spacer(Modifier.height(24.dp)) }
         }
     }

@@ -400,8 +400,18 @@ object NativeEditor {
         withContext(Dispatchers.Main) {
             val view = instance ?: return@withContext
             val l = (target.line - 1).coerceAtLeast(0)
-            runCatching { view.setSelection(l, target.column) }
-            view.ensurePositionVisible(l, target.column)
+            // After layout, not now: a file opened a moment ago has not been measured, and
+            // scrolling against its unmeasured, word-wrapped layout landed hundreds of
+            // lines short of the definition (caught on device: 1261 for line 1830).
+            // Twice: sora builds a long file's word-wrapped layout on a background thread,
+            // so the first scroll can still be measured against a partial layout. The second,
+            // a moment later, lands on the finished one.
+            val jump = Runnable {
+                runCatching { view.setSelection(l, target.column, true) }
+                view.ensurePositionVisible(l, target.column, true)
+            }
+            view.post(jump)
+            view.postDelayed(jump, 600)
         }
         return true
     }

@@ -283,8 +283,16 @@ fun Shell(state: SessionState) {
                     // Stops the supervisor, which takes code-server and the guest with it,
                     // then closes the app. Without this the only way to shut the session
                     // down was the notification action, which is not where anyone looks.
-                    SessionService.stop(context)
-                    (context as? android.app.Activity)?.finish()
+                    // The native editor's last keystrokes are written first - autosave waits
+                    // most of a second, and quitting inside it lost them - but not waited on
+                    // forever: a wedged write must not make quit do nothing.
+                    dev.kern.app.core.AppScope.start {
+                        kotlinx.coroutines.withTimeoutOrNull(3_000) { dev.kern.app.editor.NativeEditor.flush() }
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                            SessionService.stop(context)
+                            (context as? android.app.Activity)?.finish()
+                        }
+                    }
                 },
             )
 

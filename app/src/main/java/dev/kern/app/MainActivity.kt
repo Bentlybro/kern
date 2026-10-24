@@ -124,6 +124,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         UsageTracker.pause(this)
+        // Out of sight is where Android kills a process without warning, and autosave may
+        // still be waiting out its delay: the native editor's edits go to disk now. The
+        // writes run on the app scope, so nothing here waits on them.
+        dev.kern.app.editor.NativeEditor.saveAll()
         super.onStop()
     }
 

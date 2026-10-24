@@ -155,7 +155,7 @@ object NativeEditor {
                 "${path.substringAfterLast('/')} is ${read.bytes / 1024 / 1024} MB - open it in the terminal",
             )
         }
-        val (language, highlighted) = EditorLanguages.forPath(context, path)
+        val (language, highlighted) = EditorLanguages.forPath(context, path, EditorLanguages.tooLargeToColour(text))
         withContext(Dispatchers.Main) {
             // Opened twice at once: the first one in is the tab, and may already be edited.
             if (path in files) {

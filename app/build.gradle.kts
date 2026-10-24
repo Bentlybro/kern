@@ -41,6 +41,13 @@ android {
         targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersionName
+
+        // PRoot and its libraries are shipped for arm64-v8a only (src/main/jniLibs), so
+        // an APK that also carried other ABIs for the JNI pty and sora's oniguruma would
+        // install on a device where Linux can never start. One ABI is also a smaller APK.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     signingConfigs {
@@ -127,6 +134,10 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.window)
     implementation(libs.kotlinx.coroutines.android)
+    // Installs the baseline profiles Compose and the other libraries ship. Play does this
+    // for apps it distributes; Kern is sideloaded and updates itself, so without this the
+    // profiles are never compiled ahead of time and Compose starts cold on every launch.
+    implementation(libs.androidx.profileinstaller)
 
     // The native editor (docs/08 D9/D12): sora-editor with TextMate highlighting. Grammars
     // and themes are not bundled - they are read from the code-server install already in

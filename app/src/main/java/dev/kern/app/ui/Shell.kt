@@ -40,6 +40,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -359,11 +360,15 @@ internal fun EditorPane(modifier: Modifier = Modifier) {
         NativeEditorPane(modifier)
         return
     }
+    // Keyed so a WebView thrown away when its renderer died is replaced, not left blank.
+    val rebuilds by WorkbenchWebView.rebuilds.collectAsStateWithLifecycle()
     Box(modifier = modifier) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx -> WorkbenchWebView.acquire(ctx) },
-        )
+        key(rebuilds) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx -> WorkbenchWebView.acquire(ctx) },
+            )
+        }
         // Native selection handles ride on top of the workbench (M4 part 2).
         SelectionOverlay()
     }

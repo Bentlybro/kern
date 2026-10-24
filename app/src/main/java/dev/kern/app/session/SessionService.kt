@@ -2,10 +2,12 @@ package dev.kern.app.session
 
 import dev.kern.app.agent.AgentPrompt
 import dev.kern.app.core.Secrets
+import dev.kern.app.guest.Apt
 import dev.kern.app.guest.GuestConfig
 import dev.kern.app.guest.RootfsInstaller
 import dev.kern.app.terminal.TerminalSessions
 import dev.kern.app.workbench.CodeServer
+import dev.kern.app.workbench.WorkbenchWebView
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -21,6 +23,10 @@ import android.util.Log
 import dev.kern.app.R
 import dev.kern.app.core.Notifications
 import dev.kern.app.editor.EditorMode
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +39,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 sealed interface SessionState {
     data object Idle : SessionState
@@ -45,7 +52,7 @@ sealed interface SessionState {
 /**
  * Foreground service that supervises the IDE session: starts code-server inside the
  * Linux guest, health-polls it, restarts it when it dies, and holds a partial wakelock so
- * the guest keeps running with the screen off.
+ * the guest keeps running with the screen off - while there is something to keep running.
  */
 class SessionService : Service() {
 
@@ -68,6 +75,9 @@ class SessionService : Service() {
 
         /** How often the agent's screen is read for a question. No fork; just memory. */
         private const val AGENT_TICK_MS = 3_000L
+
+        /** How often the wakelock is reconsidered when nothing prompts it sooner. */
+        private const val WAKE_TICK_MS = 15_000L
 
         /**
          * How long a *restarted* server gets to answer, against [START_TIMEOUT_MS] for a
@@ -97,6 +107,7 @@ class SessionService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var superviseJob: Job? = null
     private var agentWatch: Job? = null
+    private var wakeWatch: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -109,7 +120,7 @@ class SessionService : Service() {
             }
             else -> {
                 goForeground("Starting code-server...")
-                acquireWakeLock()
+                watchWakeLock()
                 // An explicit start is a request to try again, and it has to be able to
                 // lift a give-up. RestartPolicy stops restarting after five consecutive
                 // failures but the loop stays alive to keep watching - so the "already
@@ -157,21 +168,29 @@ class SessionService : Service() {
         // health tick made "agent needs you" arrive up to half a minute after it did.
         // Held and replaced, because Retry restarts supervise() and each pass would
         // otherwise leave another watcher behind, each raising its own notification.
+        //
+        // Ticks only while an agent is running: with none there is no screen to read, and a
+        // timer firing every three seconds for the whole life of the service bought nothing.
         agentWatch?.cancel()
         agentWatch = scope.launch {
-            var wasAwaiting = false
-            while (isActive) {
-                delay(AGENT_TICK_MS)
-                runCatching {
-                    val screen = TerminalSessions.agentScreen()
-                    val awaiting = screen != null && AgentPrompt.awaitingInput(screen)
-                    if (awaiting && !wasAwaiting) {
-                        notifyAgent(
-                            "Agent needs you",
-                            AgentPrompt.lastLine(screen!!)?.take(120) ?: "Waiting for input",
-                        )
+            combine(TerminalSessions.sessions, TerminalSessions.ended) { sessions, ended ->
+                sessions.any { it.kind == TerminalSessions.Kind.Agent && it.id !in ended }
+            }.distinctUntilChanged().collectLatest { alive ->
+                if (!alive) return@collectLatest
+                var wasAwaiting = false
+                while (isActive) {
+                    delay(AGENT_TICK_MS)
+                    runCatching {
+                        val screen = TerminalSessions.agentScreen()
+                        val awaiting = screen != null && AgentPrompt.awaitingInput(screen)
+                        if (awaiting && !wasAwaiting) {
+                            notifyAgent(
+                                "Agent needs you",
+                                AgentPrompt.lastLine(screen!!)?.take(120) ?: "Waiting for input",
+                            )
+                        }
+                        wasAwaiting = awaiting
                     }
-                    wasAwaiting = awaiting
                 }
             }
         }
@@ -194,10 +213,28 @@ class SessionService : Service() {
             // First setup installs code-server last, behind the native editor. Someone who
             // asks for VS Code before it lands waits here, told why, rather than watching a
             // launch fail three times over a binary that is not there yet.
+            //
+            // A setup that fails stops the wait. It used to start setup again every two
+            // seconds for ever - the same download or apt failing on a loop behind a screen
+            // that said only "installing". One fresh attempt is made if setup was not
+            // running already (that is what Retry asks for); after that, a failure is
+            // reported, and Failed routes to the setup screen, whose Retry starts here again.
             if (!CodeServer.isInstalled(this)) {
                 updateNotification("Installing VS Code...")
+                var startedSetup = false
                 while (!CodeServer.isInstalled(this)) {
-                    if (!RootfsInstaller.isRunning) RootfsInstaller.start(this)
+                    if (!RootfsInstaller.isRunning) {
+                        val stage = RootfsInstaller.stage.value
+                        if (startedSetup && stage is RootfsInstaller.Stage.Failed) {
+                            Log.e(TAG, "supervise: setup failed - ${stage.message}")
+                            _state.value = SessionState.Failed(stage.message)
+                            updateNotification("Setup failed - open the app for details")
+                            return
+                        }
+                        RootfsInstaller.start(this)
+                        startedSetup = true
+                        updateWakeLock()
+                    }
                     delay(2_000)
                 }
             }
@@ -207,7 +244,11 @@ class SessionService : Service() {
             } else {
                 CodeServer.applyWorkbenchSettings(this)
                 if (!launchWithRetries()) return
+                // A page loaded against an earlier server - stopped for idleness behind the
+                // native editor, or never up when the page first asked - cannot reconnect.
+                WorkbenchWebView.serverStarted()
             }
+            updateWakeLock()
             _state.value = SessionState.Healthy
             updateNotification(running())
 
@@ -223,6 +264,7 @@ class SessionService : Service() {
                     if (SystemClock.elapsedRealtime() - nativeSince >= SERVER_IDLE_MS) {
                         Log.i(TAG, "supervise: native editor only - stopping code-server")
                         CodeServer.stop()
+                        updateWakeLock()
                         break
                     }
                 } else {
@@ -238,7 +280,7 @@ class SessionService : Service() {
                         // Only when something had gone wrong, or this rewrites the same
                         // notification every fifteen seconds for the life of the session.
                         if (wasDegraded) {
-                            acquireWakeLock()
+                            updateWakeLock()
                             updateNotification(running())
                         }
                         _state.value = SessionState.Healthy
@@ -268,6 +310,7 @@ class SessionService : Service() {
                             watch = RestartPolicy.State()
                             _state.value = SessionState.Healthy
                             updateNotification(running())
+                            WorkbenchWebView.serverStarted()
                         }
                     }
 
@@ -275,9 +318,10 @@ class SessionService : Service() {
                         Log.e(TAG, "supervise: ${decision.message}")
                         _state.value = SessionState.Failed(decision.message)
                         updateNotification("Server is down - open the app for details")
-                        // Nothing left to keep the CPU awake for. The only way back from here
-                        // is the user running Repair, and they will be looking at the screen
-                        // when they do - at which point a healthy check re-acquires it.
+                        // Nothing left to keep the CPU awake for, unless a terminal or an
+                        // install still is - which the next look at the wakelock decides. The
+                        // only way back for the server is the user running Repair, and they
+                        // will be looking at the screen when they do.
                         releaseWakeLock()
                     }
                 }
@@ -346,6 +390,7 @@ class SessionService : Service() {
     private fun shutdown() {
         superviseJob?.cancel()
         agentWatch?.cancel()
+        wakeWatch?.cancel()
         CodeServer.stop()
         _state.value = SessionState.Idle
         releaseWakeLock()
@@ -353,10 +398,51 @@ class SessionService : Service() {
         stopSelf()
     }
 
+    /**
+     * Keep the wakelock in step with whether there is work, for the life of the service.
+     *
+     * It used to be taken at start and held until the service stopped - all night, for a
+     * phone that had nothing running but an idle prompt it would never be asked to draw.
+     * Rechecked on a tick, and at once whenever a terminal opens, closes or ends, so an
+     * agent started just before the phone goes into a pocket is covered straight away.
+     */
+    private fun watchWakeLock() {
+        if (wakeWatch?.isActive == true) return
+        wakeWatch = scope.launch {
+            while (isActive) {
+                updateWakeLock()
+                withTimeoutOrNull(WAKE_TICK_MS) {
+                    combine(TerminalSessions.sessions, TerminalSessions.ended) { a, b -> a to b }
+                        .drop(1)
+                        .first()
+                }
+            }
+        }
+    }
+
+    /**
+     * Whether anything would be hurt by the CPU sleeping: an agent or shell still running,
+     * the workbench's server, setup, or any apt. A terminal counts while its process is
+     * alive - a build in one is exactly what the wakelock is for - and stops counting the
+     * moment it ends, even if it is still on screen.
+     */
+    private fun hasWork(): Boolean =
+        TerminalSessions.anyAlive() ||
+            CodeServer.isRunning() ||
+            RootfsInstaller.isRunning ||
+            Apt.busy.value
+
+    @Synchronized
+    private fun updateWakeLock() {
+        if (hasWork()) acquireWakeLock() else releaseWakeLock()
+    }
+
+    @Synchronized
     private fun releaseWakeLock() {
         wakeLock?.let { if (it.isHeld) it.release() }
     }
 
+    @Synchronized
     private fun acquireWakeLock() {
         if (wakeLock?.isHeld == true) return
         val pm = getSystemService(POWER_SERVICE) as PowerManager

@@ -473,9 +473,6 @@ object TerminalSessions {
      */
     fun anyAlive(): Boolean = _sessions.value.any { it.id !in _ended.value }
 
-    /** Whether an agent is running, as opposed to absent or ended. Any thread. */
-    fun agentAlive(): Boolean = _sessions.value.any { it.kind == Kind.Agent && it.id !in _ended.value }
-
     fun isKeyboardVisible(): Boolean = current()?.imeVisible() == true
 
     fun toggleKeyboard() {

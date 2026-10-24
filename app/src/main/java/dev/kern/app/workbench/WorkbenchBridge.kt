@@ -173,25 +173,38 @@ class WorkbenchBridge(
             setTimeout(blurInput, 400);
           }, true);
 
+          // What was last sent, so an unchanged selection costs no call into Java. The
+          // poll below used to cross the bridge four times a second for as long as the
+          // workbench was open, which was almost always to repeat "no selection".
+          var lastSent = null;
+
+          function send(args) {
+            var key = args.join(',');
+            if (key === lastSent) return;
+            lastSent = key;
+            $NAME.selection(args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
+          }
+
           function reportSelection() {
             try {
               var nodes = document.querySelectorAll('.monaco-editor .selected-text');
               if (!nodes || nodes.length === 0) {
-                $NAME.selection(0, 0, 0, 0, 0, 0, true);
+                send([0, 0, 0, 0, 0, 0, true]);
                 return;
               }
               var first = nodes[0].getBoundingClientRect();
               var last = nodes[nodes.length - 1].getBoundingClientRect();
-              $NAME.selection(
+              send([
                 first.left, first.top, first.bottom,
                 last.right, last.top, last.bottom,
                 false
-              );
+              ]);
             } catch (err) {}
           }
 
           // Monaco repaints selection into fresh DOM nodes; poll rather than observe so
-          // scrolling and reflow are picked up too. Cheap: one querySelectorAll.
+          // scrolling and reflow are picked up too. Cheap: one querySelectorAll, and a call
+          // into Java only when the geometry actually moved.
           setInterval(reportSelection, 250);
 
           // Say once, on load, whether the editable was found. If a future workbench

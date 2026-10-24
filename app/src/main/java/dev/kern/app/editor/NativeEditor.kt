@@ -8,8 +8,6 @@ import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
 import android.view.ViewGroup
-import dev.kern.app.core.AppScope
-import dev.kern.app.core.Prefs
 import io.github.rosemoe.sora.event.ContentChangeEvent
 import io.github.rosemoe.sora.langs.textmate.TextMateColorScheme
 import io.github.rosemoe.sora.langs.textmate.registry.ThemeRegistry
@@ -20,15 +18,12 @@ import io.github.rosemoe.sora.widget.schemes.EditorColorScheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -205,7 +200,7 @@ object NativeEditor {
         if (_problem.value?.startsWith(prefix) == true) _problem.value = null
     }
 
-    private fun activate(path: String) {
+    internal fun activate(path: String) {
         _active.value = path
         show(path)
         remember()
@@ -357,7 +352,7 @@ object NativeEditor {
     fun under(pathPrefix: String): List<String> =
         files.keys.filter { it == pathPrefix || it.startsWith("$pathPrefix/") }
 
-    private fun drop(vararg paths: String) {
+    internal fun drop(vararg paths: String) {
         for (path in paths) {
             files.remove(path)?.dropped = true
             if (_active.value == path) _active.value = null
@@ -418,88 +413,13 @@ object NativeEditor {
         remember()
     }
 
-    // ---- surviving a restart -------------------------------------------------
-    //
-    // Android ends this process whenever it likes, and an editor that comes back empty
-    // makes every return to the app start with finding your files again. The tab list and
-    // the active tab are kept in prefs and reopened on the next launch; the contents need
-    // no keeping, since autosave already put them on disk.
+    // Kept per project across restarts; see EditorTabs.
+    private fun remember() = EditorTabs.remember(appContext)
 
-    /** The project whose tabs are open. Each project keeps its own set. */
-    @Volatile
-    private var project: String? = null
-
-    private fun tabsKey(root: String) = Prefs.KEY_EDITOR_TABS + ":" + root
-    private fun activeKey(root: String) = Prefs.KEY_EDITOR_ACTIVE + ":" + root
-
-    /**
-     * True while a project switch is closing one project's tabs and reopening another's.
-     * Nothing is remembered meanwhile: the closing would otherwise save the old project's
-     * list - still [project] at that point - as empty, and a half-finished reopening would
-     * save the new one's as partial. Main thread.
-     */
-    private var restoring = false
-
-    /** One project switch at a time; see [showProject]. */
-    private val switching = Mutex()
-
-    private fun remember() {
-        if (restoring) return
-        val context = appContext ?: return
-        val root = project ?: return
-        Prefs.of(context).edit()
-            .putString(tabsKey(root), files.keys.joinToString("\n"))
-            .putString(activeKey(root), _active.value)
-            .apply()
-    }
-
-    /**
-     * Show [root]'s tabs: the ones it had last time, reopened from disk. Switching project
-     * saves the current tabs and closes them first - a file from another project left open
-     * here is one autosave away from being edited by mistake.
-     *
-     * The switch runs on the app scope and always finishes. The pane calls this from a
-     * composition effect, which is cancelled the moment the pane leaves the screen; cut off
-     * between closing the old tabs and reopening the new ones, it left the new project with
-     * whatever had opened so far and no retry, since [project] already named it.
-     */
+    /** Show [root]'s tabs, closing the last project's; see [EditorTabs.showProject]. */
     suspend fun showProject(context: Context, root: String) {
-        if (project == root) return
-        val app = context.applicationContext
-        appContext = app
-        AppScope.start { switching.withLock { switchTo(app, root) } }.await()
-    }
-
-    private suspend fun switchTo(context: Context, root: String) {
-        if (project == root) return
-        val prefs = Prefs.of(context)
-        val tabs = prefs.getString(tabsKey(root), null)?.split('\n')?.filter { it.isNotBlank() }.orEmpty()
-        val active = prefs.getString(activeKey(root), null)
-        // Language servers are rooted at the project they started in; the next request
-        // starts them again at this one.
-        if (project != null) LspIntel.stopAll()
-        // Tabs that cannot be saved stay open into the new project rather than vanish.
-        flush()
-        withContext(Dispatchers.Main) {
-            restoring = true
-            val kept = files.keys.filter { it in _unsaved.value }
-            drop(*files.keys.filter { it !in kept }.toTypedArray())
-            if (kept.isNotEmpty()) report("${kept.joinToString { it.substringAfterLast('/') }} couldn't be saved, so stayed open")
-            project = root
-        }
-        try {
-            for (path in tabs) {
-                // One unreadable tab must not cost the rest of the list.
-                runCatching { if (GuestFiles.host(context, path).isFile) open(context, path) }
-            }
-            withContext(Dispatchers.Main) { if (active != null && active in files) activate(active) }
-        } finally {
-            // Remembered once, now the list is whole.
-            withContext(NonCancellable + Dispatchers.Main) {
-                restoring = false
-                remember()
-            }
-        }
+        appContext = context.applicationContext
+        EditorTabs.showProject(context, root)
     }
 
     // ---- commands the native chrome drives -----------------------------------
@@ -548,48 +468,6 @@ object NativeEditor {
         view.diagnostics = SyntaxCheck.diagnostics(file.content, file.problem)
     }
 
-    /**
-     * Jump to where the name under the caret is defined - in this file, another file in the
-     * project, or a library, through the file's [CodeIntel] provider. Returns whether it
-     * found anywhere.
-     */
-    suspend fun goToDefinition(context: Context): Boolean {
-        val path = _active.value ?: return false
-        val provider = CodeIntel.forPath(path) ?: return false
-        val (source, line, column) = withContext(Dispatchers.Main) {
-            val view = instance ?: return@withContext null
-            Triple(view.text.toString(), view.cursor.leftLine + 1, view.cursor.leftColumn)
-        } ?: return false
-        val target = withContext(Dispatchers.IO) { provider.definition(context, path, source, line, column) } ?: return false
-        if (target.path != path) open(context, target.path)
-        withContext(Dispatchers.Main) {
-            // The open can fail - a binary, a file gone, one too large - and the jump would
-            // then land at that line in whatever tab was showing. The open says why.
-            if (_active.value != target.path) return@withContext
-            val view = instance ?: return@withContext
-            val content = files[target.path]?.content ?: return@withContext
-            // After layout, not now: a file opened a moment ago has not been measured, and
-            // scrolling against its unmeasured, word-wrapped layout landed hundreds of
-            // lines short of the definition (caught on device: 1261 for line 1830).
-            // Twice: sora builds a long file's word-wrapped layout on a background thread,
-            // so the first scroll can still be measured against a partial layout. The second,
-            // a moment later, lands on the finished one.
-            val jump = Runnable {
-                // Checked again as it runs: the second comes 600 ms later, maybe in another
-                // tab by then. Clamped, because sora throws for a position past the end -
-                // a definition from a stale index can name one - and thrown from a posted
-                // Runnable, that is a crash.
-                if (_active.value != target.path || view.text !== content) return@Runnable
-                val l = (target.line - 1).coerceIn(0, maxOf(content.lineCount - 1, 0))
-                val c = target.column.coerceIn(0, content.getColumnCount(l))
-                runCatching {
-                    view.setSelection(l, c, true)
-                    view.ensurePositionVisible(l, c, true)
-                }
-            }
-            view.post(jump)
-            view.postDelayed(jump, 600)
-        }
-        return true
-    }
+    /** Jump to the definition of the name under the caret; see [Definitions.goTo]. */
+    suspend fun goToDefinition(context: Context): Boolean = Definitions.goTo(context)
 }

@@ -3,7 +3,9 @@ package dev.kern.app.input
 import dev.kern.app.terminal.write
 import dev.kern.app.terminal.sendKey
 import dev.kern.app.terminal.hasFocus
+import dev.kern.app.terminal.current
 import android.content.Context
+import android.view.View
 import android.view.KeyCharacterMap
 import dev.kern.app.editor.EditorChrome
 import dev.kern.app.editor.EditorMode
@@ -27,6 +29,13 @@ object InputTargets {
         TerminalSessions.hasFocus() -> Target.Terminal
         EditorMode.isNative(context) -> Target.Native
         else -> Target.Workbench
+    }
+
+    /** The view that holds the keyboard for [target], or null when it has none yet. */
+    fun view(context: Context): View? = when (target(context)) {
+        Target.Terminal -> TerminalSessions.current()
+        Target.Native -> NativeEditor.current()
+        Target.Workbench -> WorkbenchWebView.current()
     }
 
     fun sendKey(context: Context, keyCode: Int, meta: Int) = when (target(context)) {

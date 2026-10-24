@@ -1,6 +1,9 @@
 package dev.kern.app.settings
 
+import dev.kern.app.core.AppScope
 import dev.kern.app.git.GitHubAuth
+import dev.kern.app.guest.Apt
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
@@ -24,7 +27,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,7 +37,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.launch
 
 /**
  * Everything needed to make git usable: install the tools, sign in, and show who the
@@ -48,10 +49,11 @@ import kotlinx.coroutines.launch
 @Composable
 fun GitHubSection() {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+    val app = context.applicationContext
     val clipboard = LocalClipboardManager.current
 
     val step by GitHubAuth.step.collectAsStateWithLifecycle()
+    val aptBusy by Apt.busy.collectAsStateWithLifecycle()
     var account by remember { mutableStateOf<GitHubAuth.Account?>(null) }
 
     // Re-read the account whenever the flow settles, so the summary below is never
@@ -91,8 +93,10 @@ fun GitHubSection() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Button(
-                    enabled = !busy,
-                    onClick = { scope.launch { GitHubAuth.installTools(context) } },
+                    // apt holds dpkg's lock, so a second run started from here while
+                    // Status or setup is installing would only die on it.
+                    enabled = !busy && !aptBusy,
+                    onClick = { runAuthStep(app) { GitHubAuth.installTools(it) } },
                 ) { Text("Install git & GitHub CLI") }
             }
 
@@ -111,7 +115,7 @@ fun GitHubSection() {
                 )
                 Button(
                     enabled = !busy,
-                    onClick = { scope.launch { GitHubAuth.signIn(context) } },
+                    onClick = { runAuthStep(app) { GitHubAuth.signIn(it) } },
                 ) { Text("Sign in to GitHub") }
             }
 
@@ -135,7 +139,7 @@ fun GitHubSection() {
                 )
                 TextButton(
                     enabled = !busy,
-                    onClick = { scope.launch { GitHubAuth.signOut(context) } },
+                    onClick = { runAuthStep(app) { GitHubAuth.signOut(it) } },
                 ) { Text("Sign out") }
             }
         }
@@ -179,6 +183,28 @@ fun GitHubSection() {
             }
 
             else -> Unit
+        }
+    }
+}
+
+/**
+ * Run one GitHub step on the app scope rather than this section's.
+ *
+ * Leaving Settings mid-install cancelled apt with dpkg half done, and mid-sign-in it left
+ * the step at Working or AwaitingApproval for good - nothing resets it on cancellation,
+ * so every button stayed disabled until the app was killed. On the app scope the step
+ * finishes and settles on its own; the `finally` covers it throwing instead, which would
+ * otherwise strand the step the same way.
+ */
+private fun runAuthStep(app: Context, step: suspend (Context) -> Unit) {
+    AppScope.start {
+        try {
+            step(app)
+        } finally {
+            val now = GitHubAuth.step.value
+            if (now is GitHubAuth.Step.Working || now is GitHubAuth.Step.AwaitingApproval) {
+                GitHubAuth.reset()
+            }
         }
     }
 }

@@ -20,12 +20,17 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.webkit.CookieManager
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import kotlin.math.abs
+import kotlin.math.min
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * The workbench WebView, with one behaviour added: after a scroll it refuses to give the
@@ -106,6 +111,37 @@ object WorkbenchWebView {
     var selectionListener: ((WorkbenchBridge.SelectionInfo?) -> Unit)? = null
 
     /**
+     * Bumped when the instance is thrown away under the UI's feet - its renderer died - so
+     * the view hosting it can key on this and [acquire] a fresh one. Without it the host
+     * would keep showing a destroyed WebView, which is a blank rectangle.
+     */
+    private val _rebuilds = MutableStateFlow(0)
+    val rebuilds: StateFlow<Int> = _rebuilds.asStateFlow()
+
+    /**
+     * How many times code-server has been started fresh, and which of those starts the
+     * page was loaded against. VS Code's page cannot reconnect to a server that was
+     * stopped and started again - it sits on a dead connection - so a page older than
+     * the server is reloaded when the server comes up. See [serverStarted].
+     */
+    private var serverGeneration = 0
+    private var pageGeneration = 0
+
+    /** Main-frame load failures in a row, for the backoff in onReceivedError. */
+    private var failedLoads = 0
+    private var mainFrameFailed = false
+
+    /** The first retry after a failed load, doubled each time up to [MAX_RETRY_MS]. */
+    private const val FIRST_RETRY_MS = 3_000L
+    private const val MAX_RETRY_MS = 30_000L
+
+    /**
+     * After this many failures in a row the page stops retrying on its own. The server's
+     * next healthy start reloads it ([serverStarted]), and so does opening a folder.
+     */
+    private const val MAX_RETRIES = 8
+
+    /**
      * Bump when workbench settings change in a way that layout state would override.
      * VS Code persists its layout (open panels, sidebar visibility) in localStorage,
      * which outlives a settings.json change - so a one-time storage wipe is the only
@@ -131,6 +167,7 @@ object WorkbenchWebView {
         if (existing != null) {
             contextWrapper?.baseContext = activityContext
             (existing.parent as? ViewGroup)?.removeView(existing)
+            existing.onResume()
             return existing
         }
 
@@ -158,6 +195,11 @@ object WorkbenchWebView {
             // UI. Matching the theme means a frame we have not drawn yet is simply the
             // background colour, and the seam stops being visible.
             setBackgroundColor(WORKBENCH_BACKGROUND)
+
+            // Bound to the app's importance while on screen, waived while not: under memory
+            // pressure a hidden workbench's renderer is reclaimed before anything the user
+            // is looking at, and onRenderProcessGone below rebuilds it on the way back.
+            setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, true)
 
             val debuggable =
                 (activityContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
@@ -187,12 +229,42 @@ object WorkbenchWebView {
                     request: WebResourceRequest,
                     error: WebResourceError,
                 ) {
+                    // Backed off and capped. A flat three-second retry ran for as long as the
+                    // server was down - which, with VS Code stopped behind the native editor,
+                    // is most of the time - reloading a page nobody could see. The server
+                    // coming back reloads it anyway (serverStarted).
                     if (request.isForMainFrame) {
-                        view.postDelayed({ view.reload() }, 3_000)
+                        mainFrameFailed = true
+                        if (failedLoads < MAX_RETRIES) {
+                            val wait = min(FIRST_RETRY_MS shl failedLoads, MAX_RETRY_MS)
+                            failedLoads++
+                            view.postDelayed({ view.reload() }, wait)
+                        }
                     }
                 }
 
+                override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                    mainFrameFailed = false
+                }
+
+                override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                    // Returning false - the default - kills the whole app along with the
+                    // renderer. Chromium's renderer is the first thing Android reclaims
+                    // under memory pressure, so this is routine on a phone, not a crash.
+                    // The WebView is unusable afterwards and has to go; the host keys on
+                    // [rebuilds] and acquires a fresh one, which reloads the workbench.
+                    android.util.Log.w("Kern", "workbench renderer gone (crash=${detail.didCrash()})")
+                    (view.parent as? ViewGroup)?.removeView(view)
+                    view.destroy()
+                    if (instance === view) {
+                        instance = null
+                        _rebuilds.value++
+                    }
+                    return true
+                }
+
                 override fun onPageFinished(view: WebView, url: String) {
+                    if (!mainFrameFailed) failedLoads = 0
                     // The workbench's address is invisible from outside a WebView, and
                     // "which folder did it actually load" is the whole question when a
                     // workspace switch goes missing.
@@ -231,15 +303,43 @@ object WorkbenchWebView {
                 WorkbenchBridge.NAME,
             )
 
+            failedLoads = 0
+            pageGeneration = serverGeneration
             loadUrl(CodeServer.url(ProjectRepository.currentFolder(activityContext)))
         }
         instance = webView
         return webView
     }
 
-    /** Detach from the current parent without destroying, before an activity goes away. */
+    /**
+     * Detach from the current parent without destroying, before an activity goes away.
+     * Paused while off screen, so a workbench nobody can see is not animating or polling;
+     * [acquire] resumes it.
+     */
     fun detach() {
-        instance?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        instance?.let {
+            (it.parent as? ViewGroup)?.removeView(it)
+            it.onPause()
+        }
+    }
+
+    /**
+     * code-server has just been started fresh and answered its health check. Any page
+     * loaded before that start is talking to a server that no longer exists - stopped for
+     * idleness behind the native editor, or restarted after it died - so reload it.
+     *
+     * Callable from any thread; the reload hops to the main looper, as [openFolder] does.
+     */
+    fun serverStarted() {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            serverGeneration++
+            val view = instance ?: return@post
+            if (pageGeneration == serverGeneration) return@post
+            pageGeneration = serverGeneration
+            failedLoads = 0
+            android.util.Log.i("Kern", "workbench: server restarted - reloading")
+            view.reload()
+        }
     }
 
     /**
@@ -287,6 +387,10 @@ object WorkbenchWebView {
                 "Kern",
                 "openFolder: $path (view=${view != null}, attached=${view?.parent != null})",
             )
+            if (view != null) {
+                failedLoads = 0
+                pageGeneration = serverGeneration
+            }
             view?.loadUrl(CodeServer.url(path))
         }
     }

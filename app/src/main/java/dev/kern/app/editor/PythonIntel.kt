@@ -41,7 +41,7 @@ for line in sys.stdin:
 
     /** Completions at [line] (1-based) and [column] (0-based) in [source]. Blocking. */
     fun complete(context: Context, path: String, source: String, line: Int, column: Int): List<IntelCompletion> =
-        process.ask(context, "c", path, source, line, column, timeoutMs = 3_000).toCompletions()
+        process.ask(context, "c", path, source, line, column, timeoutMs = 3_000, onlyIfIdle = true).toCompletions()
 
     /** Where the name at [line] (1-based), [column] (0-based) is defined, if jedi knows. Blocking. */
     fun definition(context: Context, path: String, source: String, line: Int, column: Int): IntelLocation? =

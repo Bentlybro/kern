@@ -2,6 +2,11 @@ package dev.kern.app.guest
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -24,6 +29,47 @@ object Apt {
     private const val RECOVER_TIMEOUT_MS = 600_000L
 
     /**
+     * One apt at a time, app wide.
+     *
+     * Setup's toolchain, GitHub sign-in's install, Status's Install and Repair all reach
+     * apt, and nothing stopped two of them running at once. The second then died on
+     * dpkg's lock - or, worse, its `dpkg --configure -a` ran into the middle of the first
+     * one's unpack. Not reentrant: hold it through [exclusive] only, never around a call
+     * to [install].
+     */
+    private val lock = Mutex()
+
+    /** How many callers are inside [exclusive], running or waiting for their turn. */
+    private var inside = 0
+
+    private val _busy = MutableStateFlow(false)
+
+    /**
+     * True while any apt or dpkg run is in progress or queued, setup's included. For the UI
+     * to disable its own install buttons rather than queue a second run behind the first.
+     */
+    val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    /**
+     * Run [block] holding the app-wide apt lock. Everything that runs apt-get or dpkg in
+     * the guest goes through here, so they queue rather than collide.
+     */
+    suspend fun <T> exclusive(block: suspend () -> T): T {
+        enter(1)
+        try {
+            return lock.withLock { block() }
+        } finally {
+            enter(-1)
+        }
+    }
+
+    /** The count and the flag move together, or two callers could publish out of order. */
+    private fun enter(delta: Int) = synchronized(this) {
+        inside += delta
+        _busy.value = inside > 0
+    }
+
+    /**
      * Recover dpkg, apt-get update, then install, then update-ca-certificates if it was in
      * the set.
      *
@@ -34,7 +80,13 @@ object Apt {
         context: Context,
         packages: List<String>,
         onLine: ((String) -> Unit)? = null,
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(Dispatchers.IO) { exclusive { installLocked(context, packages, onLine) } }
+
+    private suspend fun installLocked(
+        context: Context,
+        packages: List<String>,
+        onLine: ((String) -> Unit)?,
+    ): Boolean {
         // The guest's resolv.conf was written whenever it was last set up or repaired, and
         // a phone changes network several times a day. apt is the thing that most needs DNS
         // and the thing whose failure says least about why, so re-point it at whatever the
@@ -71,6 +123,6 @@ object Apt {
             timeoutMs = INSTALL_TIMEOUT_MS,
             onLine = onLine,
         )
-        result?.ok == true
+        return result?.ok == true
     }
 }

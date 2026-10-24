@@ -7,6 +7,7 @@ import dev.kern.app.ui.HeaderIcon
 import dev.kern.app.core.AppScope
 import dev.kern.app.core.BatteryOptimization
 import dev.kern.app.core.UsageTracker
+import dev.kern.app.guest.Apt
 import dev.kern.app.guest.HealthCheck
 import dev.kern.app.ui.CopyDiagnosticsButton
 import dev.kern.app.ui.HeaderAction
@@ -72,6 +73,9 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
     var loading by remember { mutableStateOf(true) }
     var refresh by remember { mutableIntStateOf(0) }
     val installing by installingPackages.collectAsStateWithLifecycle()
+    // Any apt run, not only ours: GitHub's install or setup's tools hold the same dpkg
+    // lock, and a Fix started on top of them dies on it.
+    val aptBusy by Apt.busy.collectAsStateWithLifecycle()
 
     LaunchedEffect(refresh) {
         loading = true
@@ -181,7 +185,8 @@ fun StatusScreen(onDismiss: () -> Unit, onOpenSettings: () -> Unit = {}) {
                         // a phone keyboard, which is not a fix.
                         item.remedy?.let { remedy ->
                             TextButton(
-                                enabled = installing == null,
+                                enabled = installing == null &&
+                                    !(aptBusy && remedy is HealthCheck.Remedy.Install),
                                 onClick = {
                                     when (remedy) {
                                         is HealthCheck.Remedy.Install ->

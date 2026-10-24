@@ -32,16 +32,29 @@ internal object EditorLanguages {
      * it out of memory, and that takes the whole app down. VS Code makes the same call:
      * very long lines and very large files go uncoloured. Internal for tests.
      */
-    internal fun tooLargeToColour(text: CharSequence): Boolean {
-        if (text.length > MAX_COLOURED_CHARS) return true
+    internal fun tooLargeToColour(text: CharSequence): Boolean =
+        text.length > MAX_COLOURED_CHARS || longestLine(text) > MAX_COLOURED_LINE
+
+    /**
+     * Whether inserting [inserted] at a caret on a line already [lineLength] long, into a
+     * document of [documentLength], would take it past [tooLargeToColour]. Errs on the side
+     * of plain text: the inserted text's longest line is counted as if it joined the
+     * caret's line. Internal for tests.
+     */
+    internal fun insertTooLargeToColour(documentLength: Int, lineLength: Int, inserted: CharSequence): Boolean =
+        documentLength + inserted.length > MAX_COLOURED_CHARS ||
+            lineLength + longestLine(inserted) > MAX_COLOURED_LINE
+
+    private fun longestLine(text: CharSequence): Int {
+        var longest = 0
         var lineStart = 0
         for (i in text.indices) {
             if (text[i] == '\n') {
-                if (i - lineStart > MAX_COLOURED_LINE) return true
+                longest = maxOf(longest, i - lineStart)
                 lineStart = i + 1
             }
         }
-        return text.length - lineStart > MAX_COLOURED_LINE
+        return maxOf(longest, text.length - lineStart)
     }
 
     /** Set when a tab opened without its grammar; see [attach]. */

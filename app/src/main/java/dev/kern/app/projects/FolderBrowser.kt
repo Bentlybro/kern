@@ -22,9 +22,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -52,7 +54,7 @@ internal fun parentOf(path: String): String? =
 
 /**
  * Walk the guest's filesystem and open any directory as the workspace. One level at a
- * time, through the same one-round-trip listing Projects uses.
+ * time, through the same listing Projects uses.
  */
 @Composable
 internal fun FolderBrowser(
@@ -63,9 +65,14 @@ internal fun FolderBrowser(
 ) {
     val context = LocalContext.current
     var entries by remember { mutableStateOf<List<ProjectRepository.Entry>?>(null) }
-    LaunchedEffect(path) {
+    var failed by remember { mutableStateOf(false) }
+    var retry by remember { mutableIntStateOf(0) }
+    LaunchedEffect(path, retry) {
         entries = null
-        entries = ProjectRepository.list(context, path)
+        failed = false
+        val listed = ProjectRepository.list(context, path)
+        failed = listed == null
+        entries = listed
     }
 
     ScreenSurface {
@@ -96,6 +103,7 @@ internal fun FolderBrowser(
             }
             val list = entries
             when {
+                failed -> item { ListingFailed(onRetry = { retry++ }) }
                 list == null -> item {
                     Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
@@ -120,6 +128,23 @@ internal fun FolderBrowser(
             }
             item { Spacer(Modifier.height(24.dp)) }
         }
+    }
+}
+
+/** A listing that could not be read, said as such - not as an empty folder. */
+@Composable
+internal fun ListingFailed(onRetry: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "Could not read this folder.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = onRetry) { Text("Retry") }
     }
 }
 

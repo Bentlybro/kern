@@ -63,6 +63,15 @@ class IntelLanguage(
         publisher: CompletionPublisher,
         extraArguments: Bundle,
     ) {
+        // The provider is sent the whole document on every request; past a few hundred KB
+        // that copy and its base64 cost more per keystroke than the answer is worth.
+        if (content.length > MAX_PROVIDER_CHARS) {
+            base.requireAutoComplete(content, position, publisher, extraArguments)
+            return
+        }
+        // Superseded by a newer keystroke already: throws sora's cancellation, before the
+        // copy and before the request joins the helper's queue.
+        content.validateAccess()
         val source = content.reference.toString()
         val results = provider.complete(context, path, source, position.line + 1, position.column)
         if (results.isEmpty()) {
@@ -89,5 +98,9 @@ class IntelLanguage(
         "property", "getter", "setter" -> CompletionItemKind.Property
         "param", "parameter", "statement", "instance", "var", "let", "const", "local var" -> CompletionItemKind.Variable
         else -> CompletionItemKind.Text
+    }
+
+    private companion object {
+        const val MAX_PROVIDER_CHARS = 300_000
     }
 }

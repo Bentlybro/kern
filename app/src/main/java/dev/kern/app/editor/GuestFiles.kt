@@ -29,7 +29,8 @@ object GuestFiles {
     data class Node(val name: String, val path: String, val isDirectory: Boolean)
 
     sealed interface Read {
-        data class Text(val content: String) : Read
+        /** [stamp]: the file's mtime as of [content]; see [read]. */
+        data class Text(val content: String, val stamp: Long) : Read
         data object Missing : Read
         data object Binary : Read
         data class TooLarge(val bytes: Long) : Read
@@ -44,7 +45,7 @@ object GuestFiles {
      * repository's `link -> /data/data/dev.kern.app/shared_prefs`, say - would point into
      * the app's own private files. Such a path is treated as missing.
      */
-    private fun contained(context: Context, file: File): Boolean = runCatching {
+    internal fun contained(context: Context, file: File): Boolean = runCatching {
         val root = LinuxRuntime.rootfsDir(context).canonicalPath + File.separator
         // A file about to be created has no canonical form of its own yet; its folder does.
         val probe = if (file.exists()) file else file.parentFile ?: return false
@@ -63,35 +64,69 @@ object GuestFiles {
             .sortedWith(compareBy<Node>({ !it.isDirectory }, { it.name.lowercase() }))
     }
 
+    /**
+     * Read [guestPath] as text, with the file's mtime as of that text. The stamp is taken
+     * before the read, never after: a stamp taken after could belong to an outside write
+     * that landed in between, which [DiskSync] would then take for the version the tab
+     * holds - and the next autosave would overwrite it unseen. A stamp older than the text
+     * costs at most a needless reload. A file that changes while it is read is read again.
+     */
     fun read(context: Context, guestPath: String): Read {
         val file = host(context, guestPath)
         if (!file.isFile || !contained(context, file)) return Read.Missing
         if (file.length() > MAX_BYTES) return Read.TooLarge(file.length())
-        val bytes = file.readBytes()
-        // A NUL in the first few KB is the same test git uses for "binary".
-        if (bytes.take(8192).any { it == 0.toByte() }) return Read.Binary
-        return Read.Text(String(bytes, Charsets.UTF_8))
+        var attempts = 0
+        while (true) {
+            val stamp = file.lastModified()
+            val bytes = file.readBytes()
+            if (file.lastModified() != stamp && ++attempts < 3) continue
+            // A NUL in the first few KB is the same test git uses for "binary".
+            if (bytes.take(8192).any { it == 0.toByte() }) return Read.Binary
+            return Read.Text(String(bytes, Charsets.UTF_8), stamp)
+        }
     }
 
     /**
      * Write [text] to [guestPath], atomically: a temp file beside it, then a rename. A
      * process killed mid-write - which Android does without warning - leaves either the
      * old file or the new one, never half of each.
+     *
+     * Returns the written file's mtime, or null if the write failed. Taken from the temp
+     * file before the rename, which keeps it: a stat afterwards could see an outside write
+     * that landed in between and take it for ours.
      */
-    fun write(context: Context, guestPath: String, text: String): Boolean = runCatching {
-        val target = host(context, guestPath)
-        target.parentFile?.mkdirs()
-        check(contained(context, target)) { "outside the guest" }
+    fun write(context: Context, guestPath: String, text: String): Long? = runCatching {
+        val requested = host(context, guestPath)
+        requested.parentFile?.mkdirs()
+        check(contained(context, requested)) { "outside the guest" }
+        // Through a symlink to the file it names - inside the rootfs, as just checked - so
+        // the rename replaces that file. Renamed over the link itself, every save turned a
+        // linked file into a detached copy and the link was gone.
+        val target = if (requested.exists()) requested.canonicalFile else requested
         // Unique per write: two writers sharing one temp name could rename half of each.
         val temp = File.createTempFile(".${target.name}.", ".kern-tmp", target.parentFile)
         try {
             temp.writeText(text)
-            if (!temp.renameTo(target)) target.writeText(text)
+            // The original's mode, or the temp file's 0600 replaces it: a script saved in
+            // the editor stopped being executable, and a shared file stopped being readable.
+            if (target.exists()) {
+                runCatching { Files.setPosixFilePermissions(temp.toPath(), Files.getPosixFilePermissions(target.toPath())) }
+            }
+            val stamp = temp.lastModified()
+            if (temp.renameTo(target)) {
+                stamp
+            } else {
+                target.writeText(text)
+                target.lastModified()
+            }
         } finally {
             temp.delete()
         }
-        true
-    }.getOrDefault(false)
+    }.getOrNull()
+
+    /** Whether anything - a file, a folder, even a dangling link - is at [guestPath]. */
+    fun exists(context: Context, guestPath: String): Boolean =
+        Files.exists(host(context, guestPath).toPath(), LinkOption.NOFOLLOW_LINKS)
 
     fun createFile(context: Context, guestPath: String): Boolean = runCatching {
         val f = host(context, guestPath)
@@ -102,8 +137,15 @@ object GuestFiles {
     fun createDirectory(context: Context, guestPath: String): Boolean =
         runCatching { host(context, guestPath).mkdirs() }.getOrDefault(false)
 
-    fun rename(context: Context, from: String, to: String): Boolean =
-        runCatching { host(context, from).renameTo(host(context, to)) }.getOrDefault(false)
+    /**
+     * Move [from] to [to] - never over the top of something already there, which
+     * File.renameTo replaces without a word. The tree checks first and says why; this is
+     * the backstop for a file that appeared in between.
+     */
+    fun rename(context: Context, from: String, to: String): Boolean = runCatching {
+        if (exists(context, to)) return false
+        host(context, from).renameTo(host(context, to))
+    }.getOrDefault(false)
 
     /**
      * Delete a file or folder, never following a symlink inside it: Kotlin's

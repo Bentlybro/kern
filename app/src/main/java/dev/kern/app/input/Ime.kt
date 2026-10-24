@@ -1,9 +1,6 @@
 package dev.kern.app.input
 
-import dev.kern.app.terminal.hasFocus
-import dev.kern.app.terminal.current
-import dev.kern.app.terminal.TerminalSessions
-import dev.kern.app.workbench.WorkbenchWebView
+import android.content.Context
 import android.view.View
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -31,6 +28,10 @@ fun View.toggleIme() {
     if (imeVisible()) hideIme() else showIme()
 }
 
-/** Terminal if it holds focus, else the workbench. The one place this rule is written. */
-fun focusedInputView(): View? =
-    if (TerminalSessions.hasFocus()) TerminalSessions.current() else WorkbenchWebView.current()
+/**
+ * The view the keyboard belongs to, by [InputTargets]' rule: the terminal if it holds focus,
+ * else whichever editor is chosen. This used to pick between the terminal and the workbench
+ * only, so with the native editor - the default - the key row's keyboard key and hardware
+ * chords went to a workbench that was not on screen.
+ */
+fun focusedInputView(context: Context): View? = InputTargets.view(context)

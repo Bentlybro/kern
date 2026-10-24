@@ -70,6 +70,9 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
 
     val sessions by TerminalSessions.sessions.collectAsStateWithLifecycle()
     val agent = sessions.firstOrNull { it.kind == TerminalSessions.Kind.Agent }
+    val ended by TerminalSessions.ended.collectAsStateWithLifecycle()
+    // Exited, but kept on screen so its last words can be read. See handleFinished.
+    val agentEnded = agent != null && agent.id in ended
 
     var status by remember { mutableStateOf<GitCommands.Status?>(null) }
     var diff by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -97,8 +100,16 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
     LaunchedEffect(showDiff, refresh, lifecycleOwner) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
-                status = GitCommands.status(context, project)
-                if (showDiff) diff = GitCommands.diff(context, project)
+                // One guest command for both on the Changes tab. A poll that got no answer
+                // keeps what is on screen: a slow guest is not a repository disappearing.
+                if (showDiff) {
+                    GitCommands.changes(context, project)?.let {
+                        status = it.status
+                        diff = it.diff
+                    }
+                } else {
+                    GitCommands.status(context, project)?.let { status = it }
+                }
                 // Each pass is a PRoot fork. On the output tab the only consumer is the
                 // branch line in the header, which does not need refreshing every four
                 // seconds while an agent is busy forking things of its own.
@@ -130,7 +141,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
             Tab(selected = showDiff, onClick = { showDiff = true }, text = { Text("Changes") })
             Tab(selected = !showDiff, onClick = { showDiff = false }, text = {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (agent != null) {
+                    if (agent != null && !agentEnded) {
                         Box(Modifier.size(7.dp).clip(CircleShape).background(KernColors.Ok))
                         Spacer(Modifier.width(6.dp))
                     }
@@ -152,6 +163,18 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    agent != null && agentEnded -> {
+                        Text(
+                            "Exited",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedButton(onClick = { TerminalSessions.stopAgent() }) { Text("Close") }
+                        Button(onClick = { TerminalSessions.startAgent(context, command) }) {
+                            Text("Restart")
+                        }
+                    }
                     agent != null -> {
                         Text(
                             command,
@@ -236,7 +259,7 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
                 onPush = { git("Pushing...", { GitCommands.push(app, project) }) },
                 onPull = { git("Pulling...", { GitCommands.pull(app, project) }) },
             )
-        } else if (agent != null) {
+        } else if (agent != null && !agentEnded) {
             ReplyBar(
                 value = reply,
                 onValue = { reply = it },

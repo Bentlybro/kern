@@ -8,8 +8,12 @@ import dev.kern.app.workbench.CodeServer
 import dev.kern.app.workbench.WorkbenchWebView
 import android.content.Context
 import android.os.StatFs
-import java.io.File
+import java.io.IOException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -55,43 +59,64 @@ object StorageManager {
      * only ever run when the settings screen asks for it.
      */
     suspend fun measure(context: Context): Usage = withContext(Dispatchers.IO) {
-        val root = LinuxRuntime.rootfsDir(context)
+        val root = LinuxRuntime.rootfsDir(context).toPath()
+        val apt = root.resolve("var/cache/apt")
+        val projects = root.resolve("root/projects")
+        var guest = 0L
+        var aptCache = 0L
+        var projectBytes = 0L
+        // One walk, bucketed by where each file sits. This used to be three - the whole
+        // rootfs, then the apt cache and the projects again inside it - with two lstat
+        // calls per entry on each, all of it on phone storage.
+        walk(root) { file, size ->
+            guest += size
+            if (file.startsWith(apt)) aptCache += size
+            else if (file.startsWith(projects)) projectBytes += size
+        }
         Usage(
-            guestMb = sizeMb(root),
-            aptCacheMb = sizeMb(File(root, "var/cache/apt")),
-            projectsMb = sizeMb(File(root, "root/projects")),
-            freeMb = StatFs(context.filesDir.absolutePath).availableBytes / (1024 * 1024),
+            guestMb = guest / MB,
+            aptCacheMb = aptCache / MB,
+            projectsMb = projectBytes / MB,
+            freeMb = StatFs(context.filesDir.absolutePath).availableBytes / MB,
             limitMb = limitMb(context),
         )
     }
 
+    private const val MB = 1024L * 1024
+
     /**
-     * Size of a tree, counting each byte once.
+     * Every regular file under [root] with its size, counting each byte once.
      *
      * Symlinks are skipped rather than measured. PRoot rewrites every hard link in the
-     * guest into a symlink pointing into `.l2s`, and `File.length()` on a symlink reports
-     * the *target's* size — so counting them bills the same bytes once per link. Ubuntu is
-     * full of hard links, and the result was a rootfs reported at 3.2 GB that `du` put at
-     * 1.2 GB. Symlinked directories are not descended into either, for the same reason.
+     * guest into a symlink pointing into `.l2s`, and following one reports the *target's*
+     * size — so counting them bills the same bytes once per link. Ubuntu is full of hard
+     * links, and the result was a rootfs reported at 3.2 GB that `du` put at 1.2 GB.
+     * walkFileTree neither follows nor descends into links, and hands over the attributes
+     * it already read, so each entry costs one lstat.
      */
-    private fun sizeMb(dir: File): Long {
-        if (!dir.exists()) return 0
-        var total = 0L
-        dir.walkTopDown()
-            .onEnter { !Files.isSymbolicLink(it.toPath()) }
-            .onFail { _, _ -> /* unreadable entries are not worth failing the whole scan */ }
-            .forEach { entry ->
-                if (entry.isFile && !Files.isSymbolicLink(entry.toPath())) {
-                    total += entry.length()
+    private fun walk(root: Path, onFile: (Path, Long) -> Unit) {
+        if (!Files.isDirectory(root)) return
+        Files.walkFileTree(
+            root,
+            object : SimpleFileVisitor<Path>() {
+                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    if (attrs.isRegularFile) onFile(file, attrs.size())
+                    return FileVisitResult.CONTINUE
                 }
-            }
-        return total / (1024 * 1024)
+
+                // Unreadable entries are not worth failing the whole scan.
+                override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult =
+                    FileVisitResult.CONTINUE
+            },
+        )
     }
 
     /** Reclaim the space that is safe to throw away without breaking the install. */
     suspend fun cleanUp(context: Context): String {
         val before = measure(context).guestMb
-        LinuxRuntime.run(
+        // Under the apt lock: emptying the package lists out from under a running apt-get
+        // fails it halfway, and apt-get clean takes the very lock that apt holds.
+        Apt.exclusive { LinuxRuntime.run(
             context,
             """
             apt-get clean 2>/dev/null
@@ -103,7 +128,7 @@ object StorageManager {
             : > /root/.kern/server.log 2>/dev/null
             """.trimIndent(),
             timeoutMs = 180_000,
-        )
+        ) }
         val after = measure(context).guestMb
         val freed = (before - after).coerceAtLeast(0)
         return if (freed > 0) "Freed $freed MB" else "Nothing to reclaim"
@@ -114,6 +139,11 @@ object StorageManager {
      * is the recovery path when an install goes wrong.
      */
     suspend fun deleteGuest(context: Context): Boolean = withContext(Dispatchers.IO) {
+        // Not while setup is writing into the tree. It would go on unpacking and installing
+        // into a directory being deleted around it, and the result is neither a guest nor
+        // its absence. The caller reports false as a failed delete; setup can be waited
+        // out, or will fail on its own.
+        if (RootfsInstaller.isRunning) return@withContext false
         // The supervisor first, or it outlives the guest it is supervising. It polls every
         // fifteen seconds and restarts a server it finds missing - which, once the rootfs
         // is gone, means spawning PRoot at a directory that no longer exists, on a timer,
@@ -133,8 +163,7 @@ object StorageManager {
         }
         // The paths the app remembers are inside the guest and outlive it too.
         ProjectRepository.forgetAll(context)
-        val root = LinuxRuntime.rootfsDir(context)
-        runCatching { root.deleteRecursively() }.getOrDefault(false)
+        deleteTree(LinuxRuntime.rootfsDir(context).toPath())
         // The setup downloads are staged outside the rootfs, so deleting only the guest
         // left a failed transfer's bytes on the device with nothing in the app able to
         // reclaim them, and the next setup resuming into what was left.
@@ -142,6 +171,49 @@ object StorageManager {
         // Tell the UI the world changed, or it keeps routing to a guest that is gone.
         LinuxRuntime.notifyInstallChanged()
         !LinuxRuntime.isInstalled(context)
+    }
+
+    /**
+     * Delete [root] and everything under it, never following a symlink: Kotlin's
+     * deleteRecursively descends into a linked directory, so a guest holding a link to
+     * shared storage - `/sdcard` is bound in, and a project can link anywhere - would have
+     * had whatever it pointed at emptied too. walkFileTree visits a link as a file, so only
+     * the link goes (the same approach as GuestFiles.delete).
+     *
+     * Carries on past what it cannot delete, rather than leaving most of a gigabyte behind
+     * over one stubborn file; the caller judges by whether the guest is still installed.
+     */
+    private fun deleteTree(root: Path) {
+        if (!Files.exists(root, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return
+        runCatching {
+            Files.walkFileTree(
+                root,
+                object : SimpleFileVisitor<Path>() {
+                    override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
+                        // dpkg leaves some directories without the write bit, which under
+                        // PRoot's fake root is a real permission and stops their children
+                        // being unlinked.
+                        runCatching { dir.toFile().setWritable(true, true) }
+                        return FileVisitResult.CONTINUE
+                    }
+
+                    override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                        runCatching { Files.delete(file) }
+                        return FileVisitResult.CONTINUE
+                    }
+
+                    override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult {
+                        runCatching { Files.deleteIfExists(file) }
+                        return FileVisitResult.CONTINUE
+                    }
+
+                    override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
+                        runCatching { Files.delete(dir) }
+                        return FileVisitResult.CONTINUE
+                    }
+                },
+            )
+        }
     }
 
     fun format(mb: Long): String = when {

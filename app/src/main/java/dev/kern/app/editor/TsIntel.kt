@@ -80,7 +80,7 @@ require("readline").createInterface({ input: process.stdin }).on("line", line =>
     fun warm(context: Context) = process.warm(context)
 
     fun complete(context: Context, path: String, source: String, line: Int, column: Int): List<IntelCompletion> =
-        process.ask(context, "c", path, source, line, column, timeoutMs = 4_000).toCompletions()
+        process.ask(context, "c", path, source, line, column, timeoutMs = 4_000, onlyIfIdle = true).toCompletions()
 
     fun definition(context: Context, path: String, source: String, line: Int, column: Int): IntelLocation? =
         process.ask(context, "g", path, source, line, column, timeoutMs = 6_000).toLocation()

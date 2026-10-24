@@ -1,5 +1,6 @@
 package dev.kern.app.editor
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,5 +29,17 @@ class QuickOpenScoreTest {
     @Test
     fun `shorter paths win ties`() {
         assertTrue(QuickOpenIndex.score("a/b.py", "b")!! > QuickOpenIndex.score("a/c/d/b.py", "b")!!)
+    }
+
+    @Test
+    fun `rank drops non-matches and puts the best first`() {
+        val files = listOf("parsing/util/a.py", "readme.md", "src/util/parser.py")
+        assertEquals(listOf("src/util/parser.py", "parsing/util/a.py"), QuickOpenIndex.rank(files, "pars"))
+    }
+
+    @Test
+    fun `rank keeps only the best few`() {
+        val files = (1..100).map { "dir/file$it.txt" }
+        assertEquals(5, QuickOpenIndex.rank(files, "file", limit = 5).size)
     }
 }

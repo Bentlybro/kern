@@ -290,6 +290,11 @@ object LinuxRuntime {
          * The output file is ours, so this is a cheap tail rather than another pipe.
          */
         onLine: ((String) -> Unit)? = null,
+        /**
+         * Read back at most this much of stdout and of stderr. For a caller that only
+         * shows the start of something that can be large, so it is not read whole first.
+         */
+        maxOutputBytes: Int = Int.MAX_VALUE,
     ): Result? = withContext(Dispatchers.IO) {
         if (!isInstalled(context)) return@withContext null
 
@@ -353,8 +358,8 @@ object LinuxRuntime {
 
             Result(
                 exitCode = exit,
-                stdout = outFile.takeIf { it.exists() }?.readText().orEmpty(),
-                stderr = errFile.takeIf { it.exists() }?.readText().orEmpty(),
+                stdout = readCapped(outFile, maxOutputBytes),
+                stderr = readCapped(errFile, maxOutputBytes),
             )
         } catch (e: Exception) {
             Log.e(TAG, "guest command failed", e)
@@ -362,6 +367,18 @@ object LinuxRuntime {
         } finally {
             listOf(scriptFile, outFile, errFile, rcFile).forEach { runCatching { it.delete() } }
         }
+    }
+
+    /** The first [max] bytes of [file], or all of it; empty when it was never written. */
+    private fun readCapped(file: File, max: Int): String {
+        if (!file.exists()) return ""
+        if (file.length() <= max) return file.readText()
+        val bytes = java.io.RandomAccessFile(file, "r").use { handle ->
+            val buffer = ByteArray(max)
+            handle.readFully(buffer)
+            buffer
+        }
+        return String(bytes, Charsets.UTF_8)
     }
 
     /**

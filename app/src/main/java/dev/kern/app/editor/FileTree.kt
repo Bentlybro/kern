@@ -7,6 +7,7 @@ import dev.kern.app.ui.HeaderIcon
 import androidx.compose.material3.Icon
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,7 +40,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -63,10 +68,22 @@ fun FileTree(root: String, onOpen: (String) -> Unit, modifier: Modifier = Modifi
     var rows by remember { mutableStateOf<List<Row>>(emptyList()) }
     var menuFor by remember { mutableStateOf<GuestFiles.Node?>(null) }
     var prompt by remember { mutableStateOf<TreePrompt?>(null) }
+    // Said here rather than over the editor: with no tab open, the editor shows nothing.
+    var notice by remember { mutableStateOf<String?>(null) }
     val active by NativeEditor.active.collectAsStateWithLifecycle()
 
-    LaunchedEffect(root, expanded, reload) {
-        rows = withContext(Dispatchers.IO) { flatten(context, root, expanded) }
+    // Kept current while on screen: files come and go from the terminal, git and agents,
+    // and a tree that only changed on Refresh showed files long gone. Cheap - one listing
+    // per expanded folder - and only while resumed.
+    val lifecycle = LocalLifecycleOwner.current
+    LaunchedEffect(root, expanded, reload, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                val fresh = withContext(Dispatchers.IO) { flatten(context, root, expanded) }
+                if (fresh != rows) rows = fresh
+                delay(3_000)
+            }
+        }
     }
 
     val rootNode = GuestFiles.Node(root.substringAfterLast('/').ifEmpty { "/" }, root, true)
@@ -89,6 +106,14 @@ fun FileTree(root: String, onOpen: (String) -> Unit, modifier: Modifier = Modifi
             HeaderIcon(KernIcons.Add, "New file", { prompt = TreePrompt.NewFile(rootNode) })
             HeaderIcon(KernIcons.Folder, "New folder", { prompt = TreePrompt.NewFolder(rootNode) })
             HeaderIcon(KernIcons.Refresh, "Refresh", { reload++ })
+        }
+        notice?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.fillMaxWidth().clickable { notice = null }.padding(horizontal = 16.dp, vertical = 6.dp),
+            )
         }
         if (rows.isEmpty()) {
             Text(
@@ -129,7 +154,18 @@ fun FileTree(root: String, onOpen: (String) -> Unit, modifier: Modifier = Modifi
     prompt?.let { p ->
         TreePromptDialog(p, onDismiss = { prompt = null }) { value ->
             prompt = null
+            notice = null
             scope.launch {
+                // A rename onto a name already taken would replace that file without a
+                // word; refused here, where it can say why.
+                if (p is TreePrompt.Rename) {
+                    val target = p.target(value)
+                    if (target == p.node.path) return@launch
+                    if (withContext(Dispatchers.IO) { GuestFiles.exists(context, target) }) {
+                        notice = "${value.trim()} already exists - pick another name"
+                        return@launch
+                    }
+                }
                 // Rename and delete move files out from under open tabs, so the tabs are
                 // saved and closed for the duration; see NativeEditor.moving.
                 val ok = if (p is TreePrompt.Rename || p is TreePrompt.Delete) {
@@ -140,7 +176,10 @@ fun FileTree(root: String, onOpen: (String) -> Unit, modifier: Modifier = Modifi
                     withContext(Dispatchers.IO) { p.apply(context, value) }
                 }
                 // null: refused over unsaved tabs, which already says so.
-                if (ok == false) NativeEditor.report("${p.title.removeSuffix("?")} failed")
+                if (ok == false) {
+                    NativeEditor.report("${p.title.removeSuffix("?")} failed")
+                    notice = "${p.title.removeSuffix("?")} failed"
+                }
                 if (p.node.isDirectory) expanded = expanded + p.node.path
                 reload++
                 // A file just made is a file about to be written in.

@@ -38,4 +38,5 @@ object Prefs {
     const val KEY_EDITOR_WRAP = "editor_wrap"
     const val KEY_EDITOR_TABS = "editor_tabs"
     const val KEY_EDITOR_ACTIVE = "editor_active"
+    const val KEY_NOTIFICATIONS_ASKED = "notifications_asked"
 }

@@ -30,6 +30,11 @@ object DiskSync {
         _conflicts.value = _conflicts.value + path
     }
 
+    /** [path]'s conflict no longer stands: its tab was closed without saving. */
+    internal fun resolved(path: String) {
+        _conflicts.value = _conflicts.value - path
+    }
+
     /**
      * Compare every open tab with its file. Cheap - one stat per open file, no process -
      * so the pane calls it every second or two while it is on screen.
@@ -76,9 +81,11 @@ object DiskSync {
 
     private suspend fun reload(context: Context, file: NativeEditor.OpenFile) {
         val before = withContext(Dispatchers.Main) { file.content.documentVersion }
-        val read = withContext(Dispatchers.IO) { GuestFiles.read(context, file.path) }
-        val text = (read as? GuestFiles.Read.Text)?.content ?: return
-        val stamp = GuestFiles.host(context, file.path).lastModified()
+        val read = withContext(Dispatchers.IO) { GuestFiles.read(context, file.path) } as? GuestFiles.Read.Text ?: return
+        // The stamp that came with the text: a stat now could already see a newer write.
+        val stamp = read.stamp
+        val content = withContext(Dispatchers.IO) { Content(read.content) }
+        val plain = withContext(Dispatchers.IO) { EditorLanguages.tooLargeToColour(read.content) }
         withContext(Dispatchers.Main) {
             // Typed into while the read was in flight, or closed: the disk's version must
             // not replace text it has never seen. That is a conflict for the user to settle.
@@ -87,9 +94,9 @@ object DiskSync {
                 conflict(file.path)
                 return@withContext
             }
-            file.content = Content(text)
+            file.content = content
             // Grown past what colouring survives - a formatter minifying it, say.
-            if (EditorLanguages.tooLargeToColour(text)) file.language = null
+            if (plain) file.language = null
             file.savedRevision = file.content.documentVersion
             file.diskStamp = stamp
             if (NativeEditor.active.value == file.path) {

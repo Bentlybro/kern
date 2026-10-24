@@ -1,5 +1,6 @@
 package dev.kern.app.update
 
+import dev.kern.app.core.AppScope
 import dev.kern.app.core.download
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -100,9 +101,14 @@ fun UpdateSection() {
                             Updates.needsPermission(current.release)
                             return@Button
                         }
-                        scope.launch {
-                            val apk = Updates.download(context, current.release)
-                            if (apk != null) Updates.install(context, apk)
+                        // The app scope, not this screen's: leaving Settings mid-download
+                        // cancelled it and threw away tens of megabytes, and the progress
+                        // lives in Updates.state anyway, so coming back picks it up.
+                        val app = context.applicationContext
+                        val release = current.release
+                        AppScope.start {
+                            val apk = Updates.download(app, release)
+                            if (apk != null) Updates.install(app, apk)
                         }
                     }) {
                         Text("Update (${current.release.sizeBytes / (1024 * 1024)} MB)")

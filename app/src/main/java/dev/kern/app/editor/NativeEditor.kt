@@ -8,7 +8,6 @@ import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
 import android.view.ViewGroup
-import dev.kern.app.core.Prefs
 import io.github.rosemoe.sora.event.ContentChangeEvent
 import io.github.rosemoe.sora.langs.textmate.TextMateColorScheme
 import io.github.rosemoe.sora.langs.textmate.registry.ThemeRegistry
@@ -53,7 +52,7 @@ object NativeEditor {
         var language: io.github.rosemoe.sora.lang.Language? = null
 
         /** Library code reached by go-to-definition: shown, never edited or saved. */
-        val readOnly: Boolean get() = path.startsWith("/usr/") || "/node_modules/" in path
+        val readOnly: Boolean get() = NativeEditor.isLibrary(path)
 
         /** The file's mtime when last read or written by us; see [DiskSync]. */
         @Volatile
@@ -77,7 +76,14 @@ object NativeEditor {
         /** Set when the user chose "keep mine" over an outside change. */
         @Volatile
         var forceNextSave: Boolean = false
+
+        /** Where the view was scrolled when this tab was last switched away from; see [show]. */
+        var scrollX: Int = 0
+        var scrollY: Int = 0
     }
+
+    /** Library code - shown read-only; see [OpenFile.readOnly]. */
+    fun isLibrary(path: String): Boolean = path.startsWith("/usr/") || "/node_modules/" in path
 
     internal val files = LinkedHashMap<String, OpenFile>()
 
@@ -129,6 +135,7 @@ object NativeEditor {
                 useICULibToSelectWords = true
             }
             subscribeAlways(ContentChangeEvent::class.java) { onEdited() }
+            beforeCommit = { beforeInsert(it) }
         }
         instance = view
         _active.value?.let { show(it) }
@@ -148,26 +155,32 @@ object NativeEditor {
         }
         val read = withContext(Dispatchers.IO) { GuestFiles.read(context, path) }
         val text = when (read) {
-            is GuestFiles.Read.Text -> read.content
+            is GuestFiles.Read.Text -> read
             GuestFiles.Read.Binary -> return fail("${path.substringAfterLast('/')} is a binary file")
             GuestFiles.Read.Missing -> return fail("${path.substringAfterLast('/')} is not there any more")
             is GuestFiles.Read.TooLarge -> return fail(
                 "${path.substringAfterLast('/')} is ${read.bytes / 1024 / 1024} MB - open it in the terminal",
             )
         }
-        val (language, highlighted) = EditorLanguages.forPath(context, path, EditorLanguages.tooLargeToColour(text))
+        // Built here, not on Main: splitting a few MB into lines is a visible stall, and a
+        // Content belongs to no view until it is set on one.
+        val content = withContext(Dispatchers.IO) { Content(text.content) }
+        val (language, highlighted) = EditorLanguages.forPath(context, path, EditorLanguages.tooLargeToColour(text.content))
         withContext(Dispatchers.Main) {
             // Opened twice at once: the first one in is the tab, and may already be edited.
             if (path in files) {
                 activate(path)
                 return@withContext
             }
-            val file = OpenFile(path, Content(text)).also {
+            val file = OpenFile(path, content).also {
                 it.language = language
                 it.highlighted = highlighted
             }
             file.savedRevision = file.content.documentVersion
-            file.diskStamp = GuestFiles.host(context, path).lastModified()
+            // The stamp from the read, not a fresh stat: the grammar can take seconds to
+            // load on first open, and an outside write in that time would be taken for
+            // this text and overwritten by the next autosave.
+            file.diskStamp = text.stamp
             files[path] = file
             publish()
             activate(path)
@@ -188,7 +201,7 @@ object NativeEditor {
         if (_problem.value?.startsWith(prefix) == true) _problem.value = null
     }
 
-    private fun activate(path: String) {
+    internal fun activate(path: String) {
         _active.value = path
         show(path)
         remember()
@@ -228,24 +241,77 @@ object NativeEditor {
         // Every time, not once: sora re-derives the scheme from the theme when the theme
         // registry fires, and that put the stock-blue handles back (caught on device).
         if (themed) view.colorScheme.kernAccents()
-        view.setEditorLanguage(file.language)
+        // Where the outgoing tab was scrolled to: setText puts the view back at the top,
+        // and every trip to another tab and back used to lose the reader's place.
+        shown?.let {
+            it.scrollX = view.offsetX
+            it.scrollY = view.offsetY
+        }
+        // Plain first, the tab's language only once its own text is in: setEditorLanguage
+        // starts the new language's tokenizer on whatever text the view holds, and that was
+        // the outgoing tab's - a minified file shown plain got the next tab's grammar run
+        // over it, the crash plain text exists to avoid.
+        view.setEditorLanguage(null)
         view.setText(file.content, true, null)
+        view.setEditorLanguage(file.language)
         view.isEditable = !file.readOnly
         showProblem(file)
+        shown = file
+        restoreScroll(view, file)
+    }
+
+    /** The tab whose text the view holds, for [show] to keep its scroll position. Main thread. */
+    private var shown: OpenFile? = null
+
+    private fun restoreScroll(view: CodeEditor, file: OpenFile) {
+        val x = file.scrollX
+        val y = file.scrollY
+        if (x == 0 && y == 0) return
+        // After layout and twice, as for go to definition: until sora has laid out the text -
+        // a long word-wrapped file on a background thread - there is not that far to scroll.
+        // The second only if nobody has scrolled since the first.
+        var landed: Pair<Int, Int>? = null
+        val restore = Runnable {
+            if (view.text !== file.content) return@Runnable
+            if (landed?.let { it.first != view.offsetX || it.second != view.offsetY } == true) return@Runnable
+            runCatching {
+                val targetX = x.coerceIn(0, view.scrollMaxX)
+                val targetY = y.coerceIn(0, view.scrollMaxY)
+                val scroller = view.scroller
+                scroller.startScroll(view.offsetX, view.offsetY, targetX - view.offsetX, targetY - view.offsetY, 0)
+                scroller.abortAnimation()
+                view.invalidate()
+            }
+            landed = view.offsetX to view.offsetY
+        }
+        view.post(restore)
+        view.postDelayed(restore, 600)
     }
 
     /**
      * Close a tab - once its edits are on disk. A tab whose save failed or hit an outside
-     * change stays open, since closing it would throw away the only copy of the edits.
+     * change stays open, since closing it would throw away the only copy of the edits;
+     * [onUnsaved] is then told, to offer [discard], or without one the editor says why.
      */
-    fun close(path: String) {
+    fun close(path: String, onUnsaved: ((String) -> Unit)? = null) {
         ui.launch {
             if (flush(listOf(path))) {
                 drop(path)
+            } else if (onUnsaved != null) {
+                onUnsaved(path)
             } else {
                 report("${path.substringAfterLast('/')} isn't saved, so it stays open")
             }
         }
+    }
+
+    /**
+     * Close a tab without saving, on the user's say-so - the way out for a tab whose save
+     * keeps failing, or whose outside change they do not want to settle. Main thread.
+     */
+    fun discard(path: String) {
+        DiskSync.resolved(path)
+        drop(path)
     }
 
     /**
@@ -292,7 +358,7 @@ object NativeEditor {
     fun under(pathPrefix: String): List<String> =
         files.keys.filter { it == pathPrefix || it.startsWith("$pathPrefix/") }
 
-    private fun drop(vararg paths: String) {
+    internal fun drop(vararg paths: String) {
         for (path in paths) {
             files.remove(path)?.dropped = true
             if (_active.value == path) _active.value = null
@@ -303,6 +369,20 @@ object NativeEditor {
             if (next != null) show(next) else instance?.setText("")
         }
         publish()
+    }
+
+    /**
+     * Drop colouring before an insert would take the tab past what it survives - a
+     * minified blob pasted into a coloured file; see [EditorLanguages.tooLargeToColour].
+     */
+    private fun beforeInsert(text: CharSequence) {
+        val view = instance ?: return
+        val file = _active.value?.let { files[it] } ?: return
+        if (file.language == null) return
+        val line = file.content.getColumnCount(view.cursor.leftLine)
+        if (!EditorLanguages.insertTooLargeToColour(file.content.length, line, text)) return
+        file.language = null
+        view.setEditorLanguage(null)
     }
 
     private fun onEdited() {
@@ -353,57 +433,13 @@ object NativeEditor {
         remember()
     }
 
-    // ---- surviving a restart -------------------------------------------------
-    //
-    // Android ends this process whenever it likes, and an editor that comes back empty
-    // makes every return to the app start with finding your files again. The tab list and
-    // the active tab are kept in prefs and reopened on the next launch; the contents need
-    // no keeping, since autosave already put them on disk.
+    // Kept per project across restarts; see EditorTabs.
+    private fun remember() = EditorTabs.remember(appContext)
 
-    /** The project whose tabs are open. Each project keeps its own set. */
-    private var project: String? = null
-
-    private fun tabsKey(root: String) = Prefs.KEY_EDITOR_TABS + ":" + root
-    private fun activeKey(root: String) = Prefs.KEY_EDITOR_ACTIVE + ":" + root
-
-    private fun remember() {
-        val context = appContext ?: return
-        val root = project ?: return
-        Prefs.of(context).edit()
-            .putString(tabsKey(root), files.keys.joinToString("\n"))
-            .putString(activeKey(root), _active.value)
-            .apply()
-    }
-
-    /**
-     * Show [root]'s tabs: the ones it had last time, reopened from disk. Switching project
-     * saves the current tabs and closes them first - a file from another project left open
-     * here is one autosave away from being edited by mistake.
-     */
+    /** Show [root]'s tabs, closing the last project's; see [EditorTabs.showProject]. */
     suspend fun showProject(context: Context, root: String) {
-        if (project == root) return
         appContext = context.applicationContext
-        // Read before anything is closed: closing publishes, and publishing saves the tab
-        // list - which would otherwise overwrite this project's saved tabs with nothing.
-        val prefs = Prefs.of(context)
-        val tabs = prefs.getString(tabsKey(root), null)?.split('\n')?.filter { it.isNotBlank() }.orEmpty()
-        val active = prefs.getString(activeKey(root), null)
-        // Language servers are rooted at the project they started in; the next request
-        // starts them again at this one.
-        if (project != null) LspIntel.stopAll()
-        // Tabs that cannot be saved stay open into the new project rather than vanish.
-        flush()
-        withContext(Dispatchers.Main) {
-            val kept = files.keys.filter { it in _unsaved.value }
-            drop(*files.keys.filter { it !in kept }.toTypedArray())
-            if (kept.isNotEmpty()) report("${kept.joinToString { it.substringAfterLast('/') }} couldn't be saved, so stayed open")
-            project = root
-            publish()
-        }
-        for (path in tabs) {
-            if (GuestFiles.host(context, path).isFile) open(context, path)
-        }
-        if (active != null && active in files) withContext(Dispatchers.Main) { activate(active) }
+        EditorTabs.showProject(context, root)
     }
 
     // ---- commands the native chrome drives -----------------------------------
@@ -452,36 +488,6 @@ object NativeEditor {
         view.diagnostics = SyntaxCheck.diagnostics(file.content, file.problem)
     }
 
-    /**
-     * Jump to where the name under the caret is defined - in this file, another file in the
-     * project, or a library, through the file's [CodeIntel] provider. Returns whether it
-     * found anywhere.
-     */
-    suspend fun goToDefinition(context: Context): Boolean {
-        val path = _active.value ?: return false
-        val provider = CodeIntel.forPath(path) ?: return false
-        val (source, line, column) = withContext(Dispatchers.Main) {
-            val view = instance ?: return@withContext null
-            Triple(view.text.toString(), view.cursor.leftLine + 1, view.cursor.leftColumn)
-        } ?: return false
-        val target = withContext(Dispatchers.IO) { provider.definition(context, path, source, line, column) } ?: return false
-        if (target.path != path) open(context, target.path)
-        withContext(Dispatchers.Main) {
-            val view = instance ?: return@withContext
-            val l = (target.line - 1).coerceAtLeast(0)
-            // After layout, not now: a file opened a moment ago has not been measured, and
-            // scrolling against its unmeasured, word-wrapped layout landed hundreds of
-            // lines short of the definition (caught on device: 1261 for line 1830).
-            // Twice: sora builds a long file's word-wrapped layout on a background thread,
-            // so the first scroll can still be measured against a partial layout. The second,
-            // a moment later, lands on the finished one.
-            val jump = Runnable {
-                runCatching { view.setSelection(l, target.column, true) }
-                view.ensurePositionVisible(l, target.column, true)
-            }
-            view.post(jump)
-            view.postDelayed(jump, 600)
-        }
-        return true
-    }
+    /** Jump to the definition of the name under the caret; see [Definitions.goTo]. */
+    suspend fun goToDefinition(context: Context): Boolean = Definitions.goTo(context)
 }

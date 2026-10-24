@@ -9,6 +9,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import dev.kern.app.guest.PtyProcess;
 
@@ -57,6 +58,21 @@ public final class TerminalSession extends TerminalOutput {
     private volatile boolean mRunning = true;
     private volatile int mExitStatus;
 
+    /**
+     * Whether the queues and the process have been released. Separate from [mRunning]
+     * because a shell that exits on its own clears that first: the exit message used to set
+     * it, and the teardown that followed saw "not running" and returned without closing
+     * anything - leaving the writer thread blocked on its queue forever, and the pty fd,
+     * the emulator and the view all reachable from it.
+     */
+    private final AtomicBoolean mClosed = new AtomicBoolean(false);
+
+    /**
+     * Bumped on the main thread whenever output reaches the emulator, so a reader of the
+     * screen can tell whether anything changed since it last looked.
+     */
+    private int mOutputGeneration;
+
     public TerminalSession(ShellFactory shellFactory, Integer transcriptRows,
                            TerminalSessionClient client) {
         this.mShellFactory = shellFactory;
@@ -94,6 +110,11 @@ public final class TerminalSession extends TerminalOutput {
         if (process == null) {
             appendLocally("\r\n[Kern: could not start a shell. Is Linux set up?]\r\n");
             finish(-1);
+            return;
+        }
+        if (mClosed.get()) {
+            // Hung up before it was ever laid out; nothing will be left to close this.
+            new Thread(process::close, "KernTermClose").start();
             return;
         }
         mProcess = process;
@@ -206,12 +227,28 @@ public final class TerminalSession extends TerminalOutput {
 
     /** Hang up the shell and everything it started. */
     public void finishIfRunning() {
-        if (!mRunning) return;
         mRunning = false;
+        closeOnce();
+    }
+
+    /**
+     * Release the queues and the process, exactly once, whichever of an exit or a hang-up
+     * gets here first.
+     *
+     * The process is closed on a thread of its own: closing it signals the group, gives it a
+     * moment to exit cleanly and then reaps it, and this is called from the main thread.
+     */
+    private void closeOnce() {
+        if (mClosed.getAndSet(true)) return;
         mTerminalToProcessIOQueue.close();
         mProcessToTerminalIOQueue.close();
-        PtyProcess process = mProcess;
-        if (process != null) process.close();
+        final PtyProcess process = mProcess;
+        if (process != null) new Thread(process::close, "KernTermClose").start();
+    }
+
+    /** See [mOutputGeneration]. Main thread only. */
+    public int getOutputGeneration() {
+        return mOutputGeneration;
     }
 
     @Override
@@ -271,6 +308,7 @@ public final class TerminalSession extends TerminalOutput {
             int bytesRead = mProcessToTerminalIOQueue.read(mReceiveBuffer, false);
             if (bytesRead > 0 && mEmulator != null) {
                 mEmulator.append(mReceiveBuffer, bytesRead);
+                mOutputGeneration++;
                 notifyScreenUpdate();
             }
 
@@ -284,8 +322,12 @@ public final class TerminalSession extends TerminalOutput {
                     description += "]";
                     byte[] bytes = description.getBytes(StandardCharsets.UTF_8);
                     mEmulator.append(bytes, bytes.length);
+                    mOutputGeneration++;
                     notifyScreenUpdate();
                 }
+                // Released here rather than left to whoever destroys the session, because a
+                // finished session may now stay on screen until the user dismisses it.
+                closeOnce();
                 if (mClient != null) mClient.onSessionFinished(TerminalSession.this);
             }
         }

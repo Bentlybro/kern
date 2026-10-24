@@ -45,7 +45,7 @@ object GuestFiles {
      * repository's `link -> /data/data/dev.kern.app/shared_prefs`, say - would point into
      * the app's own private files. Such a path is treated as missing.
      */
-    private fun contained(context: Context, file: File): Boolean = runCatching {
+    internal fun contained(context: Context, file: File): Boolean = runCatching {
         val root = LinuxRuntime.rootfsDir(context).canonicalPath + File.separator
         // A file about to be created has no canonical form of its own yet; its folder does.
         val probe = if (file.exists()) file else file.parentFile ?: return false

@@ -93,9 +93,44 @@ class WarmProcess(
         }
     }
 
-    /** One request; an empty answer on any failure or after [timeoutMs]. Blocking. */
-    fun ask(context: Context, kind: String, path: String, source: String, line: Int, column: Int, timeoutMs: Long): JSONArray {
+    /** Requests sent and not yet answered or given up on; see [ask]. */
+    private val inFlight = AtomicInteger()
+
+    /**
+     * One request; an empty answer on any failure or after [timeoutMs]. Blocking.
+     *
+     * [onlyIfIdle] - for completions - answers empty at once while another request is in
+     * flight, rather than queueing. The helper answers one line at a time, and a request
+     * per keystroke queued behind each other, each answered long after the keystroke that
+     * asked had been superseded; the editor's own word list answers instead meanwhile.
+     */
+    fun ask(
+        context: Context,
+        kind: String,
+        path: String,
+        source: String,
+        line: Int,
+        column: Int,
+        timeoutMs: Long,
+        onlyIfIdle: Boolean = false,
+    ): JSONArray {
+        if (onlyIfIdle) {
+            if (!inFlight.compareAndSet(0, 1)) return JSONArray()
+        } else {
+            inFlight.incrementAndGet()
+        }
+        try {
+            return send(context, kind, path, source, line, column, timeoutMs)
+        } finally {
+            inFlight.decrementAndGet()
+        }
+    }
+
+    private fun send(context: Context, kind: String, path: String, source: String, line: Int, column: Int, timeoutMs: Long): JSONArray {
         val p = ensure(context) ?: return JSONArray()
+        // The editor interrupts a completion that a newer keystroke replaced: not worth
+        // encoding the document for, nor a place in the helper's queue.
+        if (Thread.currentThread().isInterrupted) return JSONArray()
         val id = ids.incrementAndGet()
         val future = CompletableFuture<JSONArray>()
         waiting[id] = p to future

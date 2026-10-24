@@ -147,7 +147,7 @@ for line in sys.stdin:
         }
 
         override fun complete(context: Context, path: String, source: String, line: Int, column: Int) =
-            serverFor(path)?.process?.ask(context, "c", path, source, line, column, timeoutMs = 8_000)
+            serverFor(path)?.process?.ask(context, "c", path, source, line, column, timeoutMs = 8_000, onlyIfIdle = true)
                 ?.toCompletions().orEmpty()
 
         override fun definition(context: Context, path: String, source: String, line: Int, column: Int) =

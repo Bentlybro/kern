@@ -1,5 +1,6 @@
 package dev.kern.app.guest
 
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -29,9 +30,12 @@ object Pty {
     @JvmStatic
     external fun waitFor(pid: Int): Int
 
-    /** SIGHUP+SIGKILL the child's process group (it is its own session leader). */
+    /**
+     * SIGHUP and SIGTERM the child's process group (it is its own session leader), wait up
+     * to [graceMs] for it to exit, then SIGKILL it. Blocks for that long; not on Main.
+     */
     @JvmStatic
-    external fun killProcessGroup(pid: Int)
+    external fun killProcessGroup(pid: Int, graceMs: Int)
 
     @JvmStatic
     external fun closeFd(fd: Int)
@@ -58,8 +62,13 @@ class PtyProcess private constructor(
     fun waitFor(): Int = Pty.waitFor(pid)
 
     fun close() {
-        // Kill the group, not just proot: otherwise the guest's children survive.
-        runCatching { Pty.killProcessGroup(pid) }
+        // Kill the group, not just proot: otherwise the guest's children survive. With a
+        // grace period first, so git and dpkg get to clean up after themselves - except on
+        // the main thread, where a second and a half of waiting is a frozen app. Nothing
+        // in the app should close from there now, but the cost of being wrong about that
+        // is an ANR, so it is checked rather than assumed.
+        val grace = if (Looper.myLooper() == Looper.getMainLooper()) 0 else KILL_GRACE_MS
+        runCatching { Pty.killProcessGroup(pid, grace) }
         runCatching { parcel.close() }
         // And reap, or the child stays a zombie holding its pid forever. This was not
         // hypothetical: every LinuxRuntime.run left one - the cockpit's git poll made a
@@ -68,7 +77,8 @@ class PtyProcess private constructor(
         // wait cannot be cancelled by a coroutine timeout) and nothing else ever
         // collected the corpse. Safe to block on: the group was just SIGKILLed, so this
         // returns in milliseconds; and safe to repeat after another waiter, because
-        // waitpid then fails with ECHILD rather than hanging.
+        // waitpid then fails with ECHILD rather than hanging. The grace above only peeks
+        // at the leader (WNOWAIT), so this is still the one reap.
         runCatching { Pty.waitFor(pid) }
     }
 
@@ -135,6 +145,9 @@ class PtyProcess private constructor(
     }
 
     companion object {
+        /** How long a closed process group gets to exit on its own before SIGKILL. */
+        private const val KILL_GRACE_MS = 1_500
+
         /**
          * Spawn [command] on a fresh pty.
          *

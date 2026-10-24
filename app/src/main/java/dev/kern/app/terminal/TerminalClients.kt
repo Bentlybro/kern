@@ -124,9 +124,11 @@ internal class KernTerminalSessionClient(
 
     override fun onSessionFinished(finishedSession: TerminalSession) {
         // The status and the last thing on screen, because a shell that dies at birth
-        // with living siblings simply loses its tab — no error surface exists. The tmux
-        // ACL regression sat behind exactly this: two launches, two silent
+        // with living siblings used to simply lose its tab, with no error surface. The
+        // tmux ACL regression sat behind exactly this: two launches, two silent
         // disappearances, and a log that said only "finished" with nothing to grep for.
+        // It stays on screen now (TerminalSessions.handleFinished), but the log is still
+        // the only record once it is dismissed.
         val lastLine = runCatching {
             finishedSession.emulator?.screen?.transcriptText
                 ?.trimEnd()?.lineSequence()?.lastOrNull()

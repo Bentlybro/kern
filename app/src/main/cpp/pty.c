@@ -185,17 +185,49 @@ Java_dev_kern_app_guest_Pty_waitFor(
 }
 
 /**
- * Kill the child's whole process group. The child called setsid(), so its pgid equals
- * its pid — killing only the pid would orphan everything the shell started.
+ * Whether the leader has exited, without reaping it. WNOWAIT leaves the zombie for the
+ * caller's own waitpid - which is also what keeps its pid, and so the group id, from being
+ * handed to an unrelated process while this is still signalling it.
+ */
+static int leader_exited(pid_t pid) {
+    siginfo_t info;
+    memset(&info, 0, sizeof(info));
+    if (waitid(P_PID, (id_t) pid, &info, WEXITED | WNOHANG | WNOWAIT) != 0) {
+        /* ECHILD: someone else already reaped it, so it is certainly gone. */
+        return errno != EINTR;
+    }
+    return info.si_pid != 0;
+}
+
+/**
+ * End the child's whole process group. The child called setsid(), so its pgid equals its
+ * pid — killing only the pid would orphan everything the shell started.
+ *
+ * Asked first, then told. SIGKILL alone gave nothing a chance to clean up: git left
+ * .git/index.lock behind and every later git command in that repo refused to run, and a
+ * dpkg killed mid-unpack left the guest needing `dpkg --configure -a`. So the group gets a
+ * hangup and a terminate, up to grace_ms to act on them, and only then the kill. The
+ * leader is PRoot, which does not exit until everything it traces has, so its exit is the
+ * signal that the group is done.
+ *
+ * Blocks for up to grace_ms: never call it with a grace on the main thread.
  */
 JNIEXPORT void JNICALL
 Java_dev_kern_app_guest_Pty_killProcessGroup(
-        JNIEnv *env, jclass clazz, jint pid) {
+        JNIEnv *env, jclass clazz, jint pid, jint grace_ms) {
     (void) env; (void) clazz;
-    if (pid > 0) {
-        kill((pid_t) -pid, SIGHUP);
-        kill((pid_t) -pid, SIGKILL);
+    if (pid <= 0) return;
+    pid_t group = (pid_t) -pid;
+    kill(group, SIGHUP);
+    kill(group, SIGTERM);
+    /* A stopped job cannot act on either until it is continued. */
+    kill(group, SIGCONT);
+    for (int waited = 0; waited < grace_ms; waited += 50) {
+        if (kill(group, 0) != 0 && errno == ESRCH) return;
+        if (leader_exited((pid_t) pid)) break;
+        usleep(50 * 1000);
     }
+    kill(group, SIGKILL);
 }
 
 JNIEXPORT void JNICALL

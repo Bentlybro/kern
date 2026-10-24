@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -48,6 +49,7 @@ fun TerminalPane(modifier: Modifier = Modifier) {
     val detached by TerminalSessions.detached.collectAsStateWithLifecycle()
     val stuck by TerminalSessions.shellStuck.collectAsStateWithLifecycle()
     val titles by TerminalSessions.titles.collectAsStateWithLifecycle()
+    val ended by TerminalSessions.ended.collectAsStateWithLifecycle()
 
     val shells = sessions.filter { it.kind == TerminalSessions.Kind.Shell }
     val active = shells.firstOrNull { it.id == activeId } ?: shells.firstOrNull()
@@ -89,6 +91,19 @@ fun TerminalPane(modifier: Modifier = Modifier) {
 
         Box(Modifier.fillMaxSize()) {
             when {
+                active != null && active.id in ended -> {
+                    TerminalSurface(active, Modifier.fillMaxSize())
+                    SessionEnded(
+                        what = "The shell exited as soon as it started.",
+                        onRestart = { TerminalSessions.restartShell(context, active.id) },
+                        onClose = if (shells.size > 1) {
+                            { TerminalSessions.closeShell(active.id) }
+                        } else {
+                            null
+                        },
+                        modifier = Modifier.align(Alignment.BottomCenter),
+                    )
+                }
                 active != null -> {
                     TerminalSurface(active, Modifier.fillMaxSize())
                     TerminalLinkChip(active, Modifier.align(Alignment.BottomEnd))
@@ -125,6 +140,37 @@ private fun ShellStuck(onRetry: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Button(onClick = onRetry) { Text("Try again", fontSize = 13.sp) }
+    }
+}
+
+/**
+ * A bar over a session that has ended but is kept on screen, so its last output - usually
+ * the reason it ended - can still be read. Restart starts it again; Close, when offered,
+ * removes it. [onClose] is null where closing would only open a replacement.
+ */
+@Composable
+internal fun SessionEnded(
+    what: String,
+    onRestart: () -> Unit,
+    onClose: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            what,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        if (onClose != null) OutlinedButton(onClick = onClose) { Text("Close", fontSize = 13.sp) }
+        Button(onClick = onRestart) { Text("Restart", fontSize = 13.sp) }
     }
 }
 

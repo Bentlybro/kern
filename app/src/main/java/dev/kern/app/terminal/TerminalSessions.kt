@@ -43,6 +43,8 @@ object TerminalSessions {
          * the session it was meant to reattach to. Zero for the agent, which has no tmux.
          */
         val slot: Int = 0,
+        /** When it was opened, to tell a shell that died at birth from one that was used. */
+        val createdAt: Long = android.os.SystemClock.elapsedRealtime(),
     )
 
     internal val entries = mutableListOf<Entry>()
@@ -125,9 +127,11 @@ object TerminalSessions {
      * forking PRoot and allocating a 2000-row emulator and three threads each pass. Two
      * deaths inside [RESPAWN_WINDOW_MS] and it stops and waits to be asked again.
      *
-     * An agent that exits is simply gone: the cockpit then offers to start it again,
-     * which is the right thing for something you chose to run rather than a shell you
-     * always want available.
+     * Two kinds of ending stay on screen instead, with their last output and the exit
+     * line, until the user restarts or closes them: an agent, and a shell that died within
+     * [RESPAWN_WINDOW_MS] of opening. Throwing either away at once threw away the only
+     * account of why - an agent that crashed or finished became "Nothing running", and a
+     * shell that could not start vanished and was replaced before its error could be read.
      */
     fun handleFinished(id: Int) {
         val entry = entries.firstOrNull { it.id == id } ?: return
@@ -135,6 +139,14 @@ object TerminalSessions {
         val wasShell = entry.kind == Kind.Shell
         val wasActive = _activeId.value == id
         val slot = entry.slot
+
+        val diedAtBirth = wasShell &&
+            android.os.SystemClock.elapsedRealtime() - entry.createdAt < RESPAWN_WINDOW_MS
+        if (!wasShell || diedAtBirth) {
+            _ended.value = _ended.value + id
+            publish()
+            return
+        }
 
         destroy(entry)
 
@@ -168,6 +180,13 @@ object TerminalSessions {
     private val _detached = MutableStateFlow<List<Int>>(emptyList())
     val detached: StateFlow<List<Int>> = _detached.asStateFlow()
 
+    /**
+     * Sessions whose process has exited but which are kept on screen, by id, until the user
+     * restarts or dismisses them. See [handleFinished].
+     */
+    private val _ended = MutableStateFlow<Set<Int>>(emptySet())
+    val ended: StateFlow<Set<Int>> = _ended.asStateFlow()
+
     /** A shell that will not stay up. The pane offers a retry rather than looping on it. */
     private val _shellStuck = MutableStateFlow(false)
     val shellStuck: StateFlow<Boolean> = _shellStuck.asStateFlow()
@@ -200,6 +219,7 @@ object TerminalSessions {
 
     private fun publish() {
         _titles.value = _titles.value.filterKeys { id -> entries.any { it.id == id } }
+        _ended.value = _ended.value.filterTo(mutableSetOf()) { id -> entries.any { it.id == id } }
         _sessions.value = entries.toList()
     }
 
@@ -256,10 +276,30 @@ object TerminalSessions {
      * is a dead end, and reopening one is what the plus button is for.
      */
     fun closeShell(id: Int) {
+        if (id in _ended.value) return dismissShell(id)
         if (shells().size <= 1) return
         val entry = entries.firstOrNull { it.id == id && it.kind == Kind.Shell } ?: return
         destroy(entry)
         _detached.value = (_detached.value + entry.slot).sorted()
+        if (_activeId.value == id) _activeId.value = shells().firstOrNull()?.id
+        publish()
+    }
+
+    /**
+     * Start an ended shell again in its own slot. If that was the last shell, the pane
+     * would ask for one anyway; this just keeps the slot, and with it the tab's name.
+     */
+    fun restartShell(context: Context, id: Int) {
+        val entry = entries.firstOrNull { it.id == id && it.kind == Kind.Shell } ?: return
+        destroy(entry)
+        openShell(context, entry.slot)
+        publish()
+    }
+
+    /** Remove an ended shell. Nothing is detached: its process, and tmux's, are gone. */
+    private fun dismissShell(id: Int) {
+        val entry = entries.firstOrNull { it.id == id && it.kind == Kind.Shell } ?: return
+        destroy(entry)
         if (_activeId.value == id) _activeId.value = shells().firstOrNull()?.id
         publish()
     }
@@ -290,7 +330,11 @@ object TerminalSessions {
     // Called from the session service's IO thread, so it reads the published snapshot, an
     // immutable copy, not [entries]: iterating that while the main thread opened or closed
     // a tab threw, runCatching swallowed it, and the notification was silently skipped.
-    fun agentScreen(): String? = _sessions.value.firstOrNull { it.kind == Kind.Agent }?.let { entry ->
+    //
+    // An agent that has exited is not waiting for anything, whatever its last screen says.
+    fun agentScreen(): String? = _sessions.value.firstOrNull {
+        it.kind == Kind.Agent && it.id !in _ended.value
+    }?.let { entry ->
         runCatching { entry.session.emulator?.screen?.transcriptText }.getOrNull()
     }
 
@@ -422,6 +466,15 @@ object TerminalSessions {
     }
 
     fun isAttached(): Boolean = entries.isNotEmpty()
+
+    /**
+     * Whether anything is still running behind a terminal - not merely shown. Read from the
+     * session service's thread, so from the published snapshot.
+     */
+    fun anyAlive(): Boolean = _sessions.value.any { it.id !in _ended.value }
+
+    /** Whether an agent is running, as opposed to absent or ended. Any thread. */
+    fun agentAlive(): Boolean = _sessions.value.any { it.kind == Kind.Agent && it.id !in _ended.value }
 
     fun isKeyboardVisible(): Boolean = current()?.imeVisible() == true
 

@@ -1,6 +1,7 @@
 package dev.kern.app.ui
 
 import dev.kern.app.agent.CockpitScreen
+import dev.kern.app.core.Prefs
 import dev.kern.app.core.UsageTracker
 import dev.kern.app.guest.RootfsInstaller
 import dev.kern.app.input.KeyRow
@@ -18,10 +19,17 @@ import dev.kern.app.terminal.TerminalPane
 import dev.kern.app.terminal.TerminalSessions
 import dev.kern.app.workbench.SelectionOverlay
 import dev.kern.app.workbench.WorkbenchWebView
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -35,6 +43,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -47,10 +56,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.MutableStateFlow
 
 /**
  * Where the shell is. One slot rather than a flag per screen: precedence used to be
@@ -181,6 +193,8 @@ fun Shell(state: SessionState) {
     }
     DisposableEffect(Unit) { onDispose { UsageTracker.flush(context) } }
 
+    AskForNotifications()
+
     // The strip sits above the destination, not inside the editor layout: Projects is the
     // screen that fails *because* the toolchain has not landed yet, and while the strip
     // lived under the editor's top bar that was the one screen unable to say so. Owning the
@@ -298,6 +312,43 @@ fun Shell(state: SessionState) {
 }
 
 /**
+ * Ask once, on Android 13 and later, to post notifications.
+ *
+ * The permission was declared and never requested, and from 13 a declared permission is
+ * not a granted one - so the session notification and "Agent needs you", the one that
+ * exists so the phone can be in a pocket, were silently dropped. Here because this is the
+ * first time there is a session to notify about; and only once, recorded whatever the
+ * answer, because a no is an answer and asking again on every launch is nagging.
+ */
+@Composable
+private fun AskForNotifications() {
+    val context = LocalContext.current
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* Nothing to do either way: refused, Android drops the notifications itself. */ }
+    LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return@LaunchedEffect
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        val prefs = Prefs.of(context)
+        if (granted || prefs.getBoolean(Prefs.KEY_NOTIFICATIONS_ASKED, false)) {
+            return@LaunchedEffect
+        }
+        prefs.edit().putBoolean(Prefs.KEY_NOTIFICATIONS_ASKED, true).apply()
+        launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+}
+
+/**
+ * The setup failure the user put away, by its message: a different failure - a Retry that
+ * broke somewhere else - is news and shows again. Outside the composition so leaving the
+ * editor for Settings and coming back does not bring a dismissed one back.
+ */
+private val dismissedSetupFailure = MutableStateFlow<String?>(null)
+
+/**
  * Setup's second half, reported from wherever the user happens to be standing.
  *
  * The toolchain finishes installing after the IDE has opened, so this is the only place
@@ -314,7 +365,9 @@ private fun SetupStrip() {
     // strip is the only surface watching when it breaks, and falling through to null left
     // the user with an editor whose git, gh and tmux never arrived and nothing on screen
     // that ever mentioned it.
+    val dismissed by dismissedSetupFailure.collectAsStateWithLifecycle()
     val failure = (current as? RootfsInstaller.Stage.Failed)?.message
+        ?.takeIf { it != dismissed }
         ?.let { Diagnostics.explain(context, it) }
     val label = when (current) {
         is RootfsInstaller.Stage.Working -> current.what
@@ -346,8 +399,24 @@ private fun SetupStrip() {
         } else {
             // The editor is already open by the time the toolchain breaks, so the setup
             // screen is behind the user and this strip is the only place the report can
-            // still be taken from.
-            CopyDiagnosticsButton(Modifier.height(30.dp))
+            // still be taken from - and the only place to try again, or to put the
+            // message away: it used to sit over the editor for the rest of the session.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(
+                    onClick = { RootfsInstaller.start(context) },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    modifier = Modifier.height(30.dp),
+                ) { Text("retry", fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
+                CopyDiagnosticsButton(Modifier.height(30.dp))
+                TextButton(
+                    onClick = {
+                        dismissedSetupFailure.value =
+                            (RootfsInstaller.stage.value as? RootfsInstaller.Stage.Failed)?.message
+                    },
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    modifier = Modifier.height(30.dp),
+                ) { Text("dismiss", fontFamily = FontFamily.Monospace, fontSize = 12.sp) }
+            }
         }
     }
 }

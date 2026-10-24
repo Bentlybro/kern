@@ -170,9 +170,11 @@ internal object GitHubDeviceFlow {
      * stop: [run] returns [Outcome.Cancelled] and its caller knows to say nothing.
      */
     fun cancel() {
-        val process = loginProcess
+        val process = loginProcess ?: return
         loginProcess = null
-        runCatching { process?.close() }
+        // On a thread of its own: this is a button's handler, and closing gives the process
+        // group a moment to exit and then reaps it.
+        Thread({ runCatching { process.close() } }, "KernGhCancel").apply { isDaemon = true }.start()
     }
 
     /**

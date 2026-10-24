@@ -100,8 +100,16 @@ fun CockpitScreen(onDismiss: (() -> Unit)? = null) {
     LaunchedEffect(showDiff, refresh, lifecycleOwner) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
-                status = GitCommands.status(context, project)
-                if (showDiff) diff = GitCommands.diff(context, project)
+                // One guest command for both on the Changes tab. A poll that got no answer
+                // keeps what is on screen: a slow guest is not a repository disappearing.
+                if (showDiff) {
+                    GitCommands.changes(context, project)?.let {
+                        status = it.status
+                        diff = it.diff
+                    }
+                } else {
+                    GitCommands.status(context, project)?.let { status = it }
+                }
                 // Each pass is a PRoot fork. On the output tab the only consumer is the
                 // branch line in the header, which does not need refreshing every four
                 // seconds while an agent is busy forking things of its own.

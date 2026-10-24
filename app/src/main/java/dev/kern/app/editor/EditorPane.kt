@@ -12,7 +12,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,7 +28,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -37,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -144,6 +146,17 @@ fun NativeEditorPane(modifier: Modifier = Modifier) {
                         onTakeTheirs = { scope.launch { DiskSync.takeTheirs(context.applicationContext, path) } },
                     )
                 }
+                // Library code reached by go to definition takes no typing; said, or the
+                // keyboard that does nothing reads as the editor being broken.
+                if (active?.let { NativeEditor.isLibrary(it) } == true) {
+                    Text(
+                        "Read-only: library code",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
                 if (problem != null && open.isNotEmpty()) {
                     Text(
                         problem!!,
@@ -230,13 +243,25 @@ private fun Tabs(
     onSelect: (String) -> Unit,
     onClose: (String) -> Unit,
 ) {
-    Row(
+    val list = rememberLazyListState()
+    // The active tab scrolled into view - a file just opened lands at the end of the strip,
+    // and with a few tabs open on a phone that is off screen - but only when it is not
+    // already in full view, so tapping a visible tab does not slide the strip under the thumb.
+    LaunchedEffect(active, open) {
+        val index = active?.let { open.indexOf(it) } ?: -1
+        if (index < 0) return@LaunchedEffect
+        val info = list.layoutInfo
+        val item = info.visibleItemsInfo.firstOrNull { it.index == index }
+        val inView = item != null && item.offset >= info.viewportStartOffset && item.offset + item.size <= info.viewportEndOffset
+        if (!inView) list.animateScrollToItem(index)
+    }
+    LazyRow(
         Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .horizontalScroll(rememberScrollState()),
+            .background(MaterialTheme.colorScheme.surface),
+        state = list,
     ) {
-        open.forEach { path ->
+        items(open, key = { it }) { path ->
             val selected = path == active
             Row(
                 Modifier
@@ -249,6 +274,8 @@ private fun Tabs(
                 Text(
                     path.substringAfterLast('/'),
                     fontSize = 13.sp,
+                    // Italic for library code, which opens read-only.
+                    fontStyle = if (NativeEditor.isLibrary(path)) FontStyle.Italic else null,
                     color = if (selected) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 // Unsaved shows as a dot where the close button sits, as VS Code does; it

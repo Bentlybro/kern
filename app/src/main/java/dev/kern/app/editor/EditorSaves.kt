@@ -93,7 +93,11 @@ internal object EditorSaves {
         file.writing = false
         val failure = "Couldn't save ${file.name}"
         if (!ok) {
-            NativeEditor.report("$failure - check free space")
+            // Free space named only when it is the likely reason: said for every failure,
+            // it sent people clearing storage over a permission or a vanished folder.
+            val full = runCatching { (host.parentFile?.usableSpace ?: Long.MAX_VALUE) < text.length * 4L + 1_000_000 }
+                .getOrDefault(false)
+            NativeEditor.report(if (full) "$failure - the device is out of space" else failure)
             return false
         }
         file.savedRevision = version

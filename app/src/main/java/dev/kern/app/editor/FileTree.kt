@@ -40,7 +40,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -68,8 +72,18 @@ fun FileTree(root: String, onOpen: (String) -> Unit, modifier: Modifier = Modifi
     var notice by remember { mutableStateOf<String?>(null) }
     val active by NativeEditor.active.collectAsStateWithLifecycle()
 
-    LaunchedEffect(root, expanded, reload) {
-        rows = withContext(Dispatchers.IO) { flatten(context, root, expanded) }
+    // Kept current while on screen: files come and go from the terminal, git and agents,
+    // and a tree that only changed on Refresh showed files long gone. Cheap - one listing
+    // per expanded folder - and only while resumed.
+    val lifecycle = LocalLifecycleOwner.current
+    LaunchedEffect(root, expanded, reload, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                val fresh = withContext(Dispatchers.IO) { flatten(context, root, expanded) }
+                if (fresh != rows) rows = fresh
+                delay(3_000)
+            }
+        }
     }
 
     val rootNode = GuestFiles.Node(root.substringAfterLast('/').ifEmpty { "/" }, root, true)

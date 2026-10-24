@@ -57,7 +57,7 @@ object NativeEditor {
         var language: io.github.rosemoe.sora.lang.Language? = null
 
         /** Library code reached by go-to-definition: shown, never edited or saved. */
-        val readOnly: Boolean get() = path.startsWith("/usr/") || "/node_modules/" in path
+        val readOnly: Boolean get() = NativeEditor.isLibrary(path)
 
         /** The file's mtime when last read or written by us; see [DiskSync]. */
         @Volatile
@@ -86,6 +86,9 @@ object NativeEditor {
         var scrollX: Int = 0
         var scrollY: Int = 0
     }
+
+    /** Library code - shown read-only; see [OpenFile.readOnly]. */
+    fun isLibrary(path: String): Boolean = path.startsWith("/usr/") || "/node_modules/" in path
 
     internal val files = LinkedHashMap<String, OpenFile>()
 

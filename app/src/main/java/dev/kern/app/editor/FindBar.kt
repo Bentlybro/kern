@@ -24,6 +24,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.rosemoe.sora.event.PublishSearchResultEvent
+import io.github.rosemoe.sora.event.SelectionChangeEvent
 import io.github.rosemoe.sora.widget.EditorSearcher
 import kotlinx.coroutines.delay
 
@@ -38,6 +40,7 @@ fun FindBar(onClose: () -> Unit) {
     var replacement by remember { mutableStateOf("") }
     var replacing by remember { mutableStateOf(false) }
     var count by remember { mutableIntStateOf(0) }
+    var index by remember { mutableIntStateOf(-1) }
 
     // Debounced so each keystroke does not rescan a large file.
     LaunchedEffect(query) {
@@ -45,14 +48,35 @@ fun FindBar(onClose: () -> Unit) {
         val searcher = NativeEditor.searcher() ?: return@LaunchedEffect
         if (query.isEmpty()) {
             searcher.stopSearch()
-            count = 0
         } else {
             searcher.search(query, EditorSearcher.SearchOptions(EditorSearcher.SearchOptions.TYPE_NORMAL, true))
-            delay(120)
-            count = runCatching { searcher.matchedPositionCount }.getOrDefault(0)
         }
     }
-    DisposableEffect(Unit) { onDispose { NativeEditor.searcher()?.stopSearch() } }
+    // The count from sora's own event, not read once after a guess at how long the search
+    // takes: it runs on a background thread and reports 0 until done, which on a large file
+    // was all the bar ever showed. sora searches again after every edit, a Replace and a tab
+    // switch, and publishes each time, so the count follows those too. The selection moves
+    // on next and previous, which is what "n of m" counts.
+    DisposableEffect(Unit) {
+        val view = NativeEditor.current()
+        fun refresh() {
+            val searcher = view?.searcher
+            if (searcher == null || !searcher.hasQuery()) {
+                count = 0
+                index = -1
+                return
+            }
+            count = runCatching { searcher.matchedPositionCount }.getOrDefault(0)
+            index = runCatching { searcher.currentMatchedPositionIndex }.getOrDefault(-1)
+        }
+        val results = view?.subscribeAlways(PublishSearchResultEvent::class.java) { refresh() }
+        val selection = view?.subscribeAlways(SelectionChangeEvent::class.java) { refresh() }
+        onDispose {
+            results?.unsubscribe()
+            selection?.unsubscribe()
+            NativeEditor.searcher()?.stopSearch()
+        }
+    }
 
     fun next() = runCatching { NativeEditor.searcher()?.gotoNext() }
     fun previous() = runCatching { NativeEditor.searcher()?.gotoPrevious() }
@@ -71,7 +95,11 @@ fun FindBar(onClose: () -> Unit) {
                 modifier = Modifier.weight(1f),
             )
             Text(
-                if (query.isEmpty()) "" else "$count",
+                when {
+                    query.isEmpty() -> ""
+                    index >= 0 -> "${index + 1} of $count"
+                    else -> "$count"
+                },
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 6.dp),

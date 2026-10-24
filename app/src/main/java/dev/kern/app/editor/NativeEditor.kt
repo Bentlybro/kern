@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.KeyEvent
 import android.view.ViewGroup
+import dev.kern.app.core.AppScope
 import dev.kern.app.core.Prefs
 import io.github.rosemoe.sora.event.ContentChangeEvent
 import io.github.rosemoe.sora.langs.textmate.TextMateColorScheme
@@ -19,12 +20,15 @@ import io.github.rosemoe.sora.widget.schemes.EditorColorScheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -361,12 +365,25 @@ object NativeEditor {
     // no keeping, since autosave already put them on disk.
 
     /** The project whose tabs are open. Each project keeps its own set. */
+    @Volatile
     private var project: String? = null
 
     private fun tabsKey(root: String) = Prefs.KEY_EDITOR_TABS + ":" + root
     private fun activeKey(root: String) = Prefs.KEY_EDITOR_ACTIVE + ":" + root
 
+    /**
+     * True while a project switch is closing one project's tabs and reopening another's.
+     * Nothing is remembered meanwhile: the closing would otherwise save the old project's
+     * list - still [project] at that point - as empty, and a half-finished reopening would
+     * save the new one's as partial. Main thread.
+     */
+    private var restoring = false
+
+    /** One project switch at a time; see [showProject]. */
+    private val switching = Mutex()
+
     private fun remember() {
+        if (restoring) return
         val context = appContext ?: return
         val root = project ?: return
         Prefs.of(context).edit()
@@ -379,12 +396,21 @@ object NativeEditor {
      * Show [root]'s tabs: the ones it had last time, reopened from disk. Switching project
      * saves the current tabs and closes them first - a file from another project left open
      * here is one autosave away from being edited by mistake.
+     *
+     * The switch runs on the app scope and always finishes. The pane calls this from a
+     * composition effect, which is cancelled the moment the pane leaves the screen; cut off
+     * between closing the old tabs and reopening the new ones, it left the new project with
+     * whatever had opened so far and no retry, since [project] already named it.
      */
     suspend fun showProject(context: Context, root: String) {
         if (project == root) return
-        appContext = context.applicationContext
-        // Read before anything is closed: closing publishes, and publishing saves the tab
-        // list - which would otherwise overwrite this project's saved tabs with nothing.
+        val app = context.applicationContext
+        appContext = app
+        AppScope.start { switching.withLock { switchTo(app, root) } }.await()
+    }
+
+    private suspend fun switchTo(context: Context, root: String) {
+        if (project == root) return
         val prefs = Prefs.of(context)
         val tabs = prefs.getString(tabsKey(root), null)?.split('\n')?.filter { it.isNotBlank() }.orEmpty()
         val active = prefs.getString(activeKey(root), null)
@@ -394,16 +420,25 @@ object NativeEditor {
         // Tabs that cannot be saved stay open into the new project rather than vanish.
         flush()
         withContext(Dispatchers.Main) {
+            restoring = true
             val kept = files.keys.filter { it in _unsaved.value }
             drop(*files.keys.filter { it !in kept }.toTypedArray())
             if (kept.isNotEmpty()) report("${kept.joinToString { it.substringAfterLast('/') }} couldn't be saved, so stayed open")
             project = root
-            publish()
         }
-        for (path in tabs) {
-            if (GuestFiles.host(context, path).isFile) open(context, path)
+        try {
+            for (path in tabs) {
+                // One unreadable tab must not cost the rest of the list.
+                runCatching { if (GuestFiles.host(context, path).isFile) open(context, path) }
+            }
+            withContext(Dispatchers.Main) { if (active != null && active in files) activate(active) }
+        } finally {
+            // Remembered once, now the list is whole.
+            withContext(NonCancellable + Dispatchers.Main) {
+                restoring = false
+                remember()
+            }
         }
-        if (active != null && active in files) withContext(Dispatchers.Main) { activate(active) }
     }
 
     // ---- commands the native chrome drives -----------------------------------

@@ -508,8 +508,11 @@ object NativeEditor {
         val target = withContext(Dispatchers.IO) { provider.definition(context, path, source, line, column) } ?: return false
         if (target.path != path) open(context, target.path)
         withContext(Dispatchers.Main) {
+            // The open can fail - a binary, a file gone, one too large - and the jump would
+            // then land at that line in whatever tab was showing. The open says why.
+            if (_active.value != target.path) return@withContext
             val view = instance ?: return@withContext
-            val l = (target.line - 1).coerceAtLeast(0)
+            val content = files[target.path]?.content ?: return@withContext
             // After layout, not now: a file opened a moment ago has not been measured, and
             // scrolling against its unmeasured, word-wrapped layout landed hundreds of
             // lines short of the definition (caught on device: 1261 for line 1830).
@@ -517,8 +520,17 @@ object NativeEditor {
             // so the first scroll can still be measured against a partial layout. The second,
             // a moment later, lands on the finished one.
             val jump = Runnable {
-                runCatching { view.setSelection(l, target.column, true) }
-                view.ensurePositionVisible(l, target.column, true)
+                // Checked again as it runs: the second comes 600 ms later, maybe in another
+                // tab by then. Clamped, because sora throws for a position past the end -
+                // a definition from a stale index can name one - and thrown from a posted
+                // Runnable, that is a crash.
+                if (_active.value != target.path || view.text !== content) return@Runnable
+                val l = (target.line - 1).coerceIn(0, maxOf(content.lineCount - 1, 0))
+                val c = target.column.coerceIn(0, content.getColumnCount(l))
+                runCatching {
+                    view.setSelection(l, c, true)
+                    view.ensurePositionVisible(l, c, true)
+                }
             }
             view.post(jump)
             view.postDelayed(jump, 600)

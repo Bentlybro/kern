@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import dev.kern.app.agent.AgentRepository
 import dev.kern.app.core.AppScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import dev.kern.app.editor.CodeIntel
 import dev.kern.app.editor.EditorChrome
@@ -45,6 +46,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+
+private const val NO_DEFINITION = "No definition found"
 
 @Composable
 internal fun TopBar(
@@ -153,7 +156,15 @@ internal fun TopBar(
                 // Where a provider understands the file (CodeIntel): Python, JS, TS.
                 if (native && activeFile?.let { CodeIntel.forPath(it) } != null) {
                     MenuAction("go to definition", { menuOpen = false }) {
-                        AppScope.start { NativeEditor.goToDefinition(context.applicationContext) }
+                        // Said when there is nowhere to go: a tap that does nothing reads as
+                        // a tap that missed. Cleared after a moment, as a toast would be.
+                        AppScope.start {
+                            if (!NativeEditor.goToDefinition(context.applicationContext)) {
+                                NativeEditor.report(NO_DEFINITION)
+                                delay(3_000)
+                                NativeEditor.clearReport(NO_DEFINITION)
+                            }
+                        }
                     }
                 }
                 MenuAction("go to file", { menuOpen = false }) {

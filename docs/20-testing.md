@@ -166,3 +166,9 @@ These are the buttons that exist for when something has already gone wrong, and 
 ### 10. The fold
 
 This is the least-tested surface in the app, and `19-next.md` honestly records it as such. Open and close the device on every screen, and check tabletop mode, the crease split and the cover display. Nothing here has automated coverage of any kind.
+
+### 11. A very large file in the editor
+
+1. In the terminal, make a minified JSON file of a few megabytes, for example `python3 -c 'import json; print(json.dumps([{"id": i, "name": "n%d" % i} for i in range(150000)]))' > big.json`, and a long pretty-printed one with `python3 -m json.tool big.json > pretty.json`.
+2. Open each one in the native editor, scroll to the end, and type a character.
+3. **Expected:** both open, scroll and save without the app closing. They show as plain text with no colour, since a line over 10,000 characters or a file over a million characters is not tokenized. A smaller JSON file opened afterwards is coloured as usual.

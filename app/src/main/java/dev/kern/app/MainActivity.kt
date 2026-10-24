@@ -22,14 +22,18 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +41,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -94,6 +101,27 @@ class MainActivity : ComponentActivity() {
         UsageTracker.resume(this)
     }
 
+    /**
+     * Back after being away: if the session was stopped meanwhile - Stop on the
+     * notification - and VS Code is the editor, start it again.
+     *
+     * The activity outlives that Stop, so neither onCreate's eager start nor AppRoot's
+     * keyed effect runs again, and the workbench sat on "starting VS Code" over a session
+     * nobody was starting. Here rather than whenever the state reads Idle: Stop pressed
+     * from the shade over a visible app is a request to stop, and the booting screen
+     * offers Start for that instead of overruling it. Quit finishes the activity, so it
+     * never comes back through here.
+     */
+    override fun onRestart() {
+        super.onRestart()
+        if (SessionService.state.value is SessionState.Idle &&
+            !EditorMode.isNative(this) &&
+            LinuxRuntime.isReady(this)
+        ) {
+            SessionService.start(this)
+        }
+    }
+
     override fun onStop() {
         UsageTracker.pause(this)
         super.onStop()
@@ -114,7 +142,7 @@ class MainActivity : ComponentActivity() {
      */
     @SuppressLint("RestrictedApi")
     override fun dispatchKeyShortcutEvent(event: KeyEvent): Boolean {
-        val target = focusedInputView()
+        val target = focusedInputView(this)
         if (target != null && target.dispatchKeyEvent(event)) return true
         return super.dispatchKeyShortcutEvent(event)
     }
@@ -167,20 +195,65 @@ private fun AppRoot() {
     }
 }
 
-/** Shown for the second or two between opening the app and the workbench being live. */
+/**
+ * Shown for the second or two between opening the app and the workbench being live.
+ *
+ * It has a way out because it is not always a second or two: a session stopped from the
+ * notification leaves nothing starting behind it, and a code-server that will not come up
+ * spins here until the supervisor gives up. The native editor needs no server at all, so
+ * it is always one tap away.
+ */
 @Composable
 private fun BootingScreen(state: SessionState) {
+    val context = LocalContext.current
+    // Idle for a moment is normal - the start onCreate asked for has not reached the
+    // service yet - so only an Idle that lasts reads as stopped, or every cold launch
+    // would flash "not running" before it started.
+    val stopped by produceState(initialValue = false, state) {
+        value = false
+        if (state is SessionState.Idle) {
+            delay(1_500)
+            value = true
+        }
+    }
+
+    // A file check, off the main thread, and once per state rather than on every
+    // recomposition. Assumed installed until it answers - the common case by far.
+    val installed by produceState(initialValue = true, state) {
+        value = withContext(Dispatchers.IO) { CodeServer.isInstalled(context) }
+    }
+
     Column(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+        if (!stopped) CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         Text(
-            if (state is SessionState.Reconnecting) "reconnecting" else if (CodeServer.isInstalled(LocalContext.current)) "starting VS Code" else "installing VS Code - this takes a minute",
+            when {
+                stopped -> "VS Code is not running"
+                state is SessionState.Reconnecting -> "reconnecting"
+                installed -> "starting VS Code"
+                else -> "installing VS Code - this takes a minute"
+            },
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 16.dp),
         )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(top = 20.dp),
+        ) {
+            // Only when stopped: while a start is under way the service keeps the
+            // supervisor it has and a second start does nothing, so a Retry there would be
+            // a button that cannot do anything. A start that fails ends on the setup
+            // screen, which has its own.
+            if (stopped) {
+                Button(onClick = { SessionService.start(context) }) { Text("Start VS Code") }
+            }
+            TextButton(onClick = { EditorMode.set(context, EditorMode.Kind.Native) }) {
+                Text("Use native editor")
+            }
+        }
     }
 }

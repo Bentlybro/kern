@@ -6,6 +6,7 @@ import android.os.Looper
 import dev.kern.app.core.AppScope
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -15,8 +16,8 @@ import kotlinx.coroutines.sync.withLock
  * One writer per file at a time, so an older revision can never land after a newer one,
  * and a revision counts as saved only once it is on disk: a failed write leaves the tab
  * unsaved, says so, and is tried again by the next edit or flush. The syntax check of
- * what was written runs after the lock is released - it can take seconds, and nothing
- * waiting on the save should wait on it too.
+ * what was written runs outside the lock - it can take seconds, and nothing waiting on
+ * the save should wait on it too.
  */
 internal object EditorSaves {
 
@@ -28,12 +29,40 @@ internal object EditorSaves {
         if (file.readOnly || file.dropped) return null
         val version = file.content.documentVersion
         if (version == file.savedRevision) return null
-        val text = file.content.toString()
+        // A shallow copy here - it shares the lines, and sora copies a shared line before
+        // changing it - and the string built on the app scope: building it here put a copy
+        // of the whole file on the main thread every time typing paused.
+        val snapshot = file.content.copyText(false, true)
         // On the app scope: a save must finish even if the screen that triggered it has gone.
         return AppScope.start {
-            val wrote = locks.getOrPut(file.path) { Mutex() }.withLock { write(context, file, version, text) }
-            if (wrote) AppScope.start { check(context, file, version) }
+            val text = try {
+                snapshot.toString()
+            } finally {
+                snapshot.release()
+            }
+            locks.getOrPut(file.path) { Mutex() }.withLock {
+                if (write(context, file, version, text)) scheduleCheck(context, file, version)
+            }
         }
+    }
+
+    private const val CHECK_DELAY_MS = 2_500L
+
+    /** The pending or running syntax check per path; see [scheduleCheck]. */
+    private val checks = ConcurrentHashMap<String, Job>()
+
+    /**
+     * Check what was just written, once saving has paused. Each check is a PRoot and an
+     * interpreter, and one per autosave queued them up behind each other while typing;
+     * only the last save of a burst is worth checking. Scheduled under the write lock, so
+     * a newer save's check always replaces an older one's - cancelling it, running or not.
+     */
+    private fun scheduleCheck(context: Context, file: NativeEditor.OpenFile, version: Long) {
+        val job = AppScope.start {
+            delay(CHECK_DELAY_MS)
+            check(context, file, version)
+        }
+        checks.put(file.path, job)?.cancel()
     }
 
     /**

@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.OpenableColumns
 import android.util.Log
+import android.widget.Toast
 import dev.kern.app.core.copyCapped
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -36,9 +37,37 @@ object IncomingFiles {
     private val _arrivals = kotlinx.coroutines.flow.MutableStateFlow(0)
     val arrivals: kotlinx.coroutines.flow.StateFlow<Int> = _arrivals
 
-    /** Receive [intent] and open the result in the editor. Silent if it carried nothing. */
+    /** What became of one incoming file: where it landed, or why it did not. */
+    sealed interface Received {
+        data class Saved(val path: String) : Received
+        /** Said to the user as it stands, after "Could not open in Kern: ". */
+        data class Refused(val reason: String) : Received
+        /** The intent carried nothing to import; nothing to say either. */
+        data object Empty : Received
+    }
+
+    /**
+     * Receive [intent] and open the result in the editor, or say why not.
+     *
+     * The failures used to go to the log only, so a share that was refused - Linux not set
+     * up yet, a file over the cap, a provider that would not open - looked exactly like a
+     * share that had worked and opened nothing.
+     */
     suspend fun handle(context: Context, intent: Intent) {
-        val path = receive(context, intent) ?: return
+        val path = when (val received = receive(context, intent)) {
+            is Received.Saved -> received.path
+            is Received.Refused -> {
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context,
+                        "Could not open in Kern: ${received.reason}",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }
+                return
+            }
+            Received.Empty -> return
+        }
         _arrivals.value++
         // Into whichever editor is in use: the native one opens instantly, the workbench
         // once it has a connected window.
@@ -54,10 +83,12 @@ object IncomingFiles {
         intent?.action == Intent.ACTION_VIEW && intent.data != null ||
             intent?.action == Intent.ACTION_SEND
 
-    /** Copy whatever [intent] carries into the inbox. Returns the guest path, or null. */
-    suspend fun receive(context: Context, intent: Intent): String? = withContext(Dispatchers.IO) {
-        if (!LinuxRuntime.isInstalled(context)) return@withContext null
-        runCatching {
+    /** Copy whatever [intent] carries into the inbox. */
+    suspend fun receive(context: Context, intent: Intent): Received = withContext(Dispatchers.IO) {
+        if (!LinuxRuntime.isInstalled(context)) {
+            return@withContext Received.Refused("set up Linux first, then share it again")
+        }
+        runCatching<Received> {
             val inbox = File(LinuxRuntime.rootfsDir(context), INBOX.removePrefix("/")).apply { mkdirs() }
             val stream = streamOf(intent)
             if (stream != null) {
@@ -65,22 +96,27 @@ object IncomingFiles {
                 val target = File(inbox, name)
                 val copied = context.contentResolver.openInputStream(stream)?.use { src ->
                     target.outputStream().use { src.copyCapped(it, MAX_IMPORT_BYTES) }
-                } ?: return@runCatching null
+                } ?: return@runCatching Received.Refused("the app sharing it would not open the file")
                 // Any app can share to us; an endless stream must not fill the guest's disk.
                 if (!copied) {
                     target.delete()
                     Log.w(TAG, "shared file over ${MAX_IMPORT_BYTES / 1024 / 1024} MB, not imported")
-                    return@runCatching null
+                    return@runCatching Received.Refused(
+                        "the file is over ${MAX_IMPORT_BYTES / 1024 / 1024} MB",
+                    )
                 }
-                "$INBOX/$name"
+                Received.Saved("$INBOX/$name")
             } else {
                 val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
-                    ?: return@runCatching null
+                    ?: return@runCatching Received.Empty
                 val name = unique(inbox, "shared-${System.currentTimeMillis() / 1000}.txt")
                 File(inbox, name).writeText(text)
-                "$INBOX/$name"
+                Received.Saved("$INBOX/$name")
             }
-        }.onFailure { Log.w(TAG, "could not import a shared file", it) }.getOrNull()
+        }.getOrElse {
+            Log.w(TAG, "could not import a shared file", it)
+            Received.Refused(it.message ?: it.javaClass.simpleName)
+        }
     }
 
     private const val MAX_IMPORT_BYTES = 64L * 1024 * 1024

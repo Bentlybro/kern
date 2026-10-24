@@ -6,6 +6,7 @@ import dev.kern.app.ui.Panel
 import dev.kern.app.ui.KernIcons
 import dev.kern.app.ui.HeaderIcon
 import dev.kern.app.agent.AgentSection
+import dev.kern.app.core.GuestPaths
 import dev.kern.app.guest.GuestConfig
 import dev.kern.app.guest.LinuxRuntime
 import dev.kern.app.input.KeyRowSection
@@ -13,6 +14,7 @@ import dev.kern.app.ui.ScreenHeader
 import dev.kern.app.ui.ScreenSurface
 import dev.kern.app.update.UpdateSection
 import dev.kern.app.update.Updates
+import android.content.Context
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -33,6 +35,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/**
+ * How the guest describes itself, e.g. "Ubuntu 26.04 LTS", or null if it cannot say.
+ *
+ * Read from the rootfs rather than by sourcing os-release in a guest shell: it is one small
+ * file, and the PRoot spawn was the slow part of opening Settings. Ubuntu's is a symlink
+ * into /usr/lib, which [GuestPaths] follows inside the guest.
+ */
+private suspend fun guestOsName(context: Context): String? = withContext(Dispatchers.IO) {
+    val file = GuestPaths.resolve(LinuxRuntime.rootfsDir(context), "/etc/os-release")
+        ?: return@withContext null
+    runCatching { file.readLines() }.getOrNull()
+        ?.firstOrNull { it.startsWith("PRETTY_NAME=") }
+        ?.substringAfter('=')
+        ?.trim()
+        ?.removeSurrounding("\"")
+        ?.removeSurrounding("'")
+        ?.takeIf { it.isNotBlank() }
+}
 
 /**
  * Settings: what the Linux guest is using, how much it is allowed to use before the app
@@ -45,7 +68,7 @@ fun SettingsScreen(onDismiss: () -> Unit, onGuestDeleted: () -> Unit) {
     var guestOs by remember { mutableStateOf<String?>(null) }
     var refresh by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(refresh) { guestOs = LinuxRuntime.osPrettyName(context) }
+    LaunchedEffect(refresh) { guestOs = guestOsName(context) }
 
     ScreenSurface {
         ScreenHeader("Settings", onBack = onDismiss) {

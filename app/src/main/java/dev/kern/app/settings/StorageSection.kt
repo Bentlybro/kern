@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -66,6 +67,7 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
     var busy by remember { mutableStateOf<String?>(null) }
     var result by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmRestore by remember { mutableStateOf(false) }
     // The actions below change the figures they just reported, so they need to re-measure
     // too; the header's refresh arrives as [refreshKey] instead.
     var reload by remember { mutableIntStateOf(0) }
@@ -152,9 +154,12 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
         )
         LimitChooser(
             selected = usage?.limitMb ?: StorageManager.limitMb(context),
-            onSelect = {
-                StorageManager.setLimitMb(context, it)
-                reload++
+            onSelect = { limit ->
+                StorageManager.setLimitMb(context, limit)
+                // Only the threshold moved, and overLimit is derived from it. Re-measuring
+                // walked the whole rootfs again on every chip tap, for figures that cannot
+                // have changed.
+                usage = usage?.copy(limitMb = limit)
             },
         )
 
@@ -215,9 +220,7 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
             }
             TextButton(
                 enabled = busy == null,
-                // Any type: providers label .tar.gz half a dozen ways, and the restore checks
-                // the contents itself.
-                onClick = { importLauncher.launch(arrayOf("*/*")) },
+                onClick = { confirmRestore = true },
             ) { Text("Restore") }
         }
         Text(
@@ -228,6 +231,32 @@ fun StorageSection(refreshKey: Int, onGuestDeleted: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
+    }
+    // Asked before the picker, not after: the restore unpacks over /root as soon as a
+    // file is chosen, and a project in the backup overwrites the files of the one with the
+    // same name - including whatever was done in them since the export.
+    if (confirmRestore) {
+        AlertDialog(
+            onDismissRequest = { confirmRestore = false },
+            title = { Text("Restore a backup?") },
+            text = {
+                Text(
+                    "Files in the backup replace files with the same name in ~/projects and " +
+                        "your settings, so a project that is also in the backup loses any " +
+                        "changes made since it was exported. Anything not in the backup is " +
+                        "left alone.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmRestore = false
+                    // Any type: providers label .tar.gz half a dozen ways, and the restore
+                    // checks the contents itself.
+                    importLauncher.launch(arrayOf("*/*"))
+                }) { Text("Choose backup", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmRestore = false }) { Text("Cancel") } },
+        )
     }
     SectionTitle("Reset")
     Panel {

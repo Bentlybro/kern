@@ -1,5 +1,6 @@
 package dev.kern.app.projects
 
+import dev.kern.app.core.GuestPaths
 import dev.kern.app.core.Prefs
 import dev.kern.app.git.GitCommands
 import dev.kern.app.guest.GuestConfig
@@ -8,6 +9,7 @@ import dev.kern.app.guest.sq
 import android.content.Context
 import java.io.File
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 
@@ -15,8 +17,8 @@ import kotlinx.coroutines.withContext
  * Native view of the guest Linux filesystem for project management: list projects, browse
  * directories, clone repositories, and remember what was opened recently.
  *
- * Everything runs through [LinuxRuntime], so the native UI never needs the workbench
- * or a terminal to answer "what projects exist".
+ * Listing reads the rootfs directly and everything else runs through [LinuxRuntime], so
+ * the native UI never needs the workbench or a terminal to answer "what projects exist".
  */
 object ProjectRepository {
 
@@ -27,31 +29,41 @@ object ProjectRepository {
 
     data class Entry(val name: String, val path: String, val isRepo: Boolean)
 
-    /** Directories directly under [path], marking which are git repositories. */
-    suspend fun list(context: Context, path: String = PROJECTS_DIR): List<Entry> {
-        // One shell round-trip for the whole listing: "name<TAB>isRepo".
-        val script = """
-            mkdir -p ${sq(PROJECTS_DIR)} 2>/dev/null
-            cd ${sq(path)} 2>/dev/null || exit 1
-            for d in */ ; do
-              [ -d "${'$'}d" ] || continue
-              n=${'$'}{d%/}
-              if [ -d "${'$'}n/.git" ]; then echo "${'$'}n	1"; else echo "${'$'}n	0"; fi
-            done
-        """.trimIndent()
+    /**
+     * Directories directly under [path], marking which are git repositories, or null when
+     * the folder could not be read - which is not the same answer as "no projects", and
+     * used to be shown as one.
+     *
+     * Read straight from the rootfs rather than through a guest shell: this is a directory
+     * listing, and a PRoot spawn per Projects open and per folder-browser step was most of
+     * the wait. It keeps the shell version's answers - `*` skips dot folders, a symlink to a
+     * folder counts as one - with links resolved inside the guest by [GuestPaths].
+     */
+    suspend fun list(context: Context, path: String = PROJECTS_DIR): List<Entry>? =
+        withContext(Dispatchers.IO) {
+            val root = LinuxRuntime.rootfsDir(context)
+            // Only into a guest that is there: mkdirs on a deleted one would put back a
+            // bare rootfs directory, which reads as half an install.
+            val home = File(root, HOME.removePrefix("/"))
+            if (!home.isDirectory) return@withContext null
+            File(home, PROJECTS_DIR.removePrefix("$HOME/")).mkdirs()
 
-        val result = LinuxRuntime.run(context, script) ?: return emptyList()
-        return result.lines.mapNotNull { line ->
-            val parts = line.split('\t')
-            if (parts.isEmpty() || parts[0].isBlank()) return@mapNotNull null
-            val name = parts[0]
-            Entry(
-                name = name,
-                path = if (path.endsWith('/')) "$path$name" else "$path/$name",
-                isRepo = parts.getOrNull(1) == "1",
-            )
-        }.sortedBy { it.name.lowercase() }
-    }
+            val dir = GuestPaths.resolve(root, path)?.takeIf { it.isDirectory }
+                ?: return@withContext null
+            val names = dir.list() ?: return@withContext null
+            names
+                .filter { !it.startsWith(".") }
+                .mapNotNull { name ->
+                    val child = if (path.endsWith('/')) "$path$name" else "$path/$name"
+                    if (GuestPaths.resolve(root, child)?.isDirectory != true) return@mapNotNull null
+                    Entry(
+                        name = name,
+                        path = child,
+                        isRepo = GuestPaths.resolve(root, "$child/.git")?.isDirectory == true,
+                    )
+                }
+                .sortedBy { it.name.lowercase() }
+        }
 
     /**
      * Create an empty project folder and, optionally, start a git repository in it.

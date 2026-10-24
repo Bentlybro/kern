@@ -23,6 +23,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -51,6 +52,10 @@ fun ProjectsScreen(
     val model = remember { ProjectsModel(context.applicationContext, scope) }
 
     var entries by remember { mutableStateOf<List<ProjectRepository.Entry>?>(null) }
+    // A listing that failed, kept apart from an empty one: "Nothing here yet" over a
+    // folder that could not be read told someone with projects that they had none.
+    var listFailed by remember { mutableStateOf(false) }
+    var retry by remember { mutableIntStateOf(0) }
     var dialog by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf<ProjectRepository.Entry?>(null) }
     // Non-null while the folder browser is up, holding the directory it shows.
@@ -64,8 +69,10 @@ fun ProjectsScreen(
         ProjectRepository.recents(context).filter { it != current }.take(5)
     }
 
-    LaunchedEffect(model.reload) {
-        entries = ProjectRepository.list(context)
+    LaunchedEffect(model.reload, retry) {
+        val listed = ProjectRepository.list(context)
+        listFailed = listed == null
+        entries = listed
     }
 
     fun open(path: String) {
@@ -125,8 +132,12 @@ fun ProjectsScreen(
             item { SectionTitle("~/projects", Modifier.padding(start = 16.dp, top = 8.dp)) }
             when (val list = entries) {
                 null -> item {
-                    Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                    if (listFailed) {
+                        ListingFailed(onRetry = { listFailed = false; retry++ })
+                    } else {
+                        Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                        }
                     }
                 }
                 else -> {

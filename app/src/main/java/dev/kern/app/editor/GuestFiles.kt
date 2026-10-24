@@ -90,21 +90,43 @@ object GuestFiles {
      * Write [text] to [guestPath], atomically: a temp file beside it, then a rename. A
      * process killed mid-write - which Android does without warning - leaves either the
      * old file or the new one, never half of each.
+     *
+     * Returns the written file's mtime, or null if the write failed. Taken from the temp
+     * file before the rename, which keeps it: a stat afterwards could see an outside write
+     * that landed in between and take it for ours.
      */
-    fun write(context: Context, guestPath: String, text: String): Boolean = runCatching {
-        val target = host(context, guestPath)
-        target.parentFile?.mkdirs()
-        check(contained(context, target)) { "outside the guest" }
+    fun write(context: Context, guestPath: String, text: String): Long? = runCatching {
+        val requested = host(context, guestPath)
+        requested.parentFile?.mkdirs()
+        check(contained(context, requested)) { "outside the guest" }
+        // Through a symlink to the file it names - inside the rootfs, as just checked - so
+        // the rename replaces that file. Renamed over the link itself, every save turned a
+        // linked file into a detached copy and the link was gone.
+        val target = if (requested.exists()) requested.canonicalFile else requested
         // Unique per write: two writers sharing one temp name could rename half of each.
         val temp = File.createTempFile(".${target.name}.", ".kern-tmp", target.parentFile)
         try {
             temp.writeText(text)
-            if (!temp.renameTo(target)) target.writeText(text)
+            // The original's mode, or the temp file's 0600 replaces it: a script saved in
+            // the editor stopped being executable, and a shared file stopped being readable.
+            if (target.exists()) {
+                runCatching { Files.setPosixFilePermissions(temp.toPath(), Files.getPosixFilePermissions(target.toPath())) }
+            }
+            val stamp = temp.lastModified()
+            if (temp.renameTo(target)) {
+                stamp
+            } else {
+                target.writeText(text)
+                target.lastModified()
+            }
         } finally {
             temp.delete()
         }
-        true
-    }.getOrDefault(false)
+    }.getOrNull()
+
+    /** Whether anything - a file, a folder, even a dangling link - is at [guestPath]. */
+    fun exists(context: Context, guestPath: String): Boolean =
+        Files.exists(host(context, guestPath).toPath(), LinkOption.NOFOLLOW_LINKS)
 
     fun createFile(context: Context, guestPath: String): Boolean = runCatching {
         val f = host(context, guestPath)
@@ -115,8 +137,15 @@ object GuestFiles {
     fun createDirectory(context: Context, guestPath: String): Boolean =
         runCatching { host(context, guestPath).mkdirs() }.getOrDefault(false)
 
-    fun rename(context: Context, from: String, to: String): Boolean =
-        runCatching { host(context, from).renameTo(host(context, to)) }.getOrDefault(false)
+    /**
+     * Move [from] to [to] - never over the top of something already there, which
+     * File.renameTo replaces without a word. The tree checks first and says why; this is
+     * the backstop for a file that appeared in between.
+     */
+    fun rename(context: Context, from: String, to: String): Boolean = runCatching {
+        if (exists(context, to)) return false
+        host(context, from).renameTo(host(context, to))
+    }.getOrDefault(false)
 
     /**
      * Delete a file or folder, never following a symlink inside it: Kotlin's

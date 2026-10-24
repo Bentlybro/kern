@@ -58,8 +58,9 @@ internal object EditorSaves {
         }
         file.forceNextSave = false
         file.writing = true
-        val ok = GuestFiles.write(context, file.path, text)
-        if (ok) file.diskStamp = host.lastModified()
+        val stamp = GuestFiles.write(context, file.path, text)
+        if (stamp != null) file.diskStamp = stamp
+        val ok = stamp != null
         file.writing = false
         val failure = "Couldn't save ${file.name}"
         if (!ok) {

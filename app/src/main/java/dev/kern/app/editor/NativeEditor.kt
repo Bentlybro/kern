@@ -152,26 +152,32 @@ object NativeEditor {
         }
         val read = withContext(Dispatchers.IO) { GuestFiles.read(context, path) }
         val text = when (read) {
-            is GuestFiles.Read.Text -> read.content
+            is GuestFiles.Read.Text -> read
             GuestFiles.Read.Binary -> return fail("${path.substringAfterLast('/')} is a binary file")
             GuestFiles.Read.Missing -> return fail("${path.substringAfterLast('/')} is not there any more")
             is GuestFiles.Read.TooLarge -> return fail(
                 "${path.substringAfterLast('/')} is ${read.bytes / 1024 / 1024} MB - open it in the terminal",
             )
         }
-        val (language, highlighted) = EditorLanguages.forPath(context, path, EditorLanguages.tooLargeToColour(text))
+        // Built here, not on Main: splitting a few MB into lines is a visible stall, and a
+        // Content belongs to no view until it is set on one.
+        val content = withContext(Dispatchers.IO) { Content(text.content) }
+        val (language, highlighted) = EditorLanguages.forPath(context, path, EditorLanguages.tooLargeToColour(text.content))
         withContext(Dispatchers.Main) {
             // Opened twice at once: the first one in is the tab, and may already be edited.
             if (path in files) {
                 activate(path)
                 return@withContext
             }
-            val file = OpenFile(path, Content(text)).also {
+            val file = OpenFile(path, content).also {
                 it.language = language
                 it.highlighted = highlighted
             }
             file.savedRevision = file.content.documentVersion
-            file.diskStamp = GuestFiles.host(context, path).lastModified()
+            // The stamp from the read, not a fresh stat: the grammar can take seconds to
+            // load on first open, and an outside write in that time would be taken for
+            // this text and overwritten by the next autosave.
+            file.diskStamp = text.stamp
             files[path] = file
             publish()
             activate(path)

@@ -29,7 +29,8 @@ object GuestFiles {
     data class Node(val name: String, val path: String, val isDirectory: Boolean)
 
     sealed interface Read {
-        data class Text(val content: String) : Read
+        /** [stamp]: the file's mtime as of [content]; see [read]. */
+        data class Text(val content: String, val stamp: Long) : Read
         data object Missing : Read
         data object Binary : Read
         data class TooLarge(val bytes: Long) : Read
@@ -63,14 +64,26 @@ object GuestFiles {
             .sortedWith(compareBy<Node>({ !it.isDirectory }, { it.name.lowercase() }))
     }
 
+    /**
+     * Read [guestPath] as text, with the file's mtime as of that text. The stamp is taken
+     * before the read, never after: a stamp taken after could belong to an outside write
+     * that landed in between, which [DiskSync] would then take for the version the tab
+     * holds - and the next autosave would overwrite it unseen. A stamp older than the text
+     * costs at most a needless reload. A file that changes while it is read is read again.
+     */
     fun read(context: Context, guestPath: String): Read {
         val file = host(context, guestPath)
         if (!file.isFile || !contained(context, file)) return Read.Missing
         if (file.length() > MAX_BYTES) return Read.TooLarge(file.length())
-        val bytes = file.readBytes()
-        // A NUL in the first few KB is the same test git uses for "binary".
-        if (bytes.take(8192).any { it == 0.toByte() }) return Read.Binary
-        return Read.Text(String(bytes, Charsets.UTF_8))
+        var attempts = 0
+        while (true) {
+            val stamp = file.lastModified()
+            val bytes = file.readBytes()
+            if (file.lastModified() != stamp && ++attempts < 3) continue
+            // A NUL in the first few KB is the same test git uses for "binary".
+            if (bytes.take(8192).any { it == 0.toByte() }) return Read.Binary
+            return Read.Text(String(bytes, Charsets.UTF_8), stamp)
+        }
     }
 
     /**

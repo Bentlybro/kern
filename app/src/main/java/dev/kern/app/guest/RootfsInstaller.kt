@@ -224,7 +224,9 @@ object RootfsInstaller {
 
             // Package lists first: the toolchain cannot install without them.
             _stage.value = Stage.Working("Updating package lists")
-            LinuxRuntime.run(context, "apt-get update 2>&1", timeoutMs = 300_000, onLine = ::logLine)
+            Apt.exclusive {
+                LinuxRuntime.run(context, "apt-get update 2>&1", timeoutMs = 300_000, onLine = ::logLine)
+            }
 
             _stage.value = Stage.Working("Installing tools")
             // Checked, not fired and forgotten: apt losing the connection partway leaves a
@@ -270,12 +272,14 @@ object RootfsInstaller {
         }
 
         // apt (not dpkg) so dependencies resolve.
-        val result = LinuxRuntime.run(
-            context,
-            "apt-get install -y /tmp/code-server.deb 2>&1; rm -f /tmp/code-server.deb",
-            timeoutMs = 900_000,
-            onLine = ::logLine,
-        )
+        val result = Apt.exclusive {
+            LinuxRuntime.run(
+                context,
+                "apt-get install -y /tmp/code-server.deb 2>&1; rm -f /tmp/code-server.deb",
+                timeoutMs = 900_000,
+                onLine = ::logLine,
+            )
+        }
         if (!CodeServer.isInstalled(context)) {
             return result?.stdout?.lines()?.lastOrNull { it.isNotBlank() } ?: "code-server did not install"
         }

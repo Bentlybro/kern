@@ -10,11 +10,19 @@ import io.github.rosemoe.sora.widget.CodeEditor
  * `print(42)` typed naturally came out `print(42))` - every bracket a user closed by hand
  * was doubled (caught on device). VS Code steps over the character instead, and so does
  * this: a closer typed with the same closer right after the caret moves past it.
+ *
+ * It also lets [beforeCommit] see text before it goes in - typed or pasted - for
+ * [NativeEditor] to drop colouring ahead of an insert too large for it. Afterwards is too
+ * late: sora hands the insert to the language's background tokenizer before any change
+ * event is dispatched.
  */
 class KernCodeEditor(context: Context) : CodeEditor(context) {
 
+    var beforeCommit: ((CharSequence) -> Unit)? = null
+
     override fun commitText(text: CharSequence, applyAutoIndent: Boolean, applySymbolCompletion: Boolean) {
         if (text.length == 1 && text[0] in CLOSERS && stepOver(text[0])) return
+        beforeCommit?.invoke(text)
         super.commitText(text, applyAutoIndent, applySymbolCompletion)
     }
 

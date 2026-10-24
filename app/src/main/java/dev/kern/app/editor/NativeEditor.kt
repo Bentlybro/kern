@@ -135,6 +135,7 @@ object NativeEditor {
                 useICULibToSelectWords = true
             }
             subscribeAlways(ContentChangeEvent::class.java) { onEdited() }
+            beforeCommit = { beforeInsert(it) }
         }
         instance = view
         _active.value?.let { show(it) }
@@ -246,8 +247,13 @@ object NativeEditor {
             it.scrollX = view.offsetX
             it.scrollY = view.offsetY
         }
-        view.setEditorLanguage(file.language)
+        // Plain first, the tab's language only once its own text is in: setEditorLanguage
+        // starts the new language's tokenizer on whatever text the view holds, and that was
+        // the outgoing tab's - a minified file shown plain got the next tab's grammar run
+        // over it, the crash plain text exists to avoid.
+        view.setEditorLanguage(null)
         view.setText(file.content, true, null)
+        view.setEditorLanguage(file.language)
         view.isEditable = !file.readOnly
         showProblem(file)
         shown = file
@@ -363,6 +369,20 @@ object NativeEditor {
             if (next != null) show(next) else instance?.setText("")
         }
         publish()
+    }
+
+    /**
+     * Drop colouring before an insert would take the tab past what it survives - a
+     * minified blob pasted into a coloured file; see [EditorLanguages.tooLargeToColour].
+     */
+    private fun beforeInsert(text: CharSequence) {
+        val view = instance ?: return
+        val file = _active.value?.let { files[it] } ?: return
+        if (file.language == null) return
+        val line = file.content.getColumnCount(view.cursor.leftLine)
+        if (!EditorLanguages.insertTooLargeToColour(file.content.length, line, text)) return
+        file.language = null
+        view.setEditorLanguage(null)
     }
 
     private fun onEdited() {

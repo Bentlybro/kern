@@ -88,6 +88,8 @@ object DiskSync {
                 return@withContext
             }
             file.content = Content(text)
+            // Grown past what colouring survives - a formatter minifying it, say.
+            if (EditorLanguages.tooLargeToColour(text)) file.language = null
             file.savedRevision = file.content.documentVersion
             file.diskStamp = stamp
             if (NativeEditor.active.value == file.path) {

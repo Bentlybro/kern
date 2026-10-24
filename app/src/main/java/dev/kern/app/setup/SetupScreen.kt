@@ -1,6 +1,7 @@
 package dev.kern.app.setup
 
 import androidx.compose.ui.text.font.FontWeight
+import dev.kern.app.core.AppScope
 import dev.kern.app.core.BatteryOptimization
 import dev.kern.app.guest.LinuxRuntime
 import dev.kern.app.guest.RootfsInstaller
@@ -16,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,10 +25,13 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -38,7 +43,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,7 +52,17 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+
+/**
+ * Whether "Delete and start over" is still running.
+ *
+ * Outside the composition for the same reason as the delete itself running on the app
+ * scope: the screen can leave and come back mid-delete (Android recreating the activity,
+ * or the routing reacting to the guest disappearing), and a flag held in here would come
+ * back cleared and offer "Finish setup" over a tree that is still being removed.
+ */
+private val deletingGuest = MutableStateFlow(false)
 
 /**
  * First run. One button: fetch Linux and set it up. Everything the IDE needs lives inside
@@ -57,10 +71,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun SetupScreen(state: SessionState, onStart: () -> Unit) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val stage by RootfsInstaller.stage.collectAsStateWithLifecycle()
     val log by RootfsInstaller.log.collectAsStateWithLifecycle()
     var confirmReset by remember { mutableStateOf(false) }
+    val deleting by deletingGuest.collectAsStateWithLifecycle()
 
     /**
      * Whether setup is still running. Read from the installer itself, not from local
@@ -76,12 +90,17 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
     // delete — an environment that is already gone.
     val installChanges by LinuxRuntime.installChanges.collectAsStateWithLifecycle()
 
-    val installed = remember(stage, installChanges) { LinuxRuntime.isInstalled(context) }
+    // Keyed on the kind of stage, not the stage: a download publishes a new one on every
+    // progress tick, and each re-ran these disk checks on the main thread for answers that
+    // only change between stages. Everything below that reads them mid-install is gated on
+    // `installing` anyway, and the move to Done or Failed re-reads them.
+    val stageKind = stage::class
+    val installed = remember(stageKind, installChanges) { LinuxRuntime.isInstalled(context) }
 
     // Not `installed`: a download that died before the filesystem was unpacked leaves
     // nothing installed and most of the payload in the cache, and gating the delete on the
     // guest hid the one control that clears it in exactly the state that needs it.
-    val removable = remember(stage, installChanges) {
+    val removable = remember(stageKind, installChanges) {
         installed || RootfsInstaller.hasCachedDownloads(context)
     }
 
@@ -89,7 +108,7 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
     // turns true partway through setup. Gating on `installing` too is what stops the
     // screen offering to open the IDE while apt is still working — starting the session
     // then races dpkg for its lock, and the session fails and bounces back here.
-    val ready = !installing && remember(stage, installChanges) { LinuxRuntime.isReady(context) }
+    val ready = !installing && remember(stageKind, installChanges) { LinuxRuntime.isReady(context) }
 
     // Free space moves while the app is in the background - the user leaves to clear
     // photos and comes back - so it is re-read on the way in rather than once, and again
@@ -110,138 +129,176 @@ fun SetupScreen(state: SessionState, onStart: () -> Unit) {
     val freeMb = Diagnostics.megabytes(freeBytes)
     val enoughSpace = freeMb >= requiredMb
 
-    Column(
+    // Scrolls, because in landscape or with a large font the buttons at the bottom - Retry,
+    // Copy diagnostics, Delete - were pushed off the screen with no way to reach them. The
+    // minimum height keeps the weighted spacer below doing its job when everything fits:
+    // a weight in a scrolling column sizes against that minimum, not the unbounded height.
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .windowInsetsPadding(WindowInsets.systemBars)
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .windowInsetsPadding(WindowInsets.systemBars),
     ) {
-        Spacer(Modifier.height(24.dp))
-        Text(
-            "Kern",
-            style = MaterialTheme.typography.displaySmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-        )
-        Text(
-            if (ready) {
-                "Linux is installed. Everything runs on this device."
-            } else {
-                "A complete Linux development environment, running inside this app. " +
-                    "Nothing else to install."
-            },
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-
-        if (!ready) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .heightIn(min = maxHeight)
+                .padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Spacer(Modifier.height(24.dp))
             Text(
-                "Setup downloads about ${RootfsInstaller.ESTIMATED_DOWNLOAD_MB} MB and " +
-                    "uses roughly ${RootfsInstaller.ESTIMATED_DISK_MB} MB of storage. " +
-                    "Use Wi-Fi — it takes a few minutes.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                "Kern",
+                style = MaterialTheme.typography.displaySmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
             )
-        }
-
-        Spacer(Modifier.height(4.dp))
-        StageView(stage)
-        if (log.isNotEmpty()) LogView(log)
-        Spacer(Modifier.weight(1f))
-
-        BatteryHint(context)
-
-        // The service knows exactly why the server never came up, and this was the only
-        // screen that never said. Without it a dead server reads as "Linux is installed"
-        // over a button that walks into the same 90-second wait every time.
-        (state as? SessionState.Failed)?.let {
             Text(
-                it.message,
-                fontSize = 12.5.sp,
-                color = MaterialTheme.colorScheme.error,
+                if (ready) {
+                    "Linux is installed. Everything runs on this device."
+                } else {
+                    "A complete Linux development environment, running inside this app. " +
+                        "Nothing else to install."
+                },
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
             )
-        }
 
-        if (ready) {
-            Button(
-                onClick = onStart,
-                enabled = state !is SessionState.Starting,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth().height(54.dp),
-            ) {
+            if (!ready) {
                 Text(
-                    if (state is SessionState.Starting) "Starting…" else "Open IDE",
-                    fontSize = 16.sp,
+                    "Setup downloads about ${RootfsInstaller.ESTIMATED_DOWNLOAD_MB} MB and " +
+                        "uses roughly ${RootfsInstaller.ESTIMATED_DISK_MB} MB of storage. " +
+                        "Use Wi-Fi — it takes a few minutes.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        } else if (!enoughSpace && !installing) {
-            Text(
-                "Not enough storage. Setup needs about $requiredMb MB free and this device " +
-                    "has $freeMb MB - free up about ${requiredMb - freeMb} MB more and " +
-                    "come back.",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.error,
-            )
-        } else {
-            Button(
-                onClick = { RootfsInstaller.start(context) },
-                enabled = !installing && stage !is RootfsInstaller.Stage.Done,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth().height(54.dp),
-            ) {
-                Text(
-                    when {
-                        installing -> "Setting up…"
-                        installed -> "Finish setup"
-                        else -> "Set up Linux"
-                    },
-                    fontSize = 16.sp,
-                )
-            }
-        }
 
-        (stage as? RootfsInstaller.Stage.Failed)?.let {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                // Retry walks into the same wall when the disk is what stopped it, so it
-                // goes with the button above. Copying the failure never does.
-                if (enoughSpace) {
-                    TextButton(onClick = { RootfsInstaller.start(context) }) { Text("Retry") }
-                }
-                CopyDiagnosticsButton()
-            }
-        }
+            Spacer(Modifier.height(4.dp))
+            StageView(stage)
+            if (log.isNotEmpty()) LogView(log)
+            Spacer(Modifier.weight(1f))
 
-        // Settings lives inside the IDE, so a guest too broken to start one leaves the
-        // user with no way to throw it away. An environment can be damaged beyond what
-        // re-running setup fixes — an interrupted apt can take coreutils with it, and
-        // then even `ls` is gone — so starting over has to be reachable from here.
-        if (removable && !installing) {
-            if (!confirmReset) {
-                TextButton(onClick = { confirmReset = true }) {
-                    Text("Delete and start over", color = MaterialTheme.colorScheme.error)
-                }
-            } else {
+            BatteryHint(context)
+
+            // The service knows exactly why the server never came up, and this was the only
+            // screen that never said. Without it a dead server reads as "Linux is installed"
+            // over a button that walks into the same 90-second wait every time.
+            (state as? SessionState.Failed)?.let {
                 Text(
-                    "This deletes the Linux environment, including anything in " +
-                        "~/projects you have not pushed.",
-                    fontSize = 12.sp,
+                    it.message,
+                    fontSize = 12.5.sp,
                     color = MaterialTheme.colorScheme.error,
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = {
-                        confirmReset = false
-                        scope.launch { StorageManager.deleteGuest(context) }
-                    }) {
-                        Text("Delete everything", color = MaterialTheme.colorScheme.error)
-                    }
-                    TextButton(onClick = { confirmReset = false }) { Text("Cancel") }
+            }
+
+            if (ready) {
+                Button(
+                    onClick = onStart,
+                    enabled = state !is SessionState.Starting && !deleting,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                ) {
+                    Text(
+                        if (state is SessionState.Starting) "Starting…" else "Open IDE",
+                        fontSize = 16.sp,
+                    )
+                }
+            } else if (!enoughSpace && !installing) {
+                Text(
+                    "Not enough storage. Setup needs about $requiredMb MB free and this device " +
+                        "has $freeMb MB - free up about ${requiredMb - freeMb} MB more and " +
+                        "come back.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            } else {
+                Button(
+                    onClick = { RootfsInstaller.start(context) },
+                    enabled = !installing && !deleting && stage !is RootfsInstaller.Stage.Done,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth().height(54.dp),
+                ) {
+                    Text(
+                        when {
+                            installing -> "Setting up…"
+                            installed -> "Finish setup"
+                            else -> "Set up Linux"
+                        },
+                        fontSize = 16.sp,
+                    )
                 }
             }
+
+            (stage as? RootfsInstaller.Stage.Failed)?.let {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // Retry walks into the same wall when the disk is what stopped it, so it
+                    // goes with the button above. Copying the failure never does.
+                    if (enoughSpace) {
+                        TextButton(
+                            enabled = !deleting,
+                            onClick = { RootfsInstaller.start(context) },
+                        ) { Text("Retry") }
+                    }
+                    CopyDiagnosticsButton()
+                }
+            }
+
+            // Settings lives inside the IDE, so a guest too broken to start one leaves the
+            // user with no way to throw it away. An environment can be damaged beyond what
+            // re-running setup fixes — an interrupted apt can take coreutils with it, and
+            // then even `ls` is gone — so starting over has to be reachable from here.
+            if (deleting) {
+                Text(
+                    "Deleting the Linux environment…",
+                    fontSize = 12.5.sp,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            } else if (removable && !installing) {
+                if (!confirmReset) {
+                    TextButton(onClick = { confirmReset = true }) {
+                        Text("Delete and start over", color = MaterialTheme.colorScheme.error)
+                    }
+                } else {
+                    Text(
+                        "This deletes the Linux environment, including anything in " +
+                            "~/projects you have not pushed.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = {
+                            confirmReset = false
+                            deleteGuest(context.applicationContext)
+                        }) {
+                            Text("Delete everything", color = MaterialTheme.colorScheme.error)
+                        }
+                        TextButton(onClick = { confirmReset = false }) { Text("Cancel") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Delete the guest on the app scope. Leaving this screen used to cancel the delete
+ * partway through the tree, and while it ran nothing stopped "Finish setup" from starting
+ * an install into the half-deleted directory. deleteGuest signals the routing itself, so
+ * there is nothing to report back here.
+ */
+private fun deleteGuest(app: Context) {
+    if (deletingGuest.value) return
+    deletingGuest.value = true
+    AppScope.start {
+        try {
+            StorageManager.deleteGuest(app)
+        } finally {
+            deletingGuest.value = false
         }
     }
 }

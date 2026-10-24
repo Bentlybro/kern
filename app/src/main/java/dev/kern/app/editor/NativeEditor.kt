@@ -81,6 +81,10 @@ object NativeEditor {
         /** Set when the user chose "keep mine" over an outside change. */
         @Volatile
         var forceNextSave: Boolean = false
+
+        /** Where the view was scrolled when this tab was last switched away from; see [show]. */
+        var scrollX: Int = 0
+        var scrollY: Int = 0
     }
 
     internal val files = LinkedHashMap<String, OpenFile>()
@@ -238,10 +242,46 @@ object NativeEditor {
         // Every time, not once: sora re-derives the scheme from the theme when the theme
         // registry fires, and that put the stock-blue handles back (caught on device).
         if (themed) view.colorScheme.kernAccents()
+        // Where the outgoing tab was scrolled to: setText puts the view back at the top,
+        // and every trip to another tab and back used to lose the reader's place.
+        shown?.let {
+            it.scrollX = view.offsetX
+            it.scrollY = view.offsetY
+        }
         view.setEditorLanguage(file.language)
         view.setText(file.content, true, null)
         view.isEditable = !file.readOnly
         showProblem(file)
+        shown = file
+        restoreScroll(view, file)
+    }
+
+    /** The tab whose text the view holds, for [show] to keep its scroll position. Main thread. */
+    private var shown: OpenFile? = null
+
+    private fun restoreScroll(view: CodeEditor, file: OpenFile) {
+        val x = file.scrollX
+        val y = file.scrollY
+        if (x == 0 && y == 0) return
+        // After layout and twice, as for go to definition: until sora has laid out the text -
+        // a long word-wrapped file on a background thread - there is not that far to scroll.
+        // The second only if nobody has scrolled since the first.
+        var landed: Pair<Int, Int>? = null
+        val restore = Runnable {
+            if (view.text !== file.content) return@Runnable
+            if (landed?.let { it.first != view.offsetX || it.second != view.offsetY } == true) return@Runnable
+            runCatching {
+                val targetX = x.coerceIn(0, view.scrollMaxX)
+                val targetY = y.coerceIn(0, view.scrollMaxY)
+                val scroller = view.scroller
+                scroller.startScroll(view.offsetX, view.offsetY, targetX - view.offsetX, targetY - view.offsetY, 0)
+                scroller.abortAnimation()
+                view.invalidate()
+            }
+            landed = view.offsetX to view.offsetY
+        }
+        view.post(restore)
+        view.postDelayed(restore, 600)
     }
 
     /**

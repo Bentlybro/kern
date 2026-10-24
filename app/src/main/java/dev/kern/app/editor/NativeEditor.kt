@@ -246,16 +246,28 @@ object NativeEditor {
 
     /**
      * Close a tab - once its edits are on disk. A tab whose save failed or hit an outside
-     * change stays open, since closing it would throw away the only copy of the edits.
+     * change stays open, since closing it would throw away the only copy of the edits;
+     * [onUnsaved] is then told, to offer [discard], or without one the editor says why.
      */
-    fun close(path: String) {
+    fun close(path: String, onUnsaved: ((String) -> Unit)? = null) {
         ui.launch {
             if (flush(listOf(path))) {
                 drop(path)
+            } else if (onUnsaved != null) {
+                onUnsaved(path)
             } else {
                 report("${path.substringAfterLast('/')} isn't saved, so it stays open")
             }
         }
+    }
+
+    /**
+     * Close a tab without saving, on the user's say-so - the way out for a tab whose save
+     * keeps failing, or whose outside change they do not want to settle. Main thread.
+     */
+    fun discard(path: String) {
+        DiskSync.resolved(path)
+        drop(path)
     }
 
     /**

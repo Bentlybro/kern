@@ -30,6 +30,11 @@ object DiskSync {
         _conflicts.value = _conflicts.value + path
     }
 
+    /** [path]'s conflict no longer stands: its tab was closed without saving. */
+    internal fun resolved(path: String) {
+        _conflicts.value = _conflicts.value - path
+    }
+
     /**
      * Compare every open tab with its file. Cheap - one stat per open file, no process -
      * so the pane calls it every second or two while it is on screen.

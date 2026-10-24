@@ -114,9 +114,15 @@ internal fun TopBar(
                 // version still on disk.
                 val file = activeFile!!
                 // And not at all if the save failed: running the old file looks like the
-                // edit did nothing. The editor already shows why.
+                // edit did nothing. Every tab is saved - make, npm and cargo read more than
+                // this file - but only this file's failure stops the run: a conflict in a
+                // tab out of sight used to stop it without a word.
                 AppScope.start {
-                    if (NativeEditor.flush()) withContext(Dispatchers.Main) { Runner.run(context, file) }
+                    if (NativeEditor.flush() || NativeEditor.flush(listOf(file))) {
+                        withContext(Dispatchers.Main) { Runner.run(context, file) }
+                    } else {
+                        NativeEditor.report("Not run: ${file.substringAfterLast('/')} isn't saved")
+                    }
                 }
             }, tint = KernColors.Ok)
         }

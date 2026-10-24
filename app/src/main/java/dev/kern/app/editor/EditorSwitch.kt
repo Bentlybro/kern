@@ -18,7 +18,13 @@ object EditorSwitch {
     fun toWorkbench(context: Context, file: String?) {
         val app = context.applicationContext
         AppScope.start {
-            if (!NativeEditor.flush()) return@start
+            if (!NativeEditor.flush()) {
+                // Named, since the tab holding things up may not be the one on screen.
+                val names = withContext(Dispatchers.Main) { NativeEditor.unsaved.value.map { it.substringAfterLast('/') } }
+                val verb = if (names.size == 1) "isn't" else "aren't"
+                NativeEditor.report("Still in the native editor: ${names.joinToString()} $verb saved")
+                return@start
+            }
             withContext(Dispatchers.Main) { EditorMode.set(app, EditorMode.Kind.Workbench) }
             if (file != null) WorkbenchFiles.open(app, file)
         }
